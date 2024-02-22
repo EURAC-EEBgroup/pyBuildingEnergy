@@ -322,7 +322,6 @@ def main(latitude, longitude):
             'occ_level_wd': profile_residential_1['profile_workdays_internal_gains'],
             'occ_level_we': profile_residential_1['profile_weekend_internal_gains'],
             'comf_level_wd': profile_residential_1['profile_workdays_ventilation'],
-            'comf_level_we': profile_residential_1['profile_weekend_ventilation'],
             'baseline_hci': np.array([2.50, 2.50, 2.50, 2.50, 0.70, 5.00, 2.50, 2.50, 2.50, 2.50], dtype=object),
             'baseline_hce': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object),
             "construction_class": "class_i"

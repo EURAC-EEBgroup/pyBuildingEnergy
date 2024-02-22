@@ -1,3 +1,9 @@
+__author__ = "Daniele Antonucci, Ulrich Filippi Oberagger, Olga Somova"
+__credits__ = ["Daniele Antonucci", "Ulrich FIlippi Oberagger", "Olga Somova"]
+__license__ = "MIT"
+__version__ = "0.1"
+__maintainer__ = "Daniele Antonucci"
+
 import numpy as np
 import pandas as pd
 import numpy as np

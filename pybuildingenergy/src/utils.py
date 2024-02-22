@@ -1,8 +1,8 @@
-__author__ = "Enrico Prataviera"
-__credits__ = ["Enrico Prataviera"]
+__author__ = "Daniele Antonucci, Ulrich Filippi Oberagger, Olga Somova"
+__credits__ = ["Daniele Antonucci", "Ulrich FIlippi Oberagger", "Olga Somova"]
 __license__ = "MIT"
 __version__ = "0.1"
-__maintainer__ = "Enrico Prataviera"
+__maintainer__ = "Daniele Antonucci"
 
 #%%
 import requests
@@ -785,10 +785,10 @@ class __ISO52016__:
         sim_df['comfort level'] = np.nan
 
         # Occupation (both for gain and ventilation) workday and weekend according to schedule
-        occ_level_wd = np.array(self.inputs['occ_level_wd'])
-        occ_level_we = np.array(self.inputs['occ_level_we'])
-        comf_level_wd = np.array(self.inputs['comf_level_wd'])
-        comf_level_we = np.array(self.inputs['comf_level_wd'])
+        occ_level_wd = self.inputs['occ_level_wd']
+        occ_level_we = self.inputs['occ_level_we']
+        comf_level_wd = self.inputs['comf_level_wd']
+        comf_level_we = self.inputs['comf_level_wd']
         
         ''' WORKDAY '''
         # Nnumber of workdays during the entire simulation period
@@ -1310,17 +1310,13 @@ bui_item = {
         'R_eli': np.array([1.25, 1.25, 1.25, 2.5, 1.25, 1.25, 2.5, 1.25, 1.25, 1.25],dtype=object), 
         'F_sk_eli': np.array([0.5, 0.5, 0.5, 0.0, 0.5, 0.5, 1.0, 0.5, 0.5, 0.5], dtype=object), 
         'occ_level_wd': np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-    dtype=object), 
+                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]), 
         'occ_level_we': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    dtype=object), 
+                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]), 
         'comf_level_wd': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    dtype=object), 
+                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]), 
         'comf_level_we': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-    1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    dtype=object), 
+                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]), 
         'sog_area': 100.0, 
         'exposed_perimeter': 40.0, 
         'wall_thickness': 0.3, 

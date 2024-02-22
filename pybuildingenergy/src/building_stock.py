@@ -1,3 +1,10 @@
+__author__ = "Daniele Antonucci, Ulrich Filippi Oberagger, Olga Somova"
+__credits__ = ["Daniele Antonucci", "Ulrich FIlippi Oberagger", "Olga Somova"]
+__license__ = "MIT"
+__version__ = "0.1"
+__maintainer__ = "Daniele Antonucci"
+
+
 '''
 Definition of reference tecnology and building archetypo for each nation.
 Reference: 
