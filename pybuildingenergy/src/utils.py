@@ -12,10 +12,10 @@ from timezonefinder import TimezoneFinder
 from pytz import timezone
 import numpy as np
 from dataclasses import dataclass
+# from pybuildingenergy.src.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
 from src.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
-# from functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,get_positions,Filter_list_by_indices
 from tqdm import tqdm
-
+import multiprocessing
 
 #%%
 
@@ -72,10 +72,27 @@ class h_vent_and_int_gains:
     sim_df_update: pd.DataFrame
 
 
+class MyClass:
+    def __init__(self):
+        pass
+
+    @classmethod
+    def call_properties(cls, obj):
+        # Assuming obj has properties 'property1' and 'property2'
+        if hasattr(obj, 'area') and hasattr(obj, 'volume'):
+            print("Property 1:", obj.area)
+            print("Property 2:", obj.volume)
+        else:
+            print("Object does not have required properties")
+
 #%%
 # ===============================================================================================
-#                                       MODULE SIMULATIONS   
+#                                       MODULES SIMULATIONS   
 # ===============================================================================================
+
+#                                       ISO 52010
+# ===============================================================================================
+
 class __ISO52010__:
     n_timesteps = 8760 # number of hours in a year
     solar_constant = 1370  # [W/m2]
@@ -87,17 +104,21 @@ class __ISO52010__:
     [6.200, 1.060, -1.600, -0.359, 0.264, -1.127, 0.131], [99999, 0.678, -0.327, -0.250, 0.156, -1.377,
                                                                     0.251]])  # # Values for clearness index and brightness coefficients as function of clearness parameter
 
-    def __init__(self, inputs:dict):
-        self.inputs = inputs
+    # def __init__(self, BUI:dict):
+    #     BUI = BUI
+    def __init__(self):
+        pass
 
-    
-    def get_tmy_data(self) -> WeatherDataResult:
+    @classmethod
+    # def get_tmy_data(self) -> WeatherDataResult:
+    def get_tmy_data(cls, BUI) -> WeatherDataResult:
         '''
         GET weather data from PVGIS API 
         '''
         # Connection to PVGIS API to get weather data 
-        latitude = self.inputs['latitude']
-        longitude= self.inputs['longitude']
+        # latitude = BUI['latitude']
+        latitude = BUI.latitude
+        longitude= BUI.longitude
         url = f'https://re.jrc.ec.europa.eu/api/tmy?lat={latitude}&lon={longitude}&outputformat=json&browser=1'
         response = requests.request("GET", url, allow_redirects=True)
         data = response.json()
@@ -123,8 +144,8 @@ class __ISO52010__:
             weather_data=df_weather,
             utc_offset=utcoffset_in_hours
         )
-    
-    def Solar_irradiance_calc(self, timezone_utc, beta_ic_deg, gamma_ic_deg, DHI, DNI, ground_solar_reflectivity,
+    @classmethod
+    def Solar_irradiance_calc(cls, BUI, timezone_utc, beta_ic_deg, gamma_ic_deg, DHI, DNI, ground_solar_reflectivity,
                     calendar, n_timesteps=n_timesteps, solar_constant=solar_constant, K_eps = K_eps,
                     Perez_coefficients_matrix = Perez_coefficients_matrix)->Solar_irradiance:
         """
@@ -169,7 +190,7 @@ class __ISO52010__:
         
         beta_ic = np.radians(beta_ic_deg)
         gamma_ic = np.radians(gamma_ic_deg)
-        latitude = np.radians(self.inputs['latitude'])
+        latitude = np.radians(BUI.latitude)
         # DayWeekJan1 = 1  # doy of week of 1 January; 1=Monday, 7=Sunday
         #
         # Earth Orbit Deviation. 
@@ -183,7 +204,7 @@ class __ISO52010__:
         declination = np.radians(declination_deg)
         #
         t_eq = Equation_of_time(calendar['day of year'])  # [min]
-        time_shift = timezone_utc - (self.inputs['longitude'] / 15)  # [h]
+        time_shift = timezone_utc - (BUI.longitude / 15)  # [h]
         solar_time = calendar['hour of day'] - t_eq / 60 - time_shift  # [h]
         hour_angle_deg = Hour_angle_calc(solar_time)  # [deg]
         hour_angle = np.radians(hour_angle_deg)
@@ -267,7 +288,7 @@ class __ISO52010__:
         return Solar_irradiance(solar_irradiance=I_tot)
 
 
-def Calc_52010(inputs) ->_52010:
+def Calc_52010(BUI) ->_52010:
     '''
     Param:
     -------
@@ -277,7 +298,7 @@ def Calc_52010(inputs) ->_52010:
     
     # get weather dataframe
     # weatherData = get_ext_data(lat,long)
-    weatherData = __ISO52010__(inputs).get_tmy_data()
+    weatherData = __ISO52010__.get_tmy_data(BUI)
     # sim_df = weatherData['Weather data']
     sim_df = weatherData.weather_data
     # timezoneW = weatherData['UTC offset']
@@ -294,8 +315,11 @@ def Calc_52010(inputs) ->_52010:
     sim_df['hour of day'] = sim_df.index.hour + 1  # 1 to 24
     or_tilt_azim_dic = {'HOR': (0, 0), 'SV': (90, 0), 'EV': (90, 90), 'NV': (90, 180), 'WV': (90,-90)}  # dictionary mapping orientation in or_eli with (beta_ic_deg=elevation/tilt, gamma_ic_deg=azimuth), see util.util.ISO52010_calc()
 
-    for orientation in set(inputs['or_eli']):
-        sim_df[orientation] = __ISO52010__(inputs).Solar_irradiance_calc(
+    # Convert the NumPy array to a tuple
+    for orientation in set(BUI.or_eli):
+    # for orientation in orientations.tolist():
+        sim_df[orientation] = __ISO52010__.Solar_irradiance_calc(
+            BUI=BUI,
             timezone_utc = timezoneW, 
             beta_ic_deg = or_tilt_azim_dic[orientation][0], 
             gamma_ic_deg = or_tilt_azim_dic[orientation][1], 
@@ -310,6 +334,9 @@ def Calc_52010(inputs) ->_52010:
     return _52010(sim_df=sim_df)
 
 
+#                                       ISO 52016
+# ===============================================================================================
+
 
 class __ISO52016__:
     
@@ -317,7 +344,10 @@ class __ISO52016__:
    
 
     __slots__=("inputs","sim_df")
-    def __init__(self, inputs:dict):
+    # def __init__(self, inputs:dict):
+    def __init__(self):
+        pass
+    # def __init__(self, BUI:object):
         '''
         Simulate the Final Energy consumption of the building using the ISO52016
         Parameters
@@ -325,12 +355,13 @@ class __ISO52016__:
         lat : latitude of the building location
         long : longitude of the building location
         '''
-        self.inputs = inputs
-        self.sim_df = Calc_52010(inputs).sim_df
+        # self.sim_df = Calc_52010(BUI).sim_df
 
     
 
-    def Number_of_nodes_element(self,**kwargs) ->numb_nodes_facade_elements:
+    # def Number_of_nodes_element(self,**kwargs) ->numb_nodes_facade_elements:
+    @classmethod
+    def Number_of_nodes_element(cls, BUI) ->numb_nodes_facade_elements:
         '''
         Calculation of the number of nodes for each element.
         If OPACQUE, or ADIABATIC -> n_nodes = 5
@@ -347,11 +378,12 @@ class __ISO52016__:
         PlnSum: sequential number of nodes based on the list of opaque and transparent elements 
         '''
         # Number of envelop building elements
-        el_list = len(self.inputs['TypeSub_eli'])
+        # el_list = len(BUI['TypeSub_eli'])
+        el_list = len(BUI.TypeSub_eli)
         # Initialize Pln with all elements as 5
         Pln = np.full(el_list, 5)
         # Replace elements with value 2 where type is "W"
-        Pln[self.inputs['TypeSub_eli'] == "W"] = 2
+        Pln[BUI.TypeSub_eli == "W"] = 2
         # Calculation fo number of nodes for each building element (wall, roof, window)
         PlnSum = np.array([0] * el_list)        
         for Eli in range(1, el_list):
@@ -360,8 +392,9 @@ class __ISO52016__:
         Rn = PlnSum[-1] + Pln[-1] + 1 # value of last node to be used in the definition of the vector
     
         return numb_nodes_facade_elements(Rn, Pln, PlnSum)
-
-    def Conduttance_node_of_element(self, lambda_gr=2.0, **kwargs) -> conduttance_elements:
+    
+    @classmethod
+    def Conduttance_node_of_element(cls, BUI, lambda_gr=2.0, **kwargs) -> conduttance_elements:
         '''
         Calculation of the conduttance between node "pli" adn node "pli-1", as determined per type of construction 
         element in 6.5.7 in W/m2K    
@@ -390,51 +423,52 @@ class __ISO52016__:
         '''
         R_gr = 0.5 / lambda_gr  # thermal resistance of 0.5 m of ground [m2 K/W]
         # Number of envelop building elements
-        el_type = self.inputs['TypeSub_eli']
+        el_type = BUI.TypeSub_eli
         # Initialization of conduttance coefficient calcualation
         h_pli_eli = np.zeros((4,len(el_type)))
         
         # layer = 1 
         layer_no = 0
         for i in range(len(el_type)):
-            if self.inputs["R_eli"][i] != 0:
+            if BUI.R_eli[i] != 0:
                 if el_type[i] == 'OP':
-                    h_pli_eli[0, i] = 6 / self.inputs["R_eli"][i]
+                    h_pli_eli[0, i] = 6 / BUI.R_eli[i]
                 elif el_type[i] == 'W':
-                    h_pli_eli[0, i] = 1 / self.inputs["R_eli"][i]
+                    h_pli_eli[0, i] = 1 / BUI.R_eli[i]
                 elif el_type[i] == 'GR':
                     h_pli_eli[0, i] = 2 / R_gr
         
         # layer = 2
         layer_no = 1
         for i in range(len(el_type)):
-            if self.inputs["R_eli"][i] != 0:
+            if BUI.R_eli[i] != 0:
                 if el_type[i] == 'OP':
-                    h_pli_eli[layer_no, i] = 3 / self.inputs["R_eli"][i]
+                    h_pli_eli[layer_no, i] = 3 / BUI.R_eli[i]
                 elif el_type[i] == 'GR':
-                    h_pli_eli[layer_no, i] = 1 / (self.inputs["R_eli"][i] / 4 + R_gr / 2)
+                    h_pli_eli[layer_no, i] = 1 / (BUI.R_eli[i] / 4 + R_gr / 2)
         
         # layer = 3
         layer_no = 2
         for i in range(len(el_type)):
-            if self.inputs["R_eli"][i] != 0:
+            if BUI.R_eli[i] != 0:
                 if el_type[i] == 'OP':
-                    h_pli_eli[layer_no, i] = 3 / self.inputs["R_eli"][i]
+                    h_pli_eli[layer_no, i] = 3 / BUI.R_eli[i]
                 elif el_type[i] == 'GR':
-                    h_pli_eli[layer_no, i] = 2 / self.inputs["R_eli"][i]
+                    h_pli_eli[layer_no, i] = 2 / BUI.R_eli[i]
         
         # layer = 4
         layer_no = 3
         for i in range(len(el_type)):
-            if self.inputs["R_eli"][i] != 0:
+            if BUI.R_eli[i] != 0:
                 if el_type[i] == 'OP':
-                    h_pli_eli[layer_no, i] = 6 / self.inputs["R_eli"][i]
+                    h_pli_eli[layer_no, i] = 6 / BUI.R_eli[i]
                 elif el_type[i] == 'GR':
-                    h_pli_eli[layer_no, i] = 4 / self.inputs["R_eli"][i] 
+                    h_pli_eli[layer_no, i] = 4 / BUI.R_eli[i] 
         
         return conduttance_elements(h_pli_eli=h_pli_eli)
 
-    def Solar_absorption_of_element(self, **kwargs) -> solar_abs_elements:
+    @classmethod
+    def Solar_absorption_of_element(cls, BUI, **kwargs) -> solar_abs_elements:
         '''
         Calculation of solar absorption for each single elements
         Param
@@ -460,18 +494,19 @@ class __ISO52016__:
         [0. , 0. , 0. , 0. , 0. , 0. , 0. , 0. , 0. , 0. ]])
         '''
         # Number of envelop building elements
-        el_list = len(self.inputs['TypeSub_eli'])
+        el_list = len(BUI.TypeSub_eli)
         # Coefficient list of elements
         # a_sol_eli = df['solar_absorption_coeff'].to_list()
-        a_sol_eli = self.inputs['a_sol_eli']
+        a_sol_eli = BUI.a_sol_eli
         
         # Initialization of solar_abs_coeff
         a_sol_pli_eli = np.zeros((5, el_list))
         a_sol_pli_eli[0, :] = a_sol_eli
         
         return solar_abs_elements(a_sol_pli_eli=a_sol_pli_eli)
-    
-    def Areal_heat_capacity_of_element(self, **kwargs) -> aeral_heat_capacity:
+
+    @classmethod    
+    def Areal_heat_capacity_of_element(cls, BUI, **kwargs) -> aeral_heat_capacity:
         '''
         Calculation of the aeral heat capacity of the node "pli" and node "pli-1" as 
         determined per type of construction element [W/m2K] - 6.5.7 ISO 52016
@@ -489,66 +524,66 @@ class __ISO52016__:
         '''
         # Number of envelop building elements
         # el_list = len(df)
-        el_type = self.inputs['TypeSub_eli']
+        el_type = BUI.TypeSub_eli
         # List of heat capacyit of building envelope elements
         # list_kappa_el = df['kappa_m']
-        list_kappa_el = self.inputs['kappa_m_eli']
+        list_kappa_el = BUI.kappa_m_eli
 
         # Initialization of heat capacity of nodes
         kappa_pli_eli_ = np.zeros((5, len(el_type)))
 
         #
-        if self.inputs["construction_class"] == "class_i":   # Mass concetrated at internal side     
+        if BUI.construction_class == "class_i":   # Mass concetrated at internal side     
             # OPAQUE: kpl5 = km_eli ; kpl1=kpl2=kpl3=kpl4=0
             # GROUND: kpl5 = km_eli ; kpl3=kpl4=0
             node = 4
             for i in range(len(el_type)):
-                if self.inputs['TypeSub_eli'][i] == 'OP':
+                if BUI.TypeSub_eli[i] == 'OP':
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
-                elif self.inputs['TypeSub_eli'][i] == 'GR':
+                elif BUI.TypeSub_eli[i] == 'GR':
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
             
             node = 1
             for i in range(len(el_type)):
-                if self.inputs['TypeSub_eli'][i] == 'GR':
+                if BUI.TypeSub_eli[i] == 'GR':
                     kappa_pli_eli_[node, i] = 1e6 # heat capacity of the ground            
             
-        elif self.inputs["construction_class"] == "class_e": # mass concentrated at external side
+        elif BUI.construction_class == "class_e": # mass concentrated at external side
             # OPAQUE: kpl1 = km_eli ; kpl2=kpl3=kpl4=kpl5=0
             # GROUND: kpl3 = km_eli ; kpl4=kpl5=0
             node = 0
             for i in range(len(el_type)):
-                if self.inputs['TypeSub_eli'][i] == 'OP':
+                if BUI.TypeSub_eli[i] == 'OP':
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
-                elif self.inputs['TypeSub_eli'][i] == 'GR':
+                elif BUI.TypeSub_eli[i] == 'GR':
                     node = 2
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
                                 
-        elif self.inputs["construction_class"] == "class_ie": # mass divided over internal and external side)        
+        elif BUI.construction_class == "class_ie": # mass divided over internal and external side)        
             # OPAQUE: kpl1 = kpl5 = km_eli/2 ; kpl2=kpl3=kpl4=0
             # GROUND: kpl1 = kp5 =km_eli/2; kpl4=0
             node = 0
             for i in range(len(el_type)):
-                if self.inputs['TypeSub_eli'][i] == 'OP':
+                if BUI.TypeSub_eli[i] == 'OP':
                     kappa_pli_eli_[node, i] = list_kappa_el[i]/2
-                elif self.inputs['TypeSub_eli'][i] == 'GR':
+                elif BUI.TypeSub_eli[i] == 'GR':
                     kappa_pli_eli_[node, i] = list_kappa_el[i]/2
             node = 4
             for i in range(len(el_type)):
-                if self.inputs['TypeSub_eli'][i] == 'OP':
+                if BUI.TypeSub_eli[i] == 'OP':
                     kappa_pli_eli_[node, i] = list_kappa_el[i]/2
-                elif self.inputs['TypeSub_eli'][i] == 'GR':
+                elif BUI.TypeSub_eli[i] == 'GR':
                     kappa_pli_eli_[node, i] = list_kappa_el[i]/2
 
-        elif self.inputs["construction_class"] == "class_d": # (mass equally distributed)
+        elif BUI.construction_class == "class_d": # (mass equally distributed)
             # OPAQUE: kpl2=kpl3=kpl4=km_eli/4
             # GROUND: kpl3=km_eli/4; kpl4=km_eli/2
             node_list_1 = [1,2,3]
             for node in node_list_1:            
                 for i in range(len(el_type)):
-                    if self.inputs['TypeSub_eli'][i] == 'OP':
+                    if BUI.TypeSub_eli[i] == 'OP':
                         kappa_pli_eli_[node, i] = list_kappa_el[i]/4
-                    if self.inputs['TypeSub_eli'][i] == 'GR':
+                    if BUI.TypeSub_eli[i] == 'GR':
                         if node==2: 
                             kappa_pli_eli_[node, i] = list_kappa_el[i]/4
                         if node==3: 
@@ -559,26 +594,27 @@ class __ISO52016__:
             node_list_2 = [0,4]
             for node in node_list_2:
                 for i in range(len(el_type)):
-                    if self.inputs['TypeSub_eli'][i] == 'OP':
+                    if BUI.TypeSub_eli[i] == 'OP':
                         kappa_pli_eli_[node, i] = list_kappa_el[i]/8
-                    if self.inputs['TypeSub_eli'][i] == 'GR':
+                    if BUI.TypeSub_eli[i] == 'GR':
                         if node == 4:
                             kappa_pli_eli_[node, i] = list_kappa_el[i]/4
                 
-        elif self.inputs["construction_class"] == "class_m": # mass concentrated inside
+        elif BUI.construction_class == "class_m": # mass concentrated inside
             # OPAQUE: kpl1=kpl2=kpl4=kpl5=0; kpl3= km_eli
             # GROUND: kpl4=km_eli; kpl3=kpl5=0
             node = 2
             for i in range(len(el_type)):
-                if self.inputs['TypeSub_eli'][i] == 'OP':
+                if BUI.TypeSub_eli[i] == 'OP':
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
-                if self.inputs['TypeSub_eli'][i] == 'GR':
+                if BUI.TypeSub_eli[i] == 'GR':
                     node = 3
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
         
         return aeral_heat_capacity(kappa_pli_eli=kappa_pli_eli_)
 
-    def Temp_calculation_of_ground(self, lambda_gr=2.0, R_si=0.17, R_se=0.04, psi_k=0.05, **kwargs) -> temp_ground:
+    @classmethod
+    def Temp_calculation_of_ground(cls, BUI, lambda_gr=2.0, R_si=0.17, R_se=0.04, psi_k=0.05, **kwargs) -> temp_ground:
         '''
         Virtual ground temperature calculation of ground according to ISO 13370-1:2017 
         for salb-on-ground (sog) floor
@@ -620,9 +656,10 @@ class __ISO52016__:
         
         # ============================ 
         # GET MIN, MAX AND MEAN of External temperature values at monthly(M) resolution
-        external_temperature_monthly_averages = self.sim_df['T2m'].resample('ME').mean()
-        external_temperature_monthly_minima = self.sim_df['T2m'].resample('ME').min()
-        external_temperature_monthly_maxima = self.sim_df['T2m'].resample('ME').max()
+        sim_df = Calc_52010(BUI).sim_df
+        external_temperature_monthly_averages = sim_df['T2m'].resample('M').mean()
+        external_temperature_monthly_minima = sim_df['T2m'].resample('M').min()
+        external_temperature_monthly_maxima = sim_df['T2m'].resample('M').max()
         # amplitude of external temperature variations
         amplitude_of_external_temperature_variations = (external_temperature_monthly_maxima - external_temperature_monthly_minima).mean() / 2
         # annual mean of external temperature
@@ -639,17 +676,19 @@ class __ISO52016__:
                 amplitude_of_internal_temperature_variations = 3 <- (26-20)/2
         '''
         # ============================ 
-        if self.inputs['heating'] and self.inputs['cooling']:
-            if self.inputs['H_setpoint'] is not None and self.inputs['C_setpoint'] is not None: 
-                annual_mean_internal_temperature = (self.inputs['H_setpoint'] + self.inputs['C_setpoint']) / 2  # [deg C]
-                amplitude_of_internal_temperature_variations = (self.inputs['C_setpoint'] - self.inputs['H_setpoint']) / 2  # [K]
+        if BUI.heating and BUI.cooling:
+            if BUI.H_setpoint is not None and BUI.C_setpoint is not None: 
+                annual_mean_internal_temperature = (BUI.H_setpoint + BUI.C_setpoint) / 2  # [deg C]
+                amplitude_of_internal_temperature_variations = (BUI.C_setpoint - BUI.H_setpoint) / 2  # [K]
         else:
-            if annual_mean_internal_temperature == None:
+            if not hasattr(BUI,"annual_mean_internal_temperature"):
+                # if BUI.annual_mean_internal_temperature == None:
                 '''
                 Expert imput: da inserire dall'utente se non li inserisce fornire dei dati default
                 '''
                 annual_mean_internal_temperature = 23  # estimate, user input #<-- 
                 amplitude_of_internal_temperature_variations = 3  # estimate, user input
+                
         # ============================ 
         
         # ============================ 
@@ -658,15 +697,15 @@ class __ISO52016__:
         If the user doesn't provide a value between 1 (January) and 12 (Decemebr)
         the default values: 1 for northern hemisphere or 7 in southern hemisphere are used 
         '''
-        if not self.inputs['coldest_month']:
-            if self.inputs['latitude'] >= 0:
-                self.inputs['coldest_month'] = 1  # 1..12; 
+        if not BUI.coldest_month:
+            if BUI.latitude >= 0:
+                BUI.coldest_month = 1  # 1..12; 
             else:
-                self.inputs['coldest_month'] = 7
+                BUI.coldest_month= 7
         
         internal_temperature_by_month = np.zeros(12)    
         for month in range(12):
-            internal_temperature_by_month[month] = annual_mean_internal_temperature - amplitude_of_internal_temperature_variations * np.cos(2*np.pi * (month + 1 - self.inputs['coldest_month']) / 12)  # estimate
+            internal_temperature_by_month[month] = annual_mean_internal_temperature - amplitude_of_internal_temperature_variations * np.cos(2*np.pi * (month + 1 - BUI.coldest_month) / 12)  # estimate
         # ============================ 
         
         # ============================ 
@@ -674,9 +713,9 @@ class __ISO52016__:
         Area in contact with the ground. 
         If the value is nor provided by the user 
         ''' 
-        sog_area = self.inputs['slab_on_ground_area']
+        sog_area = BUI.slab_on_ground
         if sog_area == -999:
-            sog_area = sum(Filter_list_by_indices(self.inputs['area'],Get_positions(self.inputs['TypeSub_eli'],'GR')))
+            sog_area = sum(Filter_list_by_indices(BUI.area,Get_positions(BUI.TypeSub_eli,'GR')))
         # ============================ 
         
         # ============================ 
@@ -685,18 +724,18 @@ class __ISO52016__:
         If the value is not provided by the user a rectangluar shape of the building is considered.
         The perimeter is calcuated according to the area of the south and east facade
         '''
-        if self.inputs['exposed_perimeter'] == None:
+        if BUI.exposed_perimeter == None:
             # SOUTH FACADE
-            south_facade_area = sum(Filter_list_by_indices(self.inputs['area'],Get_positions(self.inputs['or_eli'],'SV')))
+            south_facade_area = sum(Filter_list_by_indices(BUI.area,Get_positions(BUI.or_eli,'SV')))
             # EAST FACADE
-            east_facade_area = sum(Filter_list_by_indices(self.inputs['area'],Get_positions(self.inputs['or_eli'],'EV')))
+            east_facade_area = sum(Filter_list_by_indices(BUI.area,Get_positions(BUI.or_eli,'EV')))
             #
             facade_height = np.sqrt(east_facade_area * south_facade_area / sog_area)
             sog_width = south_facade_area / facade_height
             sog_length = sog_area / sog_width
             exposed_perimeter = 2 * (sog_length + sog_width)
-        else: 
-            exposed_perimeter = self.inputs['exposed_perimeter']
+        else:
+            exposed_perimeter = BUI.exposed_perimeter
         characteristic_floor_dimension = sog_area / (0.5 * exposed_perimeter)
         # ============================ 
 
@@ -706,14 +745,14 @@ class __ISO52016__:
             1. the thermal Resistance (R) and Transmittance (U) of the floor
             2. External Temperature [°C]
         '''  
-        if not self.inputs['wall_thickness']:
-            self.inputs['wall_thickness'] = 0.35  # [m]
+        if not BUI.wall_thickness:
+            BUI.wall_thickness = 0.35  # [m]
         
-        if not self.inputs['R_floor_construction']:
-            self.inputs['R_floor_construction'] = 5.3  # Floor construction thermal resistance (excluding effect of ground) [m2 K/W]
+        if not BUI.R_floor_construction:
+            BUI.R_floor_construction = 5.3  # Floor construction thermal resistance (excluding effect of ground) [m2 K/W]
         
         # The thermal transmittance depends on the characteristic dimension of the floor, B' [see 8.1 and Equation (2)], and the total equivalent thickness, dt (see 8.2), defined by Equation (3):
-        equivalent_ground_thickness = self.inputs['wall_thickness'] + lambda_gr * (self.inputs['R_floor_construction'] + R_se)  # [m]
+        equivalent_ground_thickness = BUI.wall_thickness + lambda_gr * (BUI.R_floor_construction + R_se)  # [m]
         
         if equivalent_ground_thickness < characteristic_floor_dimension:  # uninsulated and moderately insulated floors
             U_sog = 2 * lambda_gr / (np.pi * characteristic_floor_dimension + equivalent_ground_thickness) * np.log(np.pi * characteristic_floor_dimension / equivalent_ground_thickness + 1)   # thermal transmittance of slab on ground including effect of ground [W/(m2 K)]
@@ -721,14 +760,14 @@ class __ISO52016__:
             U_sog = lambda_gr / (0.457 * characteristic_floor_dimension + equivalent_ground_thickness)
 
         # calcualtion of thermal resistance of virtual layer
-        R_gr_ve = 1 / U_sog - R_si - self.inputs['R_floor_construction'] - R_gr  
+        R_gr_ve = 1 / U_sog - R_si - BUI.R_floor_construction - R_gr  
         # R_sog_eff = 1 / U_sog - R_si  # effective thermal resistance of floor construction (including effect of ground) [m2 K/W]
 
         # Adding thermal bridges
-        if not self.inputs['H_tb']:
-            self.inputs['H_tb'] = exposed_perimeter * psi_k
+        if not BUI.H_tb:
+            BUI.H_tb = exposed_perimeter * psi_k
         else:
-            self.inputs['H_tb'] += exposed_perimeter * psi_k
+            BUI.H_tb += exposed_perimeter * psi_k
         # Calculation of steady-state  ground  heat  transfer  coefficients  are  related  to  the  ratio  of  equivalent  thickness 
         # to  characteristic floor dimension, and the periodic heat transfer coefficients are related to the ratio 
         # of equivalent thickness to periodic penetration depth
@@ -741,16 +780,17 @@ class __ISO52016__:
         a_tl = 0  # time lead of the heat flow cycle compared with that of the internal temperature [months]
         b_tl = 1  # time lag of the heat flow cycle compared with that of the external temperature [months]
         for month in range(12):
-            periodic_heat_flow_due_to_internal_temperature_variation[month] = -H_pi * amplitude_of_internal_temperature_variations * np.cos(2 * np.pi * (month + 1 - self.inputs['coldest_month'] + a_tl) / 12)
+            periodic_heat_flow_due_to_internal_temperature_variation[month] = -H_pi * amplitude_of_internal_temperature_variations * np.cos(2 * np.pi * (month + 1 - BUI.coldest_month + a_tl) / 12)
         periodic_heat_flow_due_to_external_temperature_variation = np.zeros(12)
         for month in range(12):
-            periodic_heat_flow_due_to_external_temperature_variation[month] = H_pe * amplitude_of_external_temperature_variations * np.cos(2 * np.pi * (month + 1 - self.inputs['coldest_month'] - b_tl) / 12)
+            periodic_heat_flow_due_to_external_temperature_variation[month] = H_pe * amplitude_of_external_temperature_variations * np.cos(2 * np.pi * (month + 1 - BUI.coldest_month - b_tl) / 12)
         average_heat_flow_rate = annual_average_heat_flow_rate + periodic_heat_flow_due_to_internal_temperature_variation + periodic_heat_flow_due_to_external_temperature_variation
         Theta_gr_ve = internal_temperature_by_month - (average_heat_flow_rate - exposed_perimeter * psi_k * (annual_mean_internal_temperature - annual_mean_external_temperature)) / (sog_area * U_sog)
         
-        return temp_ground(R_gr_ve=R_gr_ve,Theta_gr_ve=Theta_gr_ve, H_tb=self.inputs['H_tb'])
+        return temp_ground(R_gr_ve=R_gr_ve,Theta_gr_ve=Theta_gr_ve, H_tb=BUI.H_tb)
 
-    def Occupancy_profile(self, **kwargs) -> simulation_df:
+    @classmethod
+    def Occupancy_profile(cls, BUI, **kwargs) -> simulation_df:
         '''
         Definition of occupancy profile for:
         1) Internal gains 
@@ -775,7 +815,8 @@ class __ISO52016__:
         '''
         # WEATHER DATA
         # sim_df = pd.DataFrame(self.get_tmy_data().weather_data)
-        sim_df = pd.DataFrame(self.sim_df)
+        
+        sim_df = pd.DataFrame(Calc_52010(BUI).sim_df)
         sim_df.index = pd.DatetimeIndex(sim_df.index)
         # number of days of simulation (13 months)
         number_of_days_with_warmup_period = len(sim_df) // 24
@@ -785,10 +826,10 @@ class __ISO52016__:
         sim_df['comfort level'] = np.nan
 
         # Occupation (both for gain and ventilation) workday and weekend according to schedule
-        occ_level_wd = self.inputs['occ_level_wd']
-        occ_level_we = self.inputs['occ_level_we']
-        comf_level_wd = self.inputs['comf_level_wd']
-        comf_level_we = self.inputs['comf_level_wd']
+        occ_level_wd = BUI.occ_level_wd
+        occ_level_we = BUI.occ_level_we
+        comf_level_wd = BUI.comf_level_wd
+        comf_level_we = BUI.comf_level_wd
         
         ''' WORKDAY '''
         # Nnumber of workdays during the entire simulation period
@@ -816,18 +857,19 @@ class __ISO52016__:
         ''' HEATING '''
         #Associate setback and setpoint of heating to occupancy profile for comfort
         sim_df['Heating'] = np.nan
-        sim_df.loc[comfort_hi_mask, 'Heating'] = self.inputs['H_setpoint']
-        sim_df.loc[comfort_lo_mask, 'Heating'] = self.inputs['H_setback']
+        sim_df.loc[comfort_hi_mask, 'Heating'] = BUI.H_setpoint
+        sim_df.loc[comfort_lo_mask, 'Heating'] = BUI.H_setback
         
         ''' COOLING '''
         #Associate setback and setpoint of cooling to occupancy profile for comfort
         sim_df['Cooling'] = np.nan
-        sim_df.loc[comfort_hi_mask, 'Cooling'] = self.inputs['C_setpoint']
-        sim_df.loc[comfort_lo_mask, 'Cooling'] = self.inputs['C_setback']
+        sim_df.loc[comfort_hi_mask, 'Cooling'] = BUI.C_setpoint
+        sim_df.loc[comfort_lo_mask, 'Cooling'] = BUI.C_setback
 
         return simulation_df(simulation_df = sim_df)
 
-    def Vent_heat_transf_coef_and_Int_gains(self, c_air=1006, rho_air=1.204, **kwargs) -> h_vent_and_int_gains:
+    @classmethod
+    def Vent_heat_transf_coef_and_Int_gains(cls, BUI, c_air=1006, rho_air=1.204, **kwargs) -> h_vent_and_int_gains:
         '''
         Calculation of heat transfer coefficient (section 8 - ISO 13789:2017 and 6.6.6 ISO 52016:2017 ) and internal gains
         
@@ -850,22 +892,23 @@ class __ISO52016__:
         Phi_int: internal gains [W]
         '''
         # VENTILATION (CONDUTTANCE)
-        sim_df = __ISO52016__(self.inputs).Occupancy_profile(**self.inputs).simulation_df
+        sim_df = __ISO52016__().Occupancy_profile(BUI).simulation_df
         comfort_hi_mask = (sim_df['comfort level'] == 1)
-        sim_df['air flow rate'] = self.inputs['air_change_rate_base_value'] * self.inputs['a_use'] # [m3/h]
-        sim_df.loc[comfort_hi_mask, 'air flow rate'] += self.inputs['air_change_rate_extra'] * self.inputs['a_use'] 
+        sim_df['air flow rate'] = BUI.air_change_rate_base_value * BUI.a_use # [m3/h]
+        sim_df.loc[comfort_hi_mask, 'air flow rate'] += BUI.air_change_rate_extra * BUI.a_use 
         air_flow_rate = sim_df['air flow rate']
         H_ve = c_air * rho_air / 3600 * air_flow_rate #[W/K]
 
         # INTERNAL GAINS
         occ_hi_mask = (sim_df['occupancy level'] == 1)
-        sim_df['internal gains'] = self.inputs['internal_gains_base_value'] * self.inputs['a_use'] #[W]
-        sim_df.loc[occ_hi_mask, 'internal gains'] += self.inputs['internal_gains_extra'] * self.inputs['a_use'] #[W] 
+        sim_df['internal gains'] = BUI.internal_gains_base_value * BUI.a_use #[W]
+        sim_df.loc[occ_hi_mask, 'internal gains'] += BUI.internal_gains_extra * BUI.a_use #[W] 
         Phi_int = sim_df['internal gains']
 
         return h_vent_and_int_gains(H_ve=H_ve, Phi_int=Phi_int, sim_df_update=sim_df)
 
-    def Temperature_and_Energy_needs_calculation(self, nrHCmodes=2, c_int_per_A_us=10000, f_int_c=0.4, f_sol_c=0.1, 
+    @classmethod
+    def Temperature_and_Energy_needs_calculation(cls, BUI, nrHCmodes=2, c_int_per_A_us=10000, f_int_c=0.4, f_sol_c=0.1, 
                                                  f_H_c=1, f_C_c=1, delta_Theta_er=11, **kwargs):
         '''
         Calcualation fo energy needs according to the equation (37) of ISO 52016:2017. Page 60. 
@@ -953,7 +996,7 @@ class __ISO52016__:
             pbar.set_postfix({"Info": f"Inizailization {i}"})
             
             # INIZIALIZATION 
-            int_gains_vent = __ISO52016__(self.inputs).Vent_heat_transf_coef_and_Int_gains()
+            int_gains_vent =__ISO52016__().Vent_heat_transf_coef_and_Int_gains(BUI)
             sim_df = int_gains_vent.sim_df_update
             Tstepn = len(sim_df) # number of hours to perform the simulation 
 
@@ -979,71 +1022,69 @@ class __ISO52016__:
             pbar.update(1)
             # Number of building element 
             # bui_eln = len(df)
-            bui_eln = len(self.inputs['TypeSub_eli'])
+            bui_eln = len(BUI.TypeSub_eli)
             #
             pbar.update(1)
             # Type of element position if ground or external
-            TypeSub_eli = np.array(self.inputs['TypeSub_eli'])
+            TypeSub_eli = np.array(BUI.TypeSub_eli)
             Type_eli = bui_eln * ['EXT']
             Type_eli[np.where(TypeSub_eli == 'GR')[0][0]] = 'GR'
             #
             pbar.update(1)
             # Window g-value
             # tau_sol_eli = df['g_value'].to_numpy()
-            tau_sol_eli = np.array(self.inputs['g_w_eli'])
+            tau_sol_eli = np.array(BUI.g_w_eli)
             # Building Area of elements
             # A_eli = df['area'].to_numpy()
-            A_eli = np.array(self.inputs['A_eli'])
+            A_eli = np.array(BUI.A_eli)
             A_eli_tot = np.sum(A_eli) # Sum of all areas
             #
             pbar.update(1)
             # Orientation and tilt
-            or_eli = np.array(self.inputs['or_eli'])
+            or_eli = np.array(BUI.or_eli)
             #
             pbar.update(1)
             # External temperature ... (to be cheked)
             theta_sup = sim_df['T2m']
             # Internal capacity 
-            C_int = c_int_per_A_us * self.inputs['a_use']
+            C_int = c_int_per_A_us * BUI.a_use
             #
             pbar.update(1)
             # HEat Transfer coefficient for each element Area
-            Ah_ci = np.dot(A_eli,self.inputs['h_ci_eli'])
+            Ah_ci = np.dot(A_eli,BUI.h_ci_eli)
             #
             pbar.update(1)
             # mean internal radiative transfer coefficient 
-            h_ri_eli_mn = np.dot(A_eli, self.inputs['h_ri_eli']) / A_eli_tot
+            h_ri_eli_mn = np.dot(A_eli, BUI.h_ri_eli) / A_eli_tot
             #
             pbar.update(1)
             # inizialiazation vectorB and temperature
-            nodes = __ISO52016__(self.inputs).Number_of_nodes_element()
+            nodes = __ISO52016__().Number_of_nodes_element(BUI)
             Theta_old = 20 * np.ones(nodes.Rn)
             VecB = 20 * np.ones((nodes.Rn, 3))
             #
             pbar.update(1)
             #
             # Temperature ground and thermal bridges
-            t_Th = __ISO52016__(self.inputs).Temp_calculation_of_ground()
+            t_Th = __ISO52016__().Temp_calculation_of_ground(BUI)
             #
             pbar.set_postfix({"Info": f"Calculating ground temperature"})
             pbar.update(1)
             #
-            h_pli_eli=__ISO52016__(self.inputs).Conduttance_node_of_element().h_pli_eli
+            h_pli_eli= __ISO52016__().Conduttance_node_of_element(BUI).h_pli_eli
             #
             pbar.set_postfix({"Info": f"Calculating conduttance of elements"})
             pbar.update(1)
-            kappa_pli_eli=__ISO52016__(self.inputs).Areal_heat_capacity_of_element().kappa_pli_eli
-            
+            kappa_pli_eli= __ISO52016__().Areal_heat_capacity_of_element(BUI).kappa_pli_eli
             #
             pbar.set_postfix({"Info": f"Calculating aeral heat capacity of elements"})
             pbar.update(1)
-            
-            a_sol_pli_eli=__ISO52016__(self.inputs).Solar_absorption_of_element().a_sol_pli_eli
+            a_sol_pli_eli= __ISO52016__().Solar_absorption_of_element(BUI).a_sol_pli_eli
             #
             pbar.set_postfix({"Info": f"Calculating solar absorption of element"})
             pbar.update(1)
         
-        
+            
         '''
         CALCULATION OF SENSIBLE HEATING AND COOLING LOAD (following the procedure of poin 6.5.5.2 of UNI ISO 52016)
         For each hour and each zone the actual internal operative temperature θ and the actual int;ac;op;zt;t 6.5.5.2 Sensible heating and cooling load
@@ -1065,7 +1106,7 @@ class __ISO52016__:
                 if Theta_H_set < -995: # 
                     Phi_H_nd_max_act = 0
                 else:
-                    Phi_H_nd_max_act = self.inputs['Phi_H_nd_max'] # 
+                    Phi_H_nd_max_act = BUI.Phi_H_nd_max # 
                 
                 # COOLING: 
                 # if there is no set point for heating (cooling system not installed) -> cooling power = 0
@@ -1073,7 +1114,7 @@ class __ISO52016__:
                 if Theta_C_set > 995:
                     Phi_C_nd_max_act = 0
                 else:
-                    Phi_C_nd_max_act = self.inputs['Phi_C_nd_max']
+                    Phi_C_nd_max_act = BUI.Phi_C_nd_max
 
                 Phi_HC_nd_calc[0] = 0 # the load has three values:  0 no heating e no cooling, 1  heating, 2 cooling
                 if Phi_H_nd_max_act == 0 and Phi_C_nd_max_act == 0: # 
@@ -1136,7 +1177,7 @@ class __ISO52016__:
                     for Eli in range(bui_eln):
                         Pli = nodes.Pln[Eli]
                         ci = nodes.PlnSum[Eli] + Pli
-                        MatA[ri, ci] -= A_eli[Eli] * self.inputs['h_ci_eli'][Eli]
+                        MatA[ri, ci] -= A_eli[Eli] * BUI.h_ci_eli[Eli]
 
                     # block_in_iterate_start = time.perf_counter()
 
@@ -1157,8 +1198,8 @@ class __ISO52016__:
                                     VecB[ri, cBi] += (XTemp + (1 - f_HC_c) * Phi_HC_nd_calc[cBi]) / A_eli_tot
                             elif Pli == 0:
                                 if Type_eli[Eli] == 'EXT':
-                                    XTemp = (self.inputs['h_ce_eli'][Eli] + self.inputs['h_re_eli'][Eli]) * sim_df['T2m'].iloc[Tstepi] - self.inputs['F_sk_eli'][Eli] * \
-                                            self.inputs['h_re_eli'][Eli] * delta_Theta_er
+                                    XTemp = (BUI.h_ce_eli[Eli] + BUI.h_re_eli[Eli]) * sim_df['T2m'].iloc[Tstepi] - BUI.F_sk_eli[Eli] * \
+                                            BUI.h_re_eli[Eli] * delta_Theta_er
                                     for cBi in range(nrHCmodes):
                                         VecB[ri, cBi] += XTemp
                                 elif Type_eli[Eli] == 'GR':
@@ -1169,15 +1210,15 @@ class __ISO52016__:
                             ci = 1 + nodes.PlnSum[Eli] + Pli
                             MatA[ri, ci] += kappa_pli_eli[Pli, Eli] / Dtime[Tstepi]
                             if Pli == (nodes.Pln[Eli] - 1):
-                                MatA[ri, ci] += self.inputs['h_ci_eli'][Eli] + h_ri_eli_mn
-                                MatA[ri, 0] -= self.inputs['h_ci_eli'][Eli]
+                                MatA[ri, ci] += BUI.h_ci_eli[Eli] + h_ri_eli_mn
+                                MatA[ri, 0] -= BUI.h_ci_eli[Eli]
                                 for Elk in range(bui_eln):
                                     Plk = nodes.Pln[Elk] - 1
                                     ck = 1 + nodes.PlnSum[Elk] + Plk
-                                    MatA[ri, ck] -= (A_eli[Elk] / A_eli_tot) * self.inputs['h_ri_eli'][Elk]
+                                    MatA[ri, ck] -= (A_eli[Elk] / A_eli_tot) * BUI.h_ri_eli[Elk]
                             elif Pli == 0:
                                 if Type_eli[Eli] == 'EXT':
-                                    MatA[ri, ci] += self.inputs['h_ce_eli'][Eli] + self.inputs['h_re_eli'][Eli]
+                                    MatA[ri, ci] += BUI.h_ce_eli[Eli] + BUI.h_re_eli[Eli]
                                 elif Type_eli[Eli] == 'GR':
                                     MatA[ri, ci] += 1 / t_Th.R_gr_ve
                             if Pli > 0:
@@ -1207,10 +1248,10 @@ class __ISO52016__:
                     if nrHCmodes > 1: # se 
                         if Theta_int_op[Tstepi, 0] < Theta_H_set:
                             Theta_op_set = Theta_H_set
-                            Phi_HC_nd_act[Tstepi] = self.inputs['Phi_H_nd_max'] * (Theta_op_set - Theta_int_op[Tstepi, 0]) / (
+                            Phi_HC_nd_act[Tstepi] = BUI.Phi_H_nd_max * (Theta_op_set - Theta_int_op[Tstepi, 0]) / (
                                         Theta_int_op[Tstepi, colB_H] - Theta_int_op[Tstepi, 0])
-                            if Phi_HC_nd_act[Tstepi] > self.inputs['Phi_H_nd_max']:
-                                Phi_HC_nd_act[Tstepi] = self.inputs['Phi_H_nd_max']
+                            if Phi_HC_nd_act[Tstepi] > BUI.Phi_H_nd_max:
+                                Phi_HC_nd_act[Tstepi] = BUI.Phi_H_nd_max
                                 Theta_op_act[Tstepi] = Theta_int_op[Tstepi, colB_H]
                                 colB_act = colB_H
                             else:
@@ -1221,10 +1262,10 @@ class __ISO52016__:
                                 iterate = True
                         elif Theta_int_op[Tstepi, 0] > Theta_C_set:
                             Theta_op_set = Theta_C_set
-                            Phi_HC_nd_act[Tstepi] = self.inputs['Phi_C_nd_max'] * (Theta_op_set - Theta_int_op[Tstepi, 0]) / (
+                            Phi_HC_nd_act[Tstepi] = BUI.Phi_C_nd_max * (Theta_op_set - Theta_int_op[Tstepi, 0]) / (
                                     Theta_int_op[Tstepi, colB_C] - Theta_int_op[Tstepi, 0])
-                            if Phi_HC_nd_act[Tstepi] < self.inputs['Phi_C_nd_max']:
-                                Phi_HC_nd_act[Tstepi] = self.inputs['Phi_C_nd_max']
+                            if Phi_HC_nd_act[Tstepi] < BUI.Phi_C_nd_max:
+                                Phi_HC_nd_act[Tstepi] = BUI.Phi_C_nd_max
                                 Theta_op_act[Tstepi] = Theta_int_op[Tstepi, colB_C]
                                 colB_act = colB_C
                             else:

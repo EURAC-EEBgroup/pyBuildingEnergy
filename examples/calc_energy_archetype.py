@@ -13,4 +13,3 @@ inputs_archetype = inizialize.get_archetype()
 hourly_sim = __ISO52016__(inputs_archetype).Temperature_and_Energy_needs_calculation() 
 print(hourly_sim)
 
-
