@@ -13,7 +13,7 @@ from pytz import timezone
 import numpy as np
 from dataclasses import dataclass
 # from pybuildingenergy.src.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
-from src.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
+from pybuildingenergy.src.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
 from tqdm import tqdm
 import multiprocessing
 
