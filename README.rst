@@ -22,9 +22,19 @@ Energy simulation of the building using ISO52000
 Building Inputs
 ----------------
 
-#------------------|-----------------------|------------------------|
-# Test |ciao | come va 
+.. list-table:: Title
+   :widths: 25 25 50
+   :header-rows: 1
 
+   * - Heading row 1, column 1
+     - Heading row 1, column 2
+     - Heading row 1, column 3
+   * - Row 1, column 1
+     -
+     - Row 1, column 3
+   * - Row 2, column 1
+     - Row 2, column 2
+     - Row 2, column 3
 
 * Free software: MIT license
 * Documentation: https://pybuildingenergy.readthedocs.io.
