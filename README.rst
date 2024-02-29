@@ -29,7 +29,6 @@ Building Inputs
    * - Parameter
      - Description
      - Mandatory
-     
    * - Latitude
      - latitude of the building in [decimal].
      - YES
@@ -51,16 +50,9 @@ Building Inputs
    * - exposed_perimeter
      - perimeter of the building [m]
      - YES/NO iIf not provided, the perimeter is calculated as if the building were rectangular with one side being 10 meters
-
-     
-
-
-
-
-
-   * - Row 2, column 1
-     - Row 2, column 2
-     - Row 2, column 3
+..    * - Row 2, column 1
+..      - Row 2, column 2
+..      - Row 2, column 3
 
 * Free software: MIT license
 * Documentation: https://pybuildingenergy.readthedocs.io.
