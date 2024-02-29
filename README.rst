@@ -23,7 +23,7 @@ Building Inputs
 ----------------
 
 .. list-table:: building general geometry data
-   :widths: 25 25 35 35
+   :widths: 25 25 50 
    :header-rows: 1
 
    * - Parameter
