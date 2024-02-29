@@ -22,16 +22,42 @@ Energy simulation of the building using ISO52000
 Building Inputs
 ----------------
 
-.. list-table:: Title
-   :widths: 25 25 50
+.. list-table:: building general geometry data
+   :widths: 25 25 35 35
    :header-rows: 1
 
-   * - Heading row 1, column 1
-     - Heading row 1, column 2
-     - Heading row 1, column 3
-   * - Row 1, column 1
-     -
-     - Row 1, column 3
+   * - Parameter
+     - Description
+     - Mandatory
+     
+   * - Latitude
+     - latitude of the building in [decimal].
+     - YES
+   * - Longitude
+     - longitude of the building location [decimal].
+     - YES
+   * - a_use
+     - net floor area: conditioned area of the building [m2].
+     - YES
+   * - slab_on_ground_area
+     - Ground floor gross area [m2].
+     - YES/NO if number of floors is provided
+   * - number_of_floor
+     - Number of building floors [-]
+     - YES/NO if number of floors is provided
+   * - exposed_perimeter
+     - perimeter of the building [m]
+     - YES/NO iIf not provided, the perimeter is calculated as if the building were rectangular with one side being 10 meters
+   * - exposed_perimeter
+     - perimeter of the building [m]
+     - YES/NO iIf not provided, the perimeter is calculated as if the building were rectangular with one side being 10 meters
+
+     
+
+
+
+
+
    * - Row 2, column 1
      - Row 2, column 2
      - Row 2, column 3
