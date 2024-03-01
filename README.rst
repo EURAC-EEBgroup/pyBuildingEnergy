@@ -105,9 +105,13 @@ The calculation is currently aimed at single-zone buildings with ground floors. 
 
 Getting Started
 ----------------
- Teh following command will install the latest pyBuildinEnergy library
+The following command will install the latest pyBuildinEnergy library
 
-  pip install pybuildingenergy
+::
+
+    pip install pybuildingenergy
+
+  
 
 
 Building Inputs
