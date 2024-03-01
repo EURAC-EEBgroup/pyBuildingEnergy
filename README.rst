@@ -4,7 +4,8 @@ pyBuildingEnergy
 
 
 .. image:: https://github.com/DanieleAntonucci20/pyBuildingEnergy/blob/master/pybuildingenergy/assets/Logo_pyBuild.png
-   :width: 600
+   :width: 800
+   :height: 400
 
 |
 .. start-badges
