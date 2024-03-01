@@ -3,7 +3,7 @@ pyBuildingEnergy
 ================
 
 
-.. image:: /Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/pybuildingenergy/pybuildingenergy/assets/Logo_pyBuild.png
+.. image:: pyBuildingEnergy/pybuildingenergy/assets/Logo_pyBuild.png
    :width: 600
 
 |
