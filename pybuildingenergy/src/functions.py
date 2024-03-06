@@ -16,6 +16,18 @@ from sklearn.metrics import r2_score
 from datetime import datetime
 
 
+# ===========================================================================================
+#                           FUNCTION FOR TMY
+# ===========================================================================================
+def get_period_from_tmy_filename(tmy_filename):
+    tmp = tmy_filename.split('_')[-2:]
+    start = int(tmp[0])
+    end = int(tmp[1].split('.')[0])
+    return [start, end]
+
+
+
+# ===========================================================================================
 def capitalize_first_letter(s):
     if not s:
         return s

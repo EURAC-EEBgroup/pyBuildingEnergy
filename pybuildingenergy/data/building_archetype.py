@@ -5,123 +5,6 @@ __version__ = "0.1"
 __maintainer__ = "Daniele Antonucci"
 
 '''
-Description and properties of building elements
------
-The calculation of the heat capacity of each opaque element is based on the following formula:
-density[kg/m3] * Specific heat capacity[J/kgK] * tichkness[m]
-transmittance: reference Tabula/Episcope datasheet
-
-ASSUMPTION:
-- windowed surface 1/8 of the gross area
-- windowed surface devided in 30% South  30% East 30% Weat 10% North 
-- Rectangle building with:
-    a side of 10 meters and oriented to the north.
-
-UNIT:
-thickness : centimeter
-transmittance: W/m2K
-thermal_resistance: m2K/W
-heat capacity: J/kgK
-
-STANDARD INPUTS
-                                                    WALL       ROOF     WINDOW   FLOOR-Slab on ground
-convective_heat_transfer_coefficient_internal:      2.50       5.00       2.50      0.70
-convective_heat_transfer_coefficient_external:      5.13       5.13       5.13      5.13
-radiative_heat_transfer_coefficient_internal:       20.0       5.13       20.0      20.0
-radiative_heat_transfer_coefficient_external:       4.14       4.14       4.14      4.14
-solar_factor*:                                      0.50       1.00       0.50      0.00
-*Solar factor for vertical element is 0.5, 
- horizontal 1.0, 0.0 for floor slab on ground.
-
-solar absorption of elements                        0.60       0.60       1.00      0.00
-
-AREA ROOF
-type of roof: gable roof with eaves overhang.
-Area roof calcuated with slope of 28°C from the perimeter + 0.5m of eaves overhang
-
-formula = ((length_small*cos(28)+0.5*cos(28))*length_roof)*2
-cos(28°) = 0.88
-
-INTERNAL GAINS
-reference: 339487912_Optimization_of_passive_design_features_for_a_naturally_ventilated_residential_building_according_to_the_bioclimatic_architecture_concept_and_considering_the_northern_Morocco_climate
-
-Zone                |       Equipment           |       Power       | Unit
-Living                          TV                      120             W
-                                Light                   5               W/m2
-Bedroom                         Light                   5               W/m2
-Bedroom2                        Light                   5               W/m2
-Bedroom3                        Light                   5               W/m2
-Kirtchen                        Refrigerator            100             W
-                                Washing                 2000            W
-                                Stove                   800             W
-                                Light                   5               W/m2
-People - 100/each               4                       100             W                                             
-
-AIR CHANGE RATE
-Residential                     0.5 m3/h 
-
-HEATING SYSTEM
-POWER:
-    The power is calculated using the following formula with some approssimations
-    For newly well-insulated buildings:
-    - the standard energy requirement value can be 0.03 kW/m³, 
-    for older buildings with high thermal losses:
-    - the standard energy requirement value can be 0.12 kW/m³
-
-COOLING SYSTEM
-for the building archetype the cooling system is set off.
-In this case the values of cooling setpoint and setback are the same
-
-
-
-TABLE B.13 - DISTRIBUTION OF MASS OPAQUE AND GROUND FLOOR ELEMENTS
-df_TB13 = pd.DataFrame({
-    "Class":["Class I (mass concentrated at internal side)",
-             "Class E (mass concentrated at external side)",
-             "Class IE (mass divided over internal and external side)",
-             "Class D (mass equally distributed)"
-             ],
-    "Specification_of_the_class": [
-        "Construction with external thermal insulation (main mass component near inside surface) , or equivalent",
-        "Construction with internal thermal insulation (main mass component near outside surface) , or equivalent",
-        "Construction with thermal insulation in between two main mass components, or equivalent",
-        "Uninsulated construction (e.g. solid or hollow bricks, heavy or lightweight concrete, or lightweight \
-            construction with negligible mass (e.g. steel sandwich panel), or equivalent"]
-    
-})
-
-
-TABLE B.14 - SPECIFIC HEAT CAPACITY OF OPAQUE AND GROUND FLOOR ELEMENTS
-df_TB_14 = pd.DataFrame({
-    "Class" : ["Very light","Light", "Medium", "Heavy", "Very heavy"],
-    "kappa_m_op": [50000, 75000, 110000, 175000, 250000],
-    "Specification of the class": [
-        "Construction containing no mass components, other than e.g. plastic board and/or wood siding, or equivalent",
-        "Construction containing no mass components other than 5 to 10 cm lightweight brick or concrete, or equivalent",
-        "Construction containing no mass components other than 10 to 20 cm lightweight brick or concrete, or less than 7 cm solid brick or heavy weight concrete, or equivalent",
-        "Construction containing 7 to 12 cm solid brick or heavy weight concrete, or equivalent",
-        "Construction containing more than 12 cm solid brick or heavy weight concrete, or equivalent"
-    ]
-})
-
-
-
-TABLE 25 - CONVENTIONAL HEAT TRANSFER COEFFICIENT
-df_Tb_25 = pd.DataFrame({
-    "Heat_transfer_coefficient":["convective coefficient; internal surface",
-                                "convective coefficient; external surface",
-                                "radiative coefficient, internal surface",
-                                "radiative coefficient, external surface"],
-    "Symbol":["hc_i", "hc_e", "hlr_i", "hlr_e"],
-    "Direction_of_heat_flow_Upwards": [5,20,5.13,4.14],
-    "Direction_of_heat_flow_Horizontal": [2.5,20,5.13,4.14],
-    "Direction_of_heat_flow_Downwards": [0.7,20,5.13,4.14],
-})
-
-Definition of reference tecnology and building archetypo for each nation.
-Reference: 
-- EIPISCOPE/TABULA
-- Building stock Observatory 
 
 # Acutal limitation
 Vedere test area edificio e area del solaio controterra differenti 
@@ -178,7 +61,7 @@ g_window = [0.85, 0.85]
 # ========================================================================================================================
 
 periods = ['before 1900', '1901-1920','1921-1945','1946-1960','1961-1875','1976-1990','1991-2005','2006-today']
-bui_types = ['single_fammily_house']*len(periods)
+bui_types = ['single_family_house']*len(periods)
 area = [139, 115, 116, 162, 156, 199, 172, 174]
 window_area = [17.4, 14.4, 14.5, 20.3, 19.5, 24.9, 21.5, 21.8] # 1/8 della superificie
 volume = [533,448,455,583,679,725,605,607]
@@ -234,7 +117,7 @@ cooling_installed = [False]*len(periods)
 #                                       GENERATE BUILDING ARCHETYPE
 # ========================================================================================================================
 
-class BuildingArchetype(object):
+class Buildings(object):
 
     def __init__(self, 
         building_type: str, 
@@ -274,13 +157,18 @@ class BuildingArchetype(object):
         occ_level_wd= np.array,
         occ_level_we=np.array,
         comf_level_wd= np.array,
-        construction_class= "class_i"
+        comf_level_we= np.array,
+        construction_class= "class_i",
+        **kwargs
         ):
 
         self.building_type = building_type
         self.periods = periods
         self.latitude = latitude
         self.longitude = longitude
+        self.annual_mean_internal_temperature = kwargs.get('annual_mean_internal_temperature')
+        self.annual_mean_external_temperature = kwargs.get('annual_mean_external_temperature')
+        self.amplitude_of_internal_temperature_variations = kwargs.get('amplitude_of_internal_temperature_variations')
         self.a_use = area
         self.exposed_perimeter = exposed_perimeter
         self.height=  height
@@ -322,9 +210,14 @@ class BuildingArchetype(object):
         self.occ_level_wd = occ_level_wd
         self.occ_level_we = occ_level_we
         self.comf_level_wd = comf_level_wd
+        self.comf_level_we = comf_level_we
         self.baseline_hci = baseline_hci
         self.baseline_hce = baseline_hce
         self.construction_class = construction_class
+        self.weather_source = kwargs.get('weather_source')
+        self.tmy_filename = kwargs.get('tmy_filename')
+        self.location = kwargs.get('location')
+
 
     @property
     def slab_on_ground(self):
@@ -433,12 +326,12 @@ class BuildingArchetype(object):
             if u_value > 8 or u_value <=0.1:
                  quality_check_errors.append(f"Possible error. Transmittance of the element {nameElement} oriented to {orient_elment} too low or too hight")
 
-        #3. Check area of wall and windows
-        for i in range(4):
-            area_wall = self.area_elements[i]
-            area_window = self.area_elements[i+6]
-            if area_wall == area_window:
-                quality_check_errors.append(f"Error!. The area of the {self.orientation_elements[i]} wall is equal to the area of the {self.orientation_elements[i]}windows. ")
+        # #3. Check area of wall and windows
+        # for i in range(4):
+        #     area_wall = self.area_elements[i]
+        #     area_window = self.area_elements[i+6]
+        #     if area_wall == area_window:
+        #         quality_check_errors.append(f"Error!. The area of the {self.orientation_elements[i]} wall is equal to the area of the {self.orientation_elements[i]}windows. ")
 
         # 4. Check area roof and floor slab on ground
         area_roof = self.area_elements[5]
@@ -458,9 +351,9 @@ class Selected_bui_archetype:
     def __init__(self, bui_archetype, period, latitude, longitude):
         self.bui_archetype = bui_archetype
         self.period = period
-        self.latitude = latitude, 
-        self.longitude = longitude
-
+        self.latitude = float(latitude)
+        self.longitude = float(longitude)
+        print(bui_archetype,period, latitude, longitude )
     
         if bui_archetype in bui_types:
                 self.bui_archetype = bui_archetype
@@ -496,7 +389,7 @@ class Selected_bui_archetype:
 
     def Get_bui_archetype(self):
         index_archetype = self.Number_archetype()
-        return BuildingArchetype(
+        return Buildings(
             building_type = self.bui_archetype,
             periods = self.period,
             latitude=self.latitude, 
@@ -539,74 +432,135 @@ class Selected_bui_archetype:
             occ_level_wd= profile_residential_1['profile_workdays_internal_gains'],
             occ_level_we= profile_residential_1['profile_workdays_internal_gains'],
             comf_level_wd= profile_residential_1['profile_workdays_internal_gains'],
+            comf_level_we= profile_residential_1['profile_workdays_internal_gains'],
             construction_class= "class_i"
         )
-    
 
-# def main(latitude, longitude):
-#     bui_inputs_archetype = []
-#     for i,year in enumerate(periods):
-#         bui_ = {
-#             # BUILDING FEATURE
-#             'type': bui_types[i], # building type
-#             'year': year, # year of construction 
-#             'latitude': latitude,
-#             'longitude': longitude, 
-#             'volume' : volume[i], # in m3
-#             'exposed_perimeter': perimeter[i], # perimeter in m
-#             'slab_on_ground_area': area[i]/number_of_floor[i], # Area slab on ground in m2
-#             'wall_thickness' :  thickness_wall[code_wall.index(w_code[i])], # in m
-#             'coldest_month': 1, 
-#             'a_use': area[i],
-#             'surface_envelope': area_north[i]+area_south[i]+area_east[i]+area_west[i]+area[i]/number_of_floor[i]+area_roof[i],
-#             'surface_envelope_model': S_envelope[i],
-#             # SYSTEMS 
-#             'base': base[i],
-#             "heating": True,
-#             "cooling": True,
-#             'heating_setpoint': 20, # in °c
-#             'cooling_setpoint': 26, # in °c
-#             'heating_setback':10, # in °c
-#             'cooling_setback':26, # in °c
-#             'power_heating_max':Power_heating_system(volume[i], building_category_const[i]), # in W
-#             # 'power_heating_max':30000, # in W
-#             'power_cooling_max':-10000, # in W
-#             # INTERNAL GAINS and VENTILATION LOSSES
-#             'air_change_rate_base_value':air_change_rate_base_value[i]*area[i] , # in m3/h*m2
-#             # 'air_change_rate_base_value':1.1 , # in m3/h*m2
-#             'air_change_rate_extra':0.0, # in m3/h*m2
-#             'internal_gains_base_value':Internal_gains('residential', area[i]), # in W/m2
-#             # 'internal_gains_base_value':5, # in W/m2
-#             'internal_gains_extra':0.0, # in W/m2
-#             # THERMAL BRIDGES
-#             'thermal_bridge_heat' : 10.0, # in W/m
-#             # FEATURES OF FAACDE ELEMENTS:
-#             'thermal_resistance_floor': R_floor[code_floor.index(f_code[i])], 
-#             # "Wall North", "Wall South", "Wall East", "Wall West", "Floor slab on gorund", "Roof", "Window North", "Window South", "Window East", "Window West"
-#             'typology_elements': np.array(["OP", "OP", "OP", "OP", "GR", "OP", "W", "W", "W", "W"],dtype=object), 
-#             'orientation_elements': np.array(['NV', 'SV', 'EV', 'WV', 'HOR', 'HOR', 'NV', 'SV', 'EV', 'WV'],dtype=object),
-#             'solar_area_elements': np.array([1.0,1.0,1.0,1.0,0.0,1.0,0.6,0.6,0.6,0.6], dtype=object),
-#             'area_elements': [area_north[i], area_south[i], area_east[i],area_west[i],area[i]/2, area_roof[i], 
-#                     round(0.1*window_area[i],2),round(0.3*window_area[i],2),
-#                     round(0.3*window_area[i],2),round(0.3*window_area[i],2),
-#                     ],
-#             'transmittance_U_elments' : [U_wall[code_wall.index(w_code[i])]]*4+ [U_floor[code_floor.index(f_code[i])]] + [U_roof[code_roof.index(r_code[i])]] +[U_window[code_window.index(win_code[i])]]*4,
-#             'thermal_resistance_R_elements' : [R_wall[code_wall.index(w_code[i])]]*4+ [R_floor[code_floor.index(f_code[i])]] + [R_roof[code_roof.index(r_code[i])]] +[R_window[code_window.index(win_code[i])]]*4,
-#             'thermal_capacity_elements' : [heat_capacity_wall[code_wall.index(w_code[i])]]*4+ [heat_capacity_floor[code_floor.index(f_code[i])]] + [heat_capacity_roof[code_roof.index(r_code[i])]] +[0]*4,
-#             'g_factor_windows' : [0]*6 +[g_window[code_window.index(win_code[i])]]*4,
-#             'heat_convective_elements_internal': np.array([2.50, 2.50, 2.50, 2.50, 0.70, 5.00, 2.50, 2.50, 2.50, 2.50], dtype=object),
-#             'heat_radiative_elements_internal': np.array([5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13],dtype=object),
-#             'heat_convective_elements_external': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object),
-#             'heat_radiative_elements_external': np.array([4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14],dtype=object),
-#             'sky_factor_elements': np.array([0.50, 0.50, 0.50, 0.50, 0.00, 1.00, 0.50, 0.50, 0.50, 0.50], dtype=object), 
-#             'occ_level_wd': profile_residential_1['profile_workdays_internal_gains'],
-#             'occ_level_we': profile_residential_1['profile_weekend_internal_gains'],
-#             'comf_level_wd': profile_residential_1['profile_workdays_ventilation'],
-#             'baseline_hci': np.array([2.50, 2.50, 2.50, 2.50, 0.70, 5.00, 2.50, 2.50, 2.50, 2.50], dtype=object),
-#             'baseline_hce': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object),
-#             "construction_class": "class_i"
-#         }
+class Buildings_from_dictionary(object):
+    def __init__(self, data):
+        for key, value in data.items():
+            setattr(self, key, value)
 
+
+#     def Get_building_bestest(self):
+#         return Buildings(
+#             latitude = self.latitude,
+#             longitude = self.longitude,
+#             a_use = self.area,
+#             exposed_perimeter = self.exposed_perimeter,
+#             height=  self.height,
+#             number_of_floor = self.number_of_floor,
+#             volume = self.volume,  # Initialize attribute to None
+#             slab_on_ground = self.slab_on_ground,
+#             wall_thickness = self.wall_thickness,
+#             coldest_month = self.coldest_month,
+#             surface_envelope = self.surface_envelope, # calculated from sum of surfaces + floor  + roof
+#             surface_envelope_model = self.surface_envelope_model, # calculated from S/V coefficient
+#             base = side # side of rectangular shape of building, a side of 10 meters is hypothesized
+#             self.heating_mode = heating_mode
+#             self.cooling_mode = cooling_mode
+#             self.heating_setpoint = heating_setpoint
+#             self.heating_setback = heating_setback
+#             self.cooling_setpoint = cooling_setpoint
+#             self.cooling_setback = cooling_setback
+#             self.power_cooling_max = -power_cooling_max
+#             self.power_heating_max = power_heating_max
+#             self.air_change_rate_base_value = air_change_rate_base_value
+#             self.air_change_rate_extra = air_change_rate_extra
+#             self.internal_gains_base_value = internal_gains_base_value
+#             self.internal_gains_extra = internal_gains_extra
+#             self.thermal_bridge_heat = thermal_bridge_heat
+#             self.thermal_resistance_floor = thermal_resistance_floor
+#             self.typology_elements = typology_elements
+#             self.orientation_elements = orientation_elements
+#             self.solar_area_elements = solar_area_elements
+#             self.area_elements = area_elements
+#             self.transmittance_U_elments =transmittance_U_elments 
+#             self.thermal_resistance_R_elements = thermal_resistance_R_elements
+#             self.thermal_capacity_elements = thermal_capacity_elements
+#             self.g_factor_windows = g_factor_windows
+#             self.heat_convective_elements_internal = heat_convective_elements_internal
+#             self.heat_radiative_elements_internal = heat_radiative_elements_internal
+#             self.heat_convective_elements_external = heat_convective_elements_external
+#             self.heat_radiative_elements_external = heat_radiative_elements_external
+#             self.sky_factor_elements = sky_factor_elements
+#             self.occ_level_wd = occ_level_wd
+#             self.occ_level_we = occ_level_we
+#             self.comf_level_wd = comf_level_wd
+#             self.baseline_hci = baseline_hci
+#             self.baseline_hce = baseline_hce
+#             self.construction_class = construction_class
+#         )
+
+
+# Buildingsa()
+
+# #Oslo
+# 59.90986339410974, 10.755256276059244
+
+
+# bui_ = {
+#     # BUILDING FEATURE
+#     'type': 'BestTest600', # building type
+#     'year': 2024, # year of construction 
+#     'latitude': 44,
+#     'longitude': 44, 
+#     'volume' : 129.6, # in m3
+#     'exposed_perimeter': 0.00999, # perimeter in m
+#     'slab_on_ground_area': 0.00999, # Area slab on ground in m2
+#     'wall_thickness' :  0.35, # in m
+#     'coldest_month': 1, 
+#     'a_use': 48,
+#     'surface_envelope': 48+48+21.6+9.6+12+16.2+16.2,
+#     'surface_envelope_model': 48+48+21.6+9.6+12+16.2+16.2,
+#     'annual_mean_internal_temperature': 39.76,
+#     'annual_mean_external_temperature': 7,
+#     # SYSTEMS 
+#     'base': 4.8,
+#     "heating": True,
+#     "cooling": True,
+#     'heating_setpoint': 20, # in °c
+#     'cooling_setpoint': 26, # in °c
+#     'heating_setback':10, # in °c
+#     'cooling_setback':26, # in °c
+#     'power_heating_max':10000, # in W
+#     # 'power_heating_max':30000, # in W
+#     'power_cooling_max':-10000, # in W
+#     # INTERNAL GAINS and VENTILATION LOSSES
+#     'air_change_rate_base_value':1.107 , # in m3/h*m2
+#     # 'air_change_rate_base_value':1.1 , # in m3/h*m2
+#     'air_change_rate_extra':0.0, # in m3/h*m2
+#     'internal_gains_base_value':1.453, # in W/m2
+#     # 'internal_gains_base_value':5, # in W/m2
+#     'internal_gains_extra':0, # in W/m2
+#     # THERMAL BRIDGES
+#     'thermal_bridge_heat' : 0.0, # in W/m
+#     # FEATURES OF FAACDE ELEMENTS:
+#     'thermal_resistance_floor': 1., 
+#     # "Wall North", "Wall South", "Wall East", "Wall West", "Floor slab on gorund", "Roof", "Window North", "Window South", "Window East", "Window West"
+#     'typology_elements': np.array(["OP", "OP", "OP", "OP", "GR", "OP", "W", "W", "W", "W"],dtype=object), 
+#     'orientation_elements': np.array(['NV', 'SV', 'EV', 'WV', 'HOR', 'HOR', 'NV', 'SV', 'EV', 'WV'],dtype=object),
+#     'solar_area_elements': np.array([1.0,1.0,1.0,1.0,0.0,1.0,0.6,0.6,0.6,0.6], dtype=object),
+#     'area_elements': [21.6, 9.6, 16.2,16.2, 48, 48,0.009999, 12,0.009999, 0.009999 ],
+#     'transmittance_U_elments' : [1/1.8, 1/1.8, 1/1.8, 1/1.8, 1/25.18, 1/2.99, 10, 1/2.98, 10, 10],
+#     'thermal_resistance_R_elements' : [1.8, 1.8, 1.8, 1.8, 25.18, 2.99, 10, 2.98, 10, 10],
+#     'thermal_capacity_elements' : [175000, 175000,175000,175000,110000, 50000, 0, 0, 0, 0],
+#     'g_factor_windows' : [0]*6 +[0,0.77,0,0],
+#     'heat_convective_elements_internal': np.array([2.50, 2.50, 2.50, 2.50, 0.70, 5.00, 2.50, 2.50, 2.50, 2.50], dtype=object),
+#     'heat_radiative_elements_internal': np.array([5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13],dtype=object),
+#     'heat_convective_elements_external': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object),
+#     'heat_radiative_elements_external': np.array([4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14],dtype=object),
+#     'sky_factor_elements': np.array([0.50, 0.50, 0.50, 0.50, 0.00, 1.00, 0.50, 0.50, 0.50, 0.50], dtype=object), 
+#     'occ_level_wd':[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+#     'occ_level_we': [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+#     'comf_level_wd': [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+#     'comf_level_we': [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+#     'baseline_hci': np.array([2.50, 2.50, 2.50, 2.50, 0.70, 5.00, 2.50, 2.50, 2.50, 2.50], dtype=object),
+#     'baseline_hce': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object),
+#     "construction_class": "class_i"
+# }
+# bui = Buildings_from_dictionary(bui_)
+# bui.__getattribute__('a_use')
 #         bui_inputs_archetype.append(bui_)
         
     

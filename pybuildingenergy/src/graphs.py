@@ -8,7 +8,10 @@ from pyecharts.globals import ThemeType
 import pandas as pd
 import os
 
-from pybuildingenergy.src.functions import capitalize_first_letter, line_and_bar, bar_chart_single, energy_gauge_chart,season_type,\
+# from pybuildingenergy.src.functions import capitalize_first_letter, line_and_bar, bar_chart_single, energy_gauge_chart,season_type,\
+#     Scatter_with_regression, Heating_Degree_days,Simple_regeression
+
+from src.functions import capitalize_first_letter, line_and_bar, bar_chart_single, energy_gauge_chart,season_type,\
     Scatter_with_regression, Heating_Degree_days,Simple_regeression
 
 
@@ -150,7 +153,9 @@ class __Graphs__:
             frequency = capitalize_first_letter(_frequency),
             name_chart="time_line",
         )
-        Chart.render(os.getcwd()+f"/pybuildingenergy/charts/{chart_name}.html")
+        # Chart.render(os.getcwd()+f"/pybuildingenergy/charts/{chart_name}.html")
+        print(os.path.dirname(__file__))
+        Chart.render(os.getcwd()+f"/charts/{chart_name}.html")
         return Chart
 
     
@@ -170,7 +175,8 @@ class __Graphs__:
         
         Chart = energy_gauge_chart('Heating', value, unit="kWh/m2", title_graph='Annual energy need for  heating')
         # Plot chart in a single html file
-        Chart.render(os.getcwd()+f"/pybuildingenergy/charts/{chart_name}.html")
+        # Chart.render(os.getcwd()+f"/pybuildingenergy/charts/{chart_name}.html")
+        Chart.render(os.getcwd()+f"/charts/{chart_name}.html")
         return Chart
 
     
@@ -237,7 +243,8 @@ class __Graphs__:
             subtitle_eq=f"{regress[1]}, r2:{regress[0]}"
         )
         
-        Chart.render(os.getcwd()+f"/pybuildingenergy/charts/{chart_name}.html")
+        # Chart.render(os.getcwd()+f"/pybuildingenergy/charts/{chart_name}.html")
+        Chart.render(os.getcwd()+f"/charts/{chart_name}.html")
         return Chart
 
     #
@@ -250,8 +257,8 @@ class __Graphs__:
             self.energy_signature(),
             self.annual_charts()
         )
-        page.render(os.getcwd()+"/pybuildingenergy/charts/bui_data_analysis.html")
-
+        # page.render(os.getcwd()+"/pybuildingenergy/charts/bui_data_analysis.html")
+        page.render(os.getcwd()+"/charts/bui_data_analysis.html")
 
 # TEST
 # import pandas as pd

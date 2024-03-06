@@ -5,6 +5,7 @@ __version__ = "0.1"
 __maintainer__ = "Daniele Antonucci"
 
 #%%
+import geopy.geocoders
 import requests
 import pandas as pd
 import datetime as dt
@@ -12,10 +13,20 @@ from timezonefinder import TimezoneFinder
 from pytz import timezone
 import numpy as np
 from dataclasses import dataclass
-# from pybuildingenergy.src.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
-from pybuildingenergy.src.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
 from tqdm import tqdm
+import os
 import multiprocessing
+import sys
+import re
+
+from src.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
+# from pybuildingenergy.src.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
+
+import examples.weatherdata
+from global_inputs import main_directory_
+# print(os.getcwd(examples.weatherdata))
+
+
 
 #%%
 
@@ -63,7 +74,7 @@ class simulation_df:
 class temp_ground:
     R_gr_ve: float
     Theta_gr_ve: np.array
-    H_tb: float
+    thermal_bridge_heat: float
 
 @dataclass
 class h_vent_and_int_gains:
@@ -109,6 +120,62 @@ class __ISO52010__:
     def __init__(self):
         pass
 
+    # GET WEATHER DATA FROM .epw FILE
+    @classmethod
+    def get_tmy(cls, BUI):
+        # ctx = ssl.create_default_context(cafile=certifi.where())  # to avoid ssl.SSLCertVerificationError; seems not needed anymore with newest requests and urllib3 libraries
+        # geopy.geocoders.options.default_ssl_context = ctx
+        latitude = BUI.__getattribute__('latitude')
+        longitude = BUI.__getattribute__('longitude')
+        # DEBUG MODE
+        # directory = main_directory_+"/pybuildingenergy/pybuildingenergy/examples/weatherdata"
+        # MAIN MODE
+        directory = main_directory_+"/examples/weatherdata"
+    
+        if BUI.__getattribute__('tmy_filename') is None:  # get TMY weather file from PVGIS
+            if BUI.__getattribute__('location') is None:
+                sys.exit('Error. You must specify either a TMY weather file or a location.')
+            else:
+                geo_location = geopy.geocoders.Nominatim(user_agent="GetLoc")
+                get_location = geo_location.geocode(BUI.__getattribute__('location'))
+                latitude = get_location.latitude
+                longitude = get_location.longitude
+
+                url = 'https://re.jrc.ec.europa.eu/api/tmy?lat=' + str(latitude) + '&lon=' + str(
+                    longitude) + '&outputformat=csv&browser=1'
+                r = requests.get(url, allow_redirects=True)
+                BUI.__setattr__('tmy_filename'), os.path.join(directory, r.headers['Content-disposition'].split('filename=')[1])
+
+                with open(BUI.__getattribute__('tmy_filename'), 'wb') as tmy_file:
+                    tmy_file.write(r.content)
+        else:
+            if BUI.__getattribute__('location') is not None:
+                print('Warning: location is ignored since you specified a TMY weather file.')
+            
+            # latitude = float(tmy_filename.split('_')[1])
+            # longitude = float(tmy_filename.split('_')[2])
+            tmy_filename = os.path.join(directory, BUI.__getattribute__('tmy_filename'))
+        
+        tmy_header_no_of_rows = 16
+        tmy_footer_no_of_rows = 12
+        tmy_weather_data = pd.read_csv(tmy_filename, skiprows=tmy_header_no_of_rows, skipfooter=tmy_footer_no_of_rows,
+                                    index_col=0, parse_dates=True,
+                                    date_parser=lambda x: dt.datetime.strptime(x, "%Y%m%d:%H%M"), engine='python')
+
+        # elevation is not needed for the energy demand calculation, only for the PV optimization
+        elevation = float(re.findall("\d+\.\d+", pd.read_csv(tmy_filename, header=None, nrows=3).iloc[2].squeeze())[0])
+
+        tf = TimezoneFinder()
+        utcoffset_in_hours = int(timezone(tf.timezone_at(lng=longitude, lat=latitude)).localize(tmy_weather_data.index[0]).utcoffset().total_seconds() / 3600.0)
+
+
+        return WeatherDataResult(
+            elevation=elevation,
+            weather_data=tmy_weather_data,
+            utc_offset=utcoffset_in_hours
+        )
+
+    # GET DATA FROM PVGIS
     @classmethod
     # def get_tmy_data(self) -> WeatherDataResult:
     def get_tmy_data(cls, BUI) -> WeatherDataResult:
@@ -117,8 +184,8 @@ class __ISO52010__:
         '''
         # Connection to PVGIS API to get weather data 
         # latitude = BUI['latitude']
-        latitude = BUI.latitude
-        longitude= BUI.longitude
+        latitude = BUI.__getattribute__('latitude')
+        longitude= BUI.__getattribute__('longitude')
         url = f'https://re.jrc.ec.europa.eu/api/tmy?lat={latitude}&lon={longitude}&outputformat=json&browser=1'
         response = requests.request("GET", url, allow_redirects=True)
         data = response.json()
@@ -144,6 +211,7 @@ class __ISO52010__:
             weather_data=df_weather,
             utc_offset=utcoffset_in_hours
         )
+    
     @classmethod
     def Solar_irradiance_calc(cls, BUI, timezone_utc, beta_ic_deg, gamma_ic_deg, DHI, DNI, ground_solar_reflectivity,
                     calendar, n_timesteps=n_timesteps, solar_constant=solar_constant, K_eps = K_eps,
@@ -190,7 +258,7 @@ class __ISO52010__:
         
         beta_ic = np.radians(beta_ic_deg)
         gamma_ic = np.radians(gamma_ic_deg)
-        latitude = np.radians(BUI.latitude)
+        latitude = np.radians(BUI.__getattribute__('latitude'))
         # DayWeekJan1 = 1  # doy of week of 1 January; 1=Monday, 7=Sunday
         #
         # Earth Orbit Deviation. 
@@ -204,7 +272,7 @@ class __ISO52010__:
         declination = np.radians(declination_deg)
         #
         t_eq = Equation_of_time(calendar['day of year'])  # [min]
-        time_shift = timezone_utc - (BUI.longitude / 15)  # [h]
+        time_shift = timezone_utc - (BUI.__getattribute__('longitude') / 15)  # [h]
         solar_time = calendar['hour of day'] - t_eq / 60 - time_shift  # [h]
         hour_angle_deg = Hour_angle_calc(solar_time)  # [deg]
         hour_angle = np.radians(hour_angle_deg)
@@ -298,7 +366,11 @@ def Calc_52010(BUI) ->_52010:
     
     # get weather dataframe
     # weatherData = get_ext_data(lat,long)
-    weatherData = __ISO52010__.get_tmy_data(BUI)
+    if BUI.__getattribute__('weather_source') == 'pvgis':
+        weatherData = __ISO52010__.get_tmy_data(BUI)
+    elif BUI.__getattribute__('weather_source') == 'epw':
+        weatherData = __ISO52010__.get_tmy(BUI, )
+    else: raise ValueError("select the right weather source: 'epw' or 'pvgis'")
     # sim_df = weatherData['Weather data']
     sim_df = weatherData.weather_data
     # timezoneW = weatherData['UTC offset']
@@ -313,10 +385,10 @@ def Calc_52010(BUI) ->_52010:
     sim_df.rename_axis(index={'time(UTC)': 'time(local)'}, inplace=True)
     sim_df['day of year'] = sim_df.index.dayofyear
     sim_df['hour of day'] = sim_df.index.hour + 1  # 1 to 24
-    or_tilt_azim_dic = {'HOR': (0, 0), 'SV': (90, 0), 'EV': (90, 90), 'NV': (90, 180), 'WV': (90,-90)}  # dictionary mapping orientation in or_eli with (beta_ic_deg=elevation/tilt, gamma_ic_deg=azimuth), see util.util.ISO52010_calc()
+    or_tilt_azim_dic = {'HOR': (0, 0), 'SV': (90, 0), 'EV': (90, 90), 'NV': (90, 180), 'WV': (90,-90)}  # dictionary mapping orientation in orientation_elements with (beta_ic_deg=elevation/tilt, gamma_ic_deg=azimuth), see util.util.ISO52010_calc()
 
     # Convert the NumPy array to a tuple
-    for orientation in set(BUI.or_eli):
+    for orientation in set(BUI.__getattribute__('orientation_elements')):
     # for orientation in orientations.tolist():
         sim_df[orientation] = __ISO52010__.Solar_irradiance_calc(
             BUI=BUI,
@@ -340,7 +412,7 @@ def Calc_52010(BUI) ->_52010:
 
 class __ISO52016__:
     
-    or_tilt_azim_dic = {'HOR': (0, 0), 'SV': (90, 0), 'EV': (90, 90), 'NV': (90, 180), 'WV': (90, -90)}  # dictionary mapping orientation in or_eli with (beta_ic_deg=elevation/tilt, gamma_ic_deg=azimuth), see util.util.ISO52010_calc() 
+    or_tilt_azim_dic = {'HOR': (0, 0), 'SV': (90, 0), 'EV': (90, 90), 'NV': (90, 180), 'WV': (90, -90)}  # dictionary mapping orientation in orientation_elements with (beta_ic_deg=elevation/tilt, gamma_ic_deg=azimuth), see util.util.ISO52010_calc() 
    
 
     __slots__=("inputs","sim_df")
@@ -378,12 +450,12 @@ class __ISO52016__:
         PlnSum: sequential number of nodes based on the list of opaque and transparent elements 
         '''
         # Number of envelop building elements
-        # el_list = len(BUI['TypeSub_eli'])
-        el_list = len(BUI.TypeSub_eli)
+        # el_list = len(BUI['typology_elements'])
+        el_list = len(BUI.__getattribute__('typology_elements'))
         # Initialize Pln with all elements as 5
         Pln = np.full(el_list, 5)
         # Replace elements with value 2 where type is "W"
-        Pln[BUI.TypeSub_eli == "W"] = 2
+        Pln[BUI.__getattribute__('typology_elements') == "W"] = 2
         # Calculation fo number of nodes for each building element (wall, roof, window)
         PlnSum = np.array([0] * el_list)        
         for Eli in range(1, el_list):
@@ -423,47 +495,67 @@ class __ISO52016__:
         '''
         R_gr = 0.5 / lambda_gr  # thermal resistance of 0.5 m of ground [m2 K/W]
         # Number of envelop building elements
-        el_type = BUI.TypeSub_eli
+        el_type = BUI.__getattribute__('typology_elements')
         # Initialization of conduttance coefficient calcualation
         h_pli_eli = np.zeros((4,len(el_type)))
-        
+
+        U_eli = BUI.__getattribute__('transmittance_U_elements')
+        R_c_eli = BUI.__getattribute__('thermal_resistance_R_elements')
+        h_ci_eli = BUI.__getattribute__('heat_convective_elements_internal')
+        h_ri_eli = BUI.__getattribute__('heat_radiative_elements_internal')
+        h_ce_eli = BUI.__getattribute__('heat_convective_elements_external')
+        h_re_eli = BUI.__getattribute__('heat_radiative_elements_external')
+
+        for i in range(1, len(el_type)):
+            if R_c_eli[i] == 0.0:
+                R_c_eli[i] = 1 / U_eli[i] - 1 / (h_ci_eli[i] + h_ri_eli[i]) - 1 / (h_ce_eli[i] + h_re_eli[i])
+
+
         # layer = 1 
         layer_no = 0
         for i in range(len(el_type)):
-            if BUI.R_eli[i] != 0:
+            if BUI.__getattribute__('thermal_resistance_R_elements')[i] != 0:
                 if el_type[i] == 'OP':
-                    h_pli_eli[0, i] = 6 / BUI.R_eli[i]
+                    # h_pli_eli[0, i] = 6 / BUI.__getattribute__('thermal_resistance_R_elements')[i]
+                    h_pli_eli[0, i] = 6 / R_c_eli[i]
                 elif el_type[i] == 'W':
-                    h_pli_eli[0, i] = 1 / BUI.R_eli[i]
+                    # h_pli_eli[0, i] = 1 / BUI.__getattribute__('thermal_resistance_R_elements')[i]
+                    h_pli_eli[0, i] = 1 / R_c_eli[i]
                 elif el_type[i] == 'GR':
                     h_pli_eli[0, i] = 2 / R_gr
         
         # layer = 2
         layer_no = 1
         for i in range(len(el_type)):
-            if BUI.R_eli[i] != 0:
+            if BUI.__getattribute__('thermal_resistance_R_elements')[i] != 0:
                 if el_type[i] == 'OP':
-                    h_pli_eli[layer_no, i] = 3 / BUI.R_eli[i]
+                    # h_pli_eli[layer_no, i] = 3 / BUI.__getattribute__('thermal_resistance_R_elements')[i]
+                    h_pli_eli[layer_no, i] = 3 / R_c_eli[i]
                 elif el_type[i] == 'GR':
-                    h_pli_eli[layer_no, i] = 1 / (BUI.R_eli[i] / 4 + R_gr / 2)
+                    # h_pli_eli[layer_no, i] = 1 / (BUI.__getattribute__('thermal_resistance_R_elements')[i] / 4 + R_gr / 2)
+                    h_pli_eli[layer_no, i] = 1 / (R_c_eli[i] / 4 + R_gr / 2)
         
         # layer = 3
         layer_no = 2
         for i in range(len(el_type)):
-            if BUI.R_eli[i] != 0:
+            if BUI.__getattribute__('thermal_resistance_R_elements')[i] != 0:
                 if el_type[i] == 'OP':
-                    h_pli_eli[layer_no, i] = 3 / BUI.R_eli[i]
+                    # h_pli_eli[layer_no, i] = 3 / BUI.__getattribute__('thermal_resistance_R_elements')[i]
+                    h_pli_eli[layer_no, i] = 3 / R_c_eli[i]
                 elif el_type[i] == 'GR':
-                    h_pli_eli[layer_no, i] = 2 / BUI.R_eli[i]
+                    # h_pli_eli[layer_no, i] = 2 / BUI.__getattribute__('thermal_resistance_R_elements')[i]
+                    h_pli_eli[layer_no, i] = 2 / R_c_eli[i]
         
         # layer = 4
         layer_no = 3
         for i in range(len(el_type)):
-            if BUI.R_eli[i] != 0:
+            if BUI.__getattribute__('thermal_resistance_R_elements')[i] != 0:
                 if el_type[i] == 'OP':
-                    h_pli_eli[layer_no, i] = 6 / BUI.R_eli[i]
+                    # h_pli_eli[layer_no, i] = 6 / BUI.__getattribute__('thermal_resistance_R_elements')[i]
+                    h_pli_eli[layer_no, i] = 6 / R_c_eli[i]
                 elif el_type[i] == 'GR':
-                    h_pli_eli[layer_no, i] = 4 / BUI.R_eli[i] 
+                    # h_pli_eli[layer_no, i] = 4 / BUI.__getattribute__('thermal_resistance_R_elements')[i] 
+                    h_pli_eli[layer_no, i] = 4 / R_c_eli[i]
         
         return conduttance_elements(h_pli_eli=h_pli_eli)
 
@@ -494,14 +586,14 @@ class __ISO52016__:
         [0. , 0. , 0. , 0. , 0. , 0. , 0. , 0. , 0. , 0. ]])
         '''
         # Number of envelop building elements
-        el_list = len(BUI.TypeSub_eli)
+        el_list = len(BUI.__getattribute__('typology_elements'))
         # Coefficient list of elements
-        # a_sol_eli = df['solar_absorption_coeff'].to_list()
-        a_sol_eli = BUI.a_sol_eli
+        # solar_area_elements = df['solar_absorption_coeff'].to_list()
+        solar_area_elements = BUI.__getattribute__('solar_area_elements')
         
         # Initialization of solar_abs_coeff
         a_sol_pli_eli = np.zeros((5, el_list))
-        a_sol_pli_eli[0, :] = a_sol_eli
+        a_sol_pli_eli[0, :] = solar_area_elements
         
         return solar_abs_elements(a_sol_pli_eli=a_sol_pli_eli)
 
@@ -524,66 +616,67 @@ class __ISO52016__:
         '''
         # Number of envelop building elements
         # el_list = len(df)
-        el_type = BUI.TypeSub_eli
+        el_type = BUI.__getattribute__('typology_elements')
         # List of heat capacyit of building envelope elements
         # list_kappa_el = df['kappa_m']
-        list_kappa_el = BUI.kappa_m_eli
+        list_kappa_el = BUI.__getattribute__('thermal_capacity_elements')
 
         # Initialization of heat capacity of nodes
         kappa_pli_eli_ = np.zeros((5, len(el_type)))
 
         #
-        if BUI.construction_class == "class_i":   # Mass concetrated at internal side     
+        if BUI.__getattribute__('construction_class') == "class_i":   # Mass concetrated at internal side     
             # OPAQUE: kpl5 = km_eli ; kpl1=kpl2=kpl3=kpl4=0
             # GROUND: kpl5 = km_eli ; kpl3=kpl4=0
-            node = 4
-            for i in range(len(el_type)):
-                if BUI.TypeSub_eli[i] == 'OP':
-                    kappa_pli_eli_[node, i] = list_kappa_el[i]
-                elif BUI.TypeSub_eli[i] == 'GR':
-                    kappa_pli_eli_[node, i] = list_kappa_el[i]
-            
             node = 1
             for i in range(len(el_type)):
-                if BUI.TypeSub_eli[i] == 'GR':
+                if BUI.__getattribute__('typology_elements')[i] == 'GR':
                     kappa_pli_eli_[node, i] = 1e6 # heat capacity of the ground            
+
+            node = 4
+            for i in range(len(el_type)):
+                if BUI.__getattribute__('typology_elements')[i] == 'OP':
+                    kappa_pli_eli_[node, i] = list_kappa_el[i]
+                elif BUI.__getattribute__('typology_elements')[i] == 'GR':
+                    kappa_pli_eli_[node, i] = list_kappa_el[i]
             
-        elif BUI.construction_class == "class_e": # mass concentrated at external side
+            
+        elif BUI.__getattribute__('construction_class') == "class_e": # mass concentrated at external side
             # OPAQUE: kpl1 = km_eli ; kpl2=kpl3=kpl4=kpl5=0
             # GROUND: kpl3 = km_eli ; kpl4=kpl5=0
             node = 0
             for i in range(len(el_type)):
-                if BUI.TypeSub_eli[i] == 'OP':
+                if BUI.__getattribute__('typology_elements')[i] == 'OP':
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
-                elif BUI.TypeSub_eli[i] == 'GR':
+                elif BUI.__getattribute__('typology_elements')[i] == 'GR':
                     node = 2
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
                                 
-        elif BUI.construction_class == "class_ie": # mass divided over internal and external side)        
+        elif BUI.__getattribute__('construction_class') == "class_ie": # mass divided over internal and external side)        
             # OPAQUE: kpl1 = kpl5 = km_eli/2 ; kpl2=kpl3=kpl4=0
             # GROUND: kpl1 = kp5 =km_eli/2; kpl4=0
             node = 0
             for i in range(len(el_type)):
-                if BUI.TypeSub_eli[i] == 'OP':
+                if BUI.__getattribute__('typology_elements')[i] == 'OP':
                     kappa_pli_eli_[node, i] = list_kappa_el[i]/2
-                elif BUI.TypeSub_eli[i] == 'GR':
+                elif BUI.__getattribute__('typology_elements')[i] == 'GR':
                     kappa_pli_eli_[node, i] = list_kappa_el[i]/2
             node = 4
             for i in range(len(el_type)):
-                if BUI.TypeSub_eli[i] == 'OP':
+                if BUI.__getattribute__('typology_elements')[i] == 'OP':
                     kappa_pli_eli_[node, i] = list_kappa_el[i]/2
-                elif BUI.TypeSub_eli[i] == 'GR':
+                elif BUI.__getattribute__('typology_elements')[i] == 'GR':
                     kappa_pli_eli_[node, i] = list_kappa_el[i]/2
 
-        elif BUI.construction_class == "class_d": # (mass equally distributed)
+        elif BUI.__getattribute__('construction_class') == "class_d": # (mass equally distributed)
             # OPAQUE: kpl2=kpl3=kpl4=km_eli/4
             # GROUND: kpl3=km_eli/4; kpl4=km_eli/2
             node_list_1 = [1,2,3]
             for node in node_list_1:            
                 for i in range(len(el_type)):
-                    if BUI.TypeSub_eli[i] == 'OP':
+                    if BUI.__getattribute__('typology_elements')[i] == 'OP':
                         kappa_pli_eli_[node, i] = list_kappa_el[i]/4
-                    if BUI.TypeSub_eli[i] == 'GR':
+                    if BUI.__getattribute__('typology_elements')[i] == 'GR':
                         if node==2: 
                             kappa_pli_eli_[node, i] = list_kappa_el[i]/4
                         if node==3: 
@@ -594,20 +687,20 @@ class __ISO52016__:
             node_list_2 = [0,4]
             for node in node_list_2:
                 for i in range(len(el_type)):
-                    if BUI.TypeSub_eli[i] == 'OP':
+                    if BUI.__getattribute__('typology_elements')[i] == 'OP':
                         kappa_pli_eli_[node, i] = list_kappa_el[i]/8
-                    if BUI.TypeSub_eli[i] == 'GR':
+                    if BUI.__getattribute__('typology_elements')[i] == 'GR':
                         if node == 4:
                             kappa_pli_eli_[node, i] = list_kappa_el[i]/4
                 
-        elif BUI.construction_class == "class_m": # mass concentrated inside
+        elif BUI.__getattribute__('construction_class') == "class_m": # mass concentrated inside
             # OPAQUE: kpl1=kpl2=kpl4=kpl5=0; kpl3= km_eli
             # GROUND: kpl4=km_eli; kpl3=kpl5=0
             node = 2
             for i in range(len(el_type)):
-                if BUI.TypeSub_eli[i] == 'OP':
+                if BUI.__getattribute__('typology_elements')[i] == 'OP':
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
-                if BUI.TypeSub_eli[i] == 'GR':
+                if BUI.__getattribute__('typology_elements')[i] == 'GR':
                     node = 3
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
         
@@ -628,20 +721,20 @@ class __ISO52016__:
         ------------------
         heating: TRUE or FALSE. Is there a heating system?
         cooling: TRUE or FALSE. Is there a cooling system?
-        H_setpoint: setpoint for the heating system (default 20°C)
-        C_setpoint: setpoint for cooling system (default 26°C)
+        heating_setpoint: setpoint for the heating system (default 20°C)
+        cooling_setpoint: setpoint for cooling system (default 26°C)
         latitude_deg: latitude of location in degrees
         slab_on_ground_area: area of the building in contact with the ground
         perimeter: perimeter of the building [m]
         wall_thickness: thickness of the wall [m]
-        R_floor_construction: resitance of the floor [m2K/W]
-        H_tb: Thermal bridges heat transfer coefficient - sum of thermal bridges (clause 6.6.5.3)
+        thermal_resistance_floor: resitance of the floor [m2K/W]
+        thermal_bridge_heat: Thermal bridges heat transfer coefficient - sum of thermal bridges (clause 6.6.5.3)
         coldest_month: coldest month, if not provided automatically selected according to the hemisphere
         
         Return:
         -------
         R_gr_ve: Thermal resistance of virtual layer (floor_slab)
-        H_tb: Heat transfer coefficient of overall thermal briges
+        thermal_bridge_heat: Heat transfer coefficient of overall thermal briges
         Theta_gr_ve: Internal Temperature of the ground
         '''
         
@@ -657,13 +750,19 @@ class __ISO52016__:
         # ============================ 
         # GET MIN, MAX AND MEAN of External temperature values at monthly(M) resolution
         sim_df = Calc_52010(BUI).sim_df
-        external_temperature_monthly_averages = sim_df['T2m'].resample('M').mean()
-        external_temperature_monthly_minima = sim_df['T2m'].resample('M').min()
-        external_temperature_monthly_maxima = sim_df['T2m'].resample('M').max()
+        external_temperature_monthly_averages = sim_df['T2m'].resample('ME').mean()
+        external_temperature_monthly_minima = sim_df['T2m'].resample('ME').min()
+        external_temperature_monthly_maxima = sim_df['T2m'].resample('ME').max()
         # amplitude of external temperature variations
         amplitude_of_external_temperature_variations = (external_temperature_monthly_maxima - external_temperature_monthly_minima).mean() / 2
         # annual mean of external temperature
-        annual_mean_external_temperature = external_temperature_monthly_averages.mean()
+        if hasattr(BUI, "annual_mean_external_temperature") and BUI.__getattribute__('annual_mean_external_temperature') is not None:
+            # Use provided annual mean external temperature if available
+            annual_mean_external_temperature = BUI.__getattribute__('annual_mean_external_temperature')
+        else:
+            # Use monthly average external temperature as fallback
+            annual_mean_external_temperature = external_temperature_monthly_averages.mean()
+
         # ============================ 
         '''
         Calculation of annual_mean_internal_temperature and its amplitude variations
@@ -676,19 +775,26 @@ class __ISO52016__:
                 amplitude_of_internal_temperature_variations = 3 <- (26-20)/2
         '''
         # ============================ 
-        if BUI.heating and BUI.cooling:
-            if BUI.H_setpoint is not None and BUI.C_setpoint is not None: 
-                annual_mean_internal_temperature = (BUI.H_setpoint + BUI.C_setpoint) / 2  # [deg C]
-                amplitude_of_internal_temperature_variations = (BUI.C_setpoint - BUI.H_setpoint) / 2  # [K]
+        if BUI.__getattribute__('heating_mode') and BUI.__getattribute__('cooling_mode'):
+            if BUI.__getattribute__('heating_setpoint') is not None and BUI.__getattribute__('cooling_setpoint') is not None: 
+                # Calculate annual mean internal temperature and amplitude of internal temperature variations
+                annual_mean_internal_temperature = (BUI.__getattribute__('heating_setpoint') + BUI.__getattribute__('cooling_setpoint')) / 2  # [°C]
+                amplitude_of_internal_temperature_variations = (BUI.__getattribute__('cooling_setpoint') - BUI.__getattribute__('heating_setpoint')) / 2  # [K]
         else:
-            if not hasattr(BUI,"annual_mean_internal_temperature"):
-                # if BUI.annual_mean_internal_temperature == None:
-                '''
-                Expert imput: da inserire dall'utente se non li inserisce fornire dei dati default
-                '''
-                annual_mean_internal_temperature = 23  # estimate, user input #<-- 
-                amplitude_of_internal_temperature_variations = 3  # estimate, user input
-                
+            if hasattr(BUI, "annual_mean_internal_temperature") and BUI.__getattribute__('annual_mean_internal_temperature') is not None:
+                # Use provided annual mean internal temperature if available
+                annual_mean_internal_temperature = BUI.__getattribute__('annual_mean_internal_temperature')
+                # User can provide amplitude_of_internal_temperature_variations 
+                if hasattr(BUI, "amplitude_of_internal_temperature_variations") and BUI.__getattribute__('amplitude_of_internal_temperature_variations') is not None:
+                    amplitude_of_internal_temperature_variations = BUI.__getattribute__('amplitude_of_internal_temperature_variations')
+                else:
+                    amplitude_of_internal_temperature_variations = 3  
+            else:
+                # Use default or expert input if user-provided data is not available
+                annual_mean_internal_temperature = 23  # Default estimate or expert input, user input
+                amplitude_of_internal_temperature_variations = 3  
+
+
         # ============================ 
         
         # ============================ 
@@ -697,15 +803,17 @@ class __ISO52016__:
         If the user doesn't provide a value between 1 (January) and 12 (Decemebr)
         the default values: 1 for northern hemisphere or 7 in southern hemisphere are used 
         '''
-        if not BUI.coldest_month:
-            if BUI.latitude >= 0:
-                BUI.coldest_month = 1  # 1..12; 
+        if not BUI.__getattribute__('coldest_month'):
+            if BUI.__getattribute__('latitude') >= 0:
+                BUI.__setattr__('coldest_month',1)
+                # BUI.coldest_month = 1  # 1..12; 
             else:
-                BUI.coldest_month= 7
+                BUI.__setattr__('coldest_month',7)
+                # BUI.coldest_month= 7
         
         internal_temperature_by_month = np.zeros(12)    
         for month in range(12):
-            internal_temperature_by_month[month] = annual_mean_internal_temperature - amplitude_of_internal_temperature_variations * np.cos(2*np.pi * (month + 1 - BUI.coldest_month) / 12)  # estimate
+            internal_temperature_by_month[month] = annual_mean_internal_temperature - amplitude_of_internal_temperature_variations * np.cos(2*np.pi * (month + 1 - BUI.__getattribute__('coldest_month')) / 12)  # estimate
         # ============================ 
         
         # ============================ 
@@ -713,9 +821,9 @@ class __ISO52016__:
         Area in contact with the ground. 
         If the value is nor provided by the user 
         ''' 
-        sog_area = BUI.slab_on_ground
+        sog_area = BUI.__getattribute__('slab_on_ground')
         if sog_area == -999:
-            sog_area = sum(Filter_list_by_indices(BUI.area,Get_positions(BUI.TypeSub_eli,'GR')))
+            sog_area = sum(Filter_list_by_indices(BUI.__getattribute__('area'),Get_positions(BUI.__getattribute__('typology_elements'),'GR')))
         # ============================ 
         
         # ============================ 
@@ -724,18 +832,18 @@ class __ISO52016__:
         If the value is not provided by the user a rectangluar shape of the building is considered.
         The perimeter is calcuated according to the area of the south and east facade
         '''
-        if BUI.exposed_perimeter == None:
+        if BUI.__getattribute__('exposed_perimeter') == None:
             # SOUTH FACADE
-            south_facade_area = sum(Filter_list_by_indices(BUI.area,Get_positions(BUI.or_eli,'SV')))
+            south_facade_area = sum(Filter_list_by_indices(BUI.__getattribute__('area'),Get_positions(BUI.__getattribute__('orientation_elements'),'SV')))
             # EAST FACADE
-            east_facade_area = sum(Filter_list_by_indices(BUI.area,Get_positions(BUI.or_eli,'EV')))
+            east_facade_area = sum(Filter_list_by_indices(BUI.__getattribute__('area'),Get_positions(BUI.__getattribute__('orientation_elements'),'EV')))
             #
             facade_height = np.sqrt(east_facade_area * south_facade_area / sog_area)
             sog_width = south_facade_area / facade_height
             sog_length = sog_area / sog_width
             exposed_perimeter = 2 * (sog_length + sog_width)
         else:
-            exposed_perimeter = BUI.exposed_perimeter
+            exposed_perimeter = BUI.__getattribute__('exposed_perimeter')
         characteristic_floor_dimension = sog_area / (0.5 * exposed_perimeter)
         # ============================ 
 
@@ -745,14 +853,16 @@ class __ISO52016__:
             1. the thermal Resistance (R) and Transmittance (U) of the floor
             2. External Temperature [°C]
         '''  
-        if not BUI.wall_thickness:
-            BUI.wall_thickness = 0.35  # [m]
+        if not BUI.__getattribute__('wall_thickness'):
+            # BUI.wall_thickness = 0.35  # [m]
+            BUI.__setattr__('wall_thickness',0.35)
         
-        if not BUI.R_floor_construction:
-            BUI.R_floor_construction = 5.3  # Floor construction thermal resistance (excluding effect of ground) [m2 K/W]
+        if not BUI.thermal_resistance_floor:
+            BUI.__setattr__('thermal_resistance_floor',5.3)
+            # BUI.thermal_resistance_floor = 5.3  # Floor construction thermal resistance (excluding effect of ground) [m2 K/W]
         
         # The thermal transmittance depends on the characteristic dimension of the floor, B' [see 8.1 and Equation (2)], and the total equivalent thickness, dt (see 8.2), defined by Equation (3):
-        equivalent_ground_thickness = BUI.wall_thickness + lambda_gr * (BUI.R_floor_construction + R_se)  # [m]
+        equivalent_ground_thickness = BUI.__getattribute__('wall_thickness')+ lambda_gr * (BUI.thermal_resistance_floor + R_se)  # [m]
         
         if equivalent_ground_thickness < characteristic_floor_dimension:  # uninsulated and moderately insulated floors
             U_sog = 2 * lambda_gr / (np.pi * characteristic_floor_dimension + equivalent_ground_thickness) * np.log(np.pi * characteristic_floor_dimension / equivalent_ground_thickness + 1)   # thermal transmittance of slab on ground including effect of ground [W/(m2 K)]
@@ -760,14 +870,17 @@ class __ISO52016__:
             U_sog = lambda_gr / (0.457 * characteristic_floor_dimension + equivalent_ground_thickness)
 
         # calcualtion of thermal resistance of virtual layer
-        R_gr_ve = 1 / U_sog - R_si - BUI.R_floor_construction - R_gr  
+        R_gr_ve = 1 / U_sog - R_si - BUI.__getattribute__('thermal_resistance_floor') - R_gr  
         # R_sog_eff = 1 / U_sog - R_si  # effective thermal resistance of floor construction (including effect of ground) [m2 K/W]
 
         # Adding thermal bridges
-        if not BUI.H_tb:
-            BUI.H_tb = exposed_perimeter * psi_k
+        if not BUI.__getattribute__('thermal_bridge_heat'):
+            # BUI.thermal_bridge_heat = exposed_perimeter * psi_k
+            BUI.__setattr__('thermal_bridge_heat', exposed_perimeter * psi_k)
         else:
-            BUI.H_tb += exposed_perimeter * psi_k
+            thermal_bridge = BUI.__getattribute__('thermal_bridge_heat')
+            # BUI.thermal_bridge_heat += exposed_perimeter * psi_k
+            BUI.__setattr__('thermal_bridge_heat',  thermal_bridge + (exposed_perimeter * psi_k))
         # Calculation of steady-state  ground  heat  transfer  coefficients  are  related  to  the  ratio  of  equivalent  thickness 
         # to  characteristic floor dimension, and the periodic heat transfer coefficients are related to the ratio 
         # of equivalent thickness to periodic penetration depth
@@ -780,14 +893,14 @@ class __ISO52016__:
         a_tl = 0  # time lead of the heat flow cycle compared with that of the internal temperature [months]
         b_tl = 1  # time lag of the heat flow cycle compared with that of the external temperature [months]
         for month in range(12):
-            periodic_heat_flow_due_to_internal_temperature_variation[month] = -H_pi * amplitude_of_internal_temperature_variations * np.cos(2 * np.pi * (month + 1 - BUI.coldest_month + a_tl) / 12)
+            periodic_heat_flow_due_to_internal_temperature_variation[month] = -H_pi * amplitude_of_internal_temperature_variations * np.cos(2 * np.pi * (month + 1 - BUI.__getattribute__('coldest_month') + a_tl) / 12)
         periodic_heat_flow_due_to_external_temperature_variation = np.zeros(12)
         for month in range(12):
-            periodic_heat_flow_due_to_external_temperature_variation[month] = H_pe * amplitude_of_external_temperature_variations * np.cos(2 * np.pi * (month + 1 - BUI.coldest_month - b_tl) / 12)
+            periodic_heat_flow_due_to_external_temperature_variation[month] = H_pe * amplitude_of_external_temperature_variations * np.cos(2 * np.pi * (month + 1 - BUI.__getattribute__('coldest_month') - b_tl) / 12)
         average_heat_flow_rate = annual_average_heat_flow_rate + periodic_heat_flow_due_to_internal_temperature_variation + periodic_heat_flow_due_to_external_temperature_variation
         Theta_gr_ve = internal_temperature_by_month - (average_heat_flow_rate - exposed_perimeter * psi_k * (annual_mean_internal_temperature - annual_mean_external_temperature)) / (sog_area * U_sog)
         
-        return temp_ground(R_gr_ve=R_gr_ve,Theta_gr_ve=Theta_gr_ve, H_tb=BUI.H_tb)
+        return temp_ground(R_gr_ve=R_gr_ve,Theta_gr_ve=Theta_gr_ve, thermal_bridge_heat=BUI.__getattribute__('thermal_bridge_heat'))
 
     @classmethod
     def Occupancy_profile(cls, BUI, **kwargs) -> simulation_df:
@@ -803,10 +916,10 @@ class __ISO52016__:
         occ_level_we: occupancy profile of weekend for modification of internal gains
         comf_level_wd: occupancy profile of workday for modification of ventilation
         comf_level_we: occupancy profile of weekend for modification of ventilation
-        H_setpoint: value of heating setpoint. e.g 20 
-        H_setback: value of heating setback. eg.10 
-        C_setpoint: value of cooling setpoint. e.g 26 
-        C_setback: value of cooling setback. eg.20
+        heating_setpoint: value of heating setpoint. e.g 20 
+        heating_setback: value of heating setback. eg.10 
+        cooling_setpoint: value of cooling setpoint. e.g 26 
+        cooling_setback: value of cooling setback. eg.20
 
         Return
         ------
@@ -826,10 +939,10 @@ class __ISO52016__:
         sim_df['comfort level'] = np.nan
 
         # Occupation (both for gain and ventilation) workday and weekend according to schedule
-        occ_level_wd = BUI.occ_level_wd
-        occ_level_we = BUI.occ_level_we
-        comf_level_wd = BUI.comf_level_wd
-        comf_level_we = BUI.comf_level_wd
+        occ_level_wd = BUI.__getattribute__('occ_level_wd')
+        occ_level_we = BUI.__getattribute__('occ_level_we')
+        comf_level_wd = BUI.__getattribute__('comf_level_wd')
+        comf_level_we = BUI.__getattribute__('comf_level_we')
         
         ''' WORKDAY '''
         # Nnumber of workdays during the entire simulation period
@@ -857,14 +970,14 @@ class __ISO52016__:
         ''' HEATING '''
         #Associate setback and setpoint of heating to occupancy profile for comfort
         sim_df['Heating'] = np.nan
-        sim_df.loc[comfort_hi_mask, 'Heating'] = BUI.H_setpoint
-        sim_df.loc[comfort_lo_mask, 'Heating'] = BUI.H_setback
+        sim_df.loc[comfort_hi_mask, 'Heating'] = BUI.__getattribute__('heating_setpoint')
+        sim_df.loc[comfort_lo_mask, 'Heating'] = BUI.__getattribute__('heating_setback')
         
         ''' COOLING '''
         #Associate setback and setpoint of cooling to occupancy profile for comfort
         sim_df['Cooling'] = np.nan
-        sim_df.loc[comfort_hi_mask, 'Cooling'] = BUI.C_setpoint
-        sim_df.loc[comfort_lo_mask, 'Cooling'] = BUI.C_setback
+        sim_df.loc[comfort_hi_mask, 'Cooling'] = BUI.__getattribute__('cooling_setpoint')
+        sim_df.loc[comfort_lo_mask, 'Cooling'] = BUI.__getattribute__('cooling_setback')
 
         return simulation_df(simulation_df = sim_df)
 
@@ -894,15 +1007,15 @@ class __ISO52016__:
         # VENTILATION (CONDUTTANCE)
         sim_df = __ISO52016__().Occupancy_profile(BUI).simulation_df
         comfort_hi_mask = (sim_df['comfort level'] == 1)
-        sim_df['air flow rate'] = BUI.air_change_rate_base_value * BUI.a_use # [m3/h]
-        sim_df.loc[comfort_hi_mask, 'air flow rate'] += BUI.air_change_rate_extra * BUI.a_use 
+        sim_df['air flow rate'] = BUI.__getattribute__('air_change_rate_base_value') * BUI.__getattribute__('a_use') # [m3/h]
+        sim_df.loc[comfort_hi_mask, 'air flow rate'] += BUI.__getattribute__('air_change_rate_extra') * BUI.__getattribute__('a_use') 
         air_flow_rate = sim_df['air flow rate']
         H_ve = c_air * rho_air / 3600 * air_flow_rate #[W/K]
 
         # INTERNAL GAINS
         occ_hi_mask = (sim_df['occupancy level'] == 1)
-        sim_df['internal gains'] = BUI.internal_gains_base_value * BUI.a_use #[W]
-        sim_df.loc[occ_hi_mask, 'internal gains'] += BUI.internal_gains_extra * BUI.a_use #[W] 
+        sim_df['internal gains'] = BUI.__getattribute__('internal_gains_base_value') * BUI.__getattribute__('a_use') #[W]
+        sim_df.loc[occ_hi_mask, 'internal gains'] += BUI.__getattribute__('internal_gains_extra') * BUI.__getattribute__('a_use') #[W] 
         Phi_int = sim_df['internal gains']
 
         return h_vent_and_int_gains(H_ve=H_ve, Phi_int=Phi_int, sim_df_update=sim_df)
@@ -970,8 +1083,8 @@ class __ISO52016__:
             - air_flow_rate:
             - internal_gains
         
-        Phi_H_nd_max: max power of the heating system (provided by the user) in W
-        Phi_C_nd_max: max power of the cooling system (provided by the user) in W
+        power_heating_max: max power of the heating system (provided by the user) in W
+        power_cooling_max: max power of the cooling system (provided by the user) in W
         Rn: ... coming from function: Number_of_nodes_element
         Htb: Heat transmission coefficient for Thermal bridges (provided by the user)
         H_ve: ... coming from function: Ventilation_heat_transfer_coefficient
@@ -981,11 +1094,11 @@ class __ISO52016__:
         PlnSum: ... coming from function: Number_of_nodes_element
         a_sol_pli_eli: ... coming from function: Solar_absorption_of_elment
         kappa_pli_eli: ... coming from function:  Areal_heat_capacity_of_element
-        h_ci_eli: internal convective heat transfer coefficient for each element as defined int Table 25 of UNI 52016 - 7.2.2.10
-        h_ce_eli: external convective heat transfer coefficient for each element as defined int Table 25 of UNI 52016 - 7.2.2.10
-        h_re_eli: external radiative  heat transfer coefficient for each element as defined int Table 25 of UNI 52016 - 7.2.2.10
-        h_ri_eli: internal radiative  heat transfer coefficient for each element as defined int Table 25 of UNI 52016 - 7.2.2.10
-        F_sk_eli: View factor between element and sky
+        heat_convective_elements_internal: internal convective heat transfer coefficient for each element as defined int Table 25 of UNI 52016 - 7.2.2.10
+        heat_convective_elements_external: external convective heat transfer coefficient for each element as defined int Table 25 of UNI 52016 - 7.2.2.10
+        heat_radiative_elements_external: external radiative  heat transfer coefficient for each element as defined int Table 25 of UNI 52016 - 7.2.2.10
+        heat_radiative_elements_internal: internal radiative  heat transfer coefficient for each element as defined int Table 25 of UNI 52016 - 7.2.2.10
+        sky_factor_elements: View factor between element and sky
         R_gr_ve : ... coming from function: Temp_calculation_of_ground (Thermal Resitance of virtual layer)
         Theta_gr_ve: ... coming from function: Temp_calculation_of_ground,
         h_pli_eli: ... coming from function: Conduttance_node_of_element
@@ -1022,40 +1135,40 @@ class __ISO52016__:
             pbar.update(1)
             # Number of building element 
             # bui_eln = len(df)
-            bui_eln = len(BUI.TypeSub_eli)
+            bui_eln = len(BUI.__getattribute__('typology_elements'))
             #
             pbar.update(1)
             # Type of element position if ground or external
-            TypeSub_eli = np.array(BUI.TypeSub_eli)
+            typology_elements = np.array(BUI.__getattribute__('typology_elements'))
             Type_eli = bui_eln * ['EXT']
-            Type_eli[np.where(TypeSub_eli == 'GR')[0][0]] = 'GR'
+            Type_eli[np.where(typology_elements == 'GR')[0][0]] = 'GR'
             #
             pbar.update(1)
             # Window g-value
             # tau_sol_eli = df['g_value'].to_numpy()
-            tau_sol_eli = np.array(BUI.g_w_eli)
+            tau_sol_eli = np.array(BUI.__getattribute__('g_factor_windows'))
             # Building Area of elements
-            # A_eli = df['area'].to_numpy()
-            A_eli = np.array(BUI.A_eli)
-            A_eli_tot = np.sum(A_eli) # Sum of all areas
+            # area_elements = df['area'].to_numpy()
+            area_elements = np.array(BUI.__getattribute__('area_elements'))
+            area_elements_tot = np.sum(area_elements) # Sum of all areas
             #
             pbar.update(1)
             # Orientation and tilt
-            or_eli = np.array(BUI.or_eli)
+            orientation_elements = np.array(BUI.__getattribute__('orientation_elements'))
             #
             pbar.update(1)
             # External temperature ... (to be cheked)
             theta_sup = sim_df['T2m']
             # Internal capacity 
-            C_int = c_int_per_A_us * BUI.a_use
+            C_int = c_int_per_A_us * BUI.__getattribute__('a_use')
             #
             pbar.update(1)
             # HEat Transfer coefficient for each element Area
-            Ah_ci = np.dot(A_eli,BUI.h_ci_eli)
+            Ah_ci = np.dot(area_elements,BUI.__getattribute__('heat_convective_elements_internal'))
             #
             pbar.update(1)
             # mean internal radiative transfer coefficient 
-            h_ri_eli_mn = np.dot(A_eli, BUI.h_ri_eli) / A_eli_tot
+            heat_radiative_elements_internal_mn = np.dot(area_elements, BUI.__getattribute__('heat_radiative_elements_internal')) / area_elements_tot
             #
             pbar.update(1)
             # inizialiazation vectorB and temperature
@@ -1104,35 +1217,35 @@ class __ISO52016__:
                 # if there is no set point for heating (heating system not installed) -> heating power = 0
                 # otherwise the actual power is equal to the maximum one
                 if Theta_H_set < -995: # 
-                    Phi_H_nd_max_act = 0
+                    power_heating_max_act = 0
                 else:
-                    Phi_H_nd_max_act = BUI.Phi_H_nd_max # 
+                    power_heating_max_act = BUI.__getattribute__('power_heating_max') # 
                 
                 # COOLING: 
                 # if there is no set point for heating (cooling system not installed) -> cooling power = 0
                 # otherwise the actual power is equal to the maximum one
                 if Theta_C_set > 995:
-                    Phi_C_nd_max_act = 0
+                    power_cooling_max_act = 0
                 else:
-                    Phi_C_nd_max_act = BUI.Phi_C_nd_max
+                    power_cooling_max_act = BUI.__getattribute__('power_cooling_max')
 
                 Phi_HC_nd_calc[0] = 0 # the load has three values:  0 no heating e no cooling, 1  heating, 2 cooling
-                if Phi_H_nd_max_act == 0 and Phi_C_nd_max_act == 0: # 
+                if power_heating_max_act == 0 and power_cooling_max_act == 0: # 
                     nrHCmodes = 1
-                elif Phi_C_nd_max_act == 0:
+                elif power_cooling_max_act == 0:
                     colB_H = 1
                     nrHCmodes = 2
-                    Phi_HC_nd_calc[colB_H] = Phi_H_nd_max_act
-                elif Phi_H_nd_max_act == 0:
+                    Phi_HC_nd_calc[colB_H] = power_heating_max_act
+                elif power_heating_max_act == 0:
                     colB_C = 1
                     nrHCmodes = 2
-                    Phi_HC_nd_calc[colB_C] = Phi_C_nd_max_act
+                    Phi_HC_nd_calc[colB_C] = power_cooling_max_act
                 else:
                     nrHCmodes = 3
                     colB_H = 1
                     colB_C = 2
-                    Phi_HC_nd_calc[colB_H] = Phi_H_nd_max_act
-                    Phi_HC_nd_calc[colB_C] = Phi_C_nd_max_act
+                    Phi_HC_nd_calc[colB_H] = power_heating_max_act
+                    Phi_HC_nd_calc[colB_C] = power_cooling_max_act
 
                 iterate = True
                 while iterate:
@@ -1150,15 +1263,15 @@ class __ISO52016__:
                         # UNI 52010:
                         # Phi_sol_zi: solar gain [W]
                         # tu_sol_ei: g-value of windows
-                        # sim_df[or_eli[Eli]].iloc[Tstepi]: UNI52010                                                         
-                            Phi_sol_zi += tau_sol_eli[Eli] * A_eli[Eli] * sim_df[or_eli[Eli]].iloc[Tstepi]
+                        # sim_df[orientation_elements[Eli]].iloc[Tstepi]: UNI52010                                                         
+                            Phi_sol_zi += tau_sol_eli[Eli] * area_elements[Eli] * sim_df[orientation_elements[Eli]].iloc[Tstepi]
 
                     ri = 0
                     # Energy balacne on zone level. Eq. (38) UNI 52016
                     # XTemp = Thermal capacity at specific time (t) and for  a specific degree °C [W] +
                     # + Ventilation loss (at time t)[W] + Transmission loss (at time t)[W] + intrnal gain[W] + solar gain [W]. Missed the 
                     # the convective fraction of the heating/cooling system
-                    XTemp = t_Th.H_tb * sim_df.iloc[Tstepi]['T2m'] + int_gains_vent.H_ve.iloc[Tstepi] * theta_sup.iloc[Tstepi] + f_int_c * int_gains_vent.Phi_int.iloc[
+                    XTemp = t_Th.thermal_bridge_heat * sim_df.iloc[Tstepi]['T2m'] + int_gains_vent.H_ve.iloc[Tstepi] * theta_sup.iloc[Tstepi] + f_int_c * int_gains_vent.Phi_int.iloc[
                     Tstepi] + f_sol_c * Phi_sol_zi + (C_int / Dtime[Tstepi]) * Theta_old[ri]
 
                     # adding the convective fraction of the heating/cooling system according to the type of system available (heating, cooling and heating and cooling)
@@ -1172,19 +1285,19 @@ class __ISO52016__:
                     ci = 0
 
                     # FIrst part of the equation on the square bracket(38) 
-                    MatA[ri, ci] += (C_int / Dtime[Tstepi]) + Ah_ci + t_Th.H_tb + int_gains_vent.H_ve.iloc[Tstepi]
+                    MatA[ri, ci] += (C_int / Dtime[Tstepi]) + Ah_ci + t_Th.thermal_bridge_heat + int_gains_vent.H_ve.iloc[Tstepi]
 
                     for Eli in range(bui_eln):
                         Pli = nodes.Pln[Eli]
                         ci = nodes.PlnSum[Eli] + Pli
-                        MatA[ri, ci] -= A_eli[Eli] * BUI.h_ci_eli[Eli]
+                        MatA[ri, ci] -= area_elements[Eli] * BUI.__getattribute__('heat_convective_elements_internal')[Eli]
 
                     # block_in_iterate_start = time.perf_counter()
 
                     for Eli in range(bui_eln):
                         for Pli in range(nodes.Pln[Eli]):
                             ri += 1
-                            XTemp = a_sol_pli_eli[Pli, Eli] * sim_df[or_eli[Eli]].iloc[Tstepi] + (
+                            XTemp = a_sol_pli_eli[Pli, Eli] * sim_df[orientation_elements[Eli]].iloc[Tstepi] + (
                                         kappa_pli_eli[Pli, Eli] / Dtime[Tstepi]) * Theta_old[ri]
                             for cBi in range(nrHCmodes):
                                 VecB[ri, cBi] += XTemp
@@ -1195,11 +1308,11 @@ class __ISO52016__:
                                         f_HC_c = f_H_c
                                     else:
                                         f_HC_c = f_C_c
-                                    VecB[ri, cBi] += (XTemp + (1 - f_HC_c) * Phi_HC_nd_calc[cBi]) / A_eli_tot
+                                    VecB[ri, cBi] += (XTemp + (1 - f_HC_c) * Phi_HC_nd_calc[cBi]) / area_elements_tot
                             elif Pli == 0:
                                 if Type_eli[Eli] == 'EXT':
-                                    XTemp = (BUI.h_ce_eli[Eli] + BUI.h_re_eli[Eli]) * sim_df['T2m'].iloc[Tstepi] - BUI.F_sk_eli[Eli] * \
-                                            BUI.h_re_eli[Eli] * delta_Theta_er
+                                    XTemp = (BUI.__getattribute__('heat_convective_elements_external')[Eli] + BUI.__getattribute__('heat_radiative_elements_external')[Eli]) * sim_df['T2m'].iloc[Tstepi] - BUI.__getattribute__('sky_factor_elements')[Eli] * \
+                                            BUI.__getattribute__('heat_radiative_elements_external')[Eli] * delta_Theta_er
                                     for cBi in range(nrHCmodes):
                                         VecB[ri, cBi] += XTemp
                                 elif Type_eli[Eli] == 'GR':
@@ -1210,15 +1323,15 @@ class __ISO52016__:
                             ci = 1 + nodes.PlnSum[Eli] + Pli
                             MatA[ri, ci] += kappa_pli_eli[Pli, Eli] / Dtime[Tstepi]
                             if Pli == (nodes.Pln[Eli] - 1):
-                                MatA[ri, ci] += BUI.h_ci_eli[Eli] + h_ri_eli_mn
-                                MatA[ri, 0] -= BUI.h_ci_eli[Eli]
+                                MatA[ri, ci] += BUI.__getattribute__('heat_convective_elements_internal')[Eli] + heat_radiative_elements_internal_mn
+                                MatA[ri, 0] -= BUI.__getattribute__('heat_convective_elements_internal')[Eli]
                                 for Elk in range(bui_eln):
                                     Plk = nodes.Pln[Elk] - 1
                                     ck = 1 + nodes.PlnSum[Elk] + Plk
-                                    MatA[ri, ck] -= (A_eli[Elk] / A_eli_tot) * BUI.h_ri_eli[Elk]
+                                    MatA[ri, ck] -= (area_elements[Elk] / area_elements_tot) * BUI.__getattribute__('heat_radiative_elements_internal')[Elk]
                             elif Pli == 0:
                                 if Type_eli[Eli] == 'EXT':
-                                    MatA[ri, ci] += BUI.h_ce_eli[Eli] + BUI.h_re_eli[Eli]
+                                    MatA[ri, ci] += BUI.__getattribute__('heat_convective_elements_external')[Eli] + BUI.__getattribute__('heat_radiative_elements_external')[Eli]
                                 elif Type_eli[Eli] == 'GR':
                                     MatA[ri, ci] += 1 / t_Th.R_gr_ve
                             if Pli > 0:
@@ -1241,17 +1354,17 @@ class __ISO52016__:
                     Theta_int_r_mn[Tstepi, :] = 0
                     for Eli in range(bui_eln):
                         ri = nodes.PlnSum[Eli] + nodes.Pln[Eli]
-                        Theta_int_r_mn[Tstepi, :] += A_eli[Eli] * VecB[ri, :]
-                    Theta_int_r_mn[Tstepi, :] /= A_eli_tot
+                        Theta_int_r_mn[Tstepi, :] += area_elements[Eli] * VecB[ri, :]
+                    Theta_int_r_mn[Tstepi, :] /= area_elements_tot
                     Theta_int_op[Tstepi, :] = 0.5 * (Theta_int_air[Tstepi, :] + Theta_int_r_mn[Tstepi, :])
 
                     if nrHCmodes > 1: # se 
                         if Theta_int_op[Tstepi, 0] < Theta_H_set:
                             Theta_op_set = Theta_H_set
-                            Phi_HC_nd_act[Tstepi] = BUI.Phi_H_nd_max * (Theta_op_set - Theta_int_op[Tstepi, 0]) / (
+                            Phi_HC_nd_act[Tstepi] = BUI.__getattribute__('power_heating_max') * (Theta_op_set - Theta_int_op[Tstepi, 0]) / (
                                         Theta_int_op[Tstepi, colB_H] - Theta_int_op[Tstepi, 0])
-                            if Phi_HC_nd_act[Tstepi] > BUI.Phi_H_nd_max:
-                                Phi_HC_nd_act[Tstepi] = BUI.Phi_H_nd_max
+                            if Phi_HC_nd_act[Tstepi] > BUI.__getattribute__('power_heating_max'):
+                                Phi_HC_nd_act[Tstepi] = BUI.__getattribute__('power_heating_max')
                                 Theta_op_act[Tstepi] = Theta_int_op[Tstepi, colB_H]
                                 colB_act = colB_H
                             else:
@@ -1262,10 +1375,10 @@ class __ISO52016__:
                                 iterate = True
                         elif Theta_int_op[Tstepi, 0] > Theta_C_set:
                             Theta_op_set = Theta_C_set
-                            Phi_HC_nd_act[Tstepi] = BUI.Phi_C_nd_max * (Theta_op_set - Theta_int_op[Tstepi, 0]) / (
+                            Phi_HC_nd_act[Tstepi] = BUI.__getattribute__('power_cooling_max') * (Theta_op_set - Theta_int_op[Tstepi, 0]) / (
                                     Theta_int_op[Tstepi, colB_C] - Theta_int_op[Tstepi, 0])
-                            if Phi_HC_nd_act[Tstepi] < BUI.Phi_C_nd_max:
-                                Phi_HC_nd_act[Tstepi] = BUI.Phi_C_nd_max
+                            if Phi_HC_nd_act[Tstepi] < BUI.__getattribute__('power_cooling_max'):
+                                Phi_HC_nd_act[Tstepi] = BUI.__getattribute__('power_cooling_max')
                                 Theta_op_act[Tstepi] = Theta_int_op[Tstepi, colB_C]
                                 colB_act = colB_C
                             else:
@@ -1309,7 +1422,7 @@ class __ISO52016__:
         # hourly_results.loc[mask, 'P'] = hourly_results.loc[mask, 'Q_H'] / COP[mask]
         # mask = hourly_results['Q_HC'] < 0  # cooling
         # hourly_results.loc[mask, 'P'] = hourly_results.loc[mask, 'Q_C'] / EER[mask]
-
+        hourly_results.to_csv('bestest600.csv')
         return hourly_results    
     
 
@@ -1319,62 +1432,62 @@ class __ISO52016__:
 # ========================================================================
 # TEST 
 
-bui_item = {
-        'url_api': "http://127.0.0.1:8000/api/v1", 
-        'latitude':46.66345144066082,
-        'longitude':9.71636944229362,
-        'Eln':10, #
-        'a_use': 100, 
-        "slab_on_ground_area":100,#
-        'H_setpoint':20,     
-        'C_setpoint':26,
-        'Phi_H_nd_max':30000,            
-        'Phi_C_nd_max':-10000,
-        'air_change_rate_base_value':1.107 ,
-        'air_change_rate_extra':0.0,
-        'internal_gains_base_value':1.452,
-        'internal_gains_extra':0.0,        
-        'H_tb' : 2.0,
-        'H_setback':10,
-        'C_setback':26,
-        'TypeSub_eli': np.array(['W', 'OP', 'W', 'GR', 'OP', 'W', 'OP', 'OP', 'W', 'OP'],dtype=object), 
-        'kappa_m_eli': np.array([0.0, 25000.0, 0.0, 279852.0, 25000.0, 0.0, 279852.0, 25000.0, 0.0, 25000.0], dtype=object), 
-        'A_eli': np.array([1.0, 30.0, 10.0, 100.0, 30.0, 3.0, 100.0, 30.0, 6.0, 30.0],dtype=object), 
-        'a_sol_eli': np.array([1.0, 0.6, 1.0, 0.0, 0.6, 1.0, 0.0, 0.6, 1.0, 0.6], dtype=object),
-        'g_w_eli': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.6, 0.0, 0.0, 0.0], dtype=object),
-        'or_eli': np.array(['NV', 'NV', 'SV', 'HOR', 'SV', 'EV', 'HOR', 'EV', 'WV', 'WV'],dtype=object),
-        'h_ci_eli': np.array([2.5, 2.5, 2.5, 0.7, 2.5, 2.5, 5.0, 2.5, 2.5, 2.5], dtype=object),
-        'h_ri_eli': np.array([5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13],dtype=object),
-        'h_ce_eli': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object),
-        'h_re_eli': np.array([4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14],dtype=object),
-        'U_eli': np.array([0.8, 0.8, 0.8, 0.4, 0.8, 0.8, 0.4, 0.8, 0.8, 0.8], dtype=object),
-        'R_eli': np.array([1.25, 1.25, 1.25, 2.5, 1.25, 1.25, 2.5, 1.25, 1.25, 1.25],dtype=object), 
-        'F_sk_eli': np.array([0.5, 0.5, 0.5, 0.0, 0.5, 0.5, 1.0, 0.5, 0.5, 0.5], dtype=object), 
-        'occ_level_wd': np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]), 
-        'occ_level_we': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]), 
-        'comf_level_wd': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]), 
-        'comf_level_we': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]), 
-        'sog_area': 100.0, 
-        'exposed_perimeter': 40.0, 
-        'wall_thickness': 0.3, 
-        'R_floor_construction': 2.5, 
-        'baseline_hci': np.array([2.5, 2.5, 2.5, 0.7, 2.5, 2.5, 5.0, 2.5, 2.5, 2.5], dtype=object), 
-        'baseline_hce': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object), 
-        "occ_level_wd": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,1, 0],
-        "occ_level_we": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,1, 0],
-        "comf_level_wd": [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,1, 0],
-        "comf_level_we": [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,1, 0],
-        'coldest_month': 1, 
-        'uuid': '9cdbfbeb-f2f7-467c-9a69-3e0cc3a181ee',
-        "heating": True,
-        "cooling": True,
-        "construction_class": "class_i",
-    }
 # bui_item = {
+#         'url_api': "http://127.0.0.1:8000/api/v1", 
+#         'latitude':46.66345144066082,
+#         'longitude':9.71636944229362,
+#         'Eln':10, #
+#         'a_use': 100, 
+#         "slab_on_ground_area":100,#
+#         'heating_setpoint':20,     
+#         'cooling_setpoint':26,
+#         'power_heating_max':30000,            
+#         'power_cooling_max':-10000,
+#         'air_change_rate_base_value':1.107 ,
+#         'air_change_rate_extra':0.0,
+#         'internal_gains_base_value':1.452,
+#         'internal_gains_extra':0.0,        
+#         'thermal_bridge_heat' : 2.0,
+#         'heating_setback':10,
+#         'cooling_setback':26,
+#         'typology_elements': np.array(['W', 'OP', 'W', 'GR', 'OP', 'W', 'OP', 'OP', 'W', 'OP'],dtype=object), 
+#         'thermal_capacity_elements': np.array([0.0, 25000.0, 0.0, 279852.0, 25000.0, 0.0, 279852.0, 25000.0, 0.0, 25000.0], dtype=object), 
+#         'area_elements': np.array([1.0, 30.0, 10.0, 100.0, 30.0, 3.0, 100.0, 30.0, 6.0, 30.0],dtype=object), 
+#         'solar_area_elements': np.array([1.0, 0.6, 1.0, 0.0, 0.6, 1.0, 0.0, 0.6, 1.0, 0.6], dtype=object),
+#         'g_factor_windows': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.6, 0.0, 0.0, 0.0], dtype=object),
+#         'orientation_elements': np.array(['NV', 'NV', 'SV', 'HOR', 'SV', 'EV', 'HOR', 'EV', 'WV', 'WV'],dtype=object),
+#         'heat_convective_elements_internal': np.array([2.5, 2.5, 2.5, 0.7, 2.5, 2.5, 5.0, 2.5, 2.5, 2.5], dtype=object),
+#         'heat_radiative_elements_internal': np.array([5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13],dtype=object),
+#         'heat_convective_elements_external': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object),
+#         'heat_radiative_elements_external': np.array([4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14],dtype=object),
+#         'transmittance_U_elements': np.array([0.8, 0.8, 0.8, 0.4, 0.8, 0.8, 0.4, 0.8, 0.8, 0.8], dtype=object),
+#         'thermal_resistance_R_elements': np.array([1.25, 1.25, 1.25, 2.5, 1.25, 1.25, 2.5, 1.25, 1.25, 1.25],dtype=object), 
+#         'sky_factor_elements': np.array([0.5, 0.5, 0.5, 0.0, 0.5, 0.5, 1.0, 0.5, 0.5, 0.5], dtype=object), 
+#         'occ_level_wd': np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+#                 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]), 
+#         'occ_level_we': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+#                 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]), 
+#         'comf_level_wd': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+#                 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]), 
+#         'comf_level_we': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+#                 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]), 
+#         'sog_area': 100.0, 
+#         'exposed_perimeter': 40.0, 
+#         'wall_thickness': 0.3, 
+#         'thermal_resistance_floor': 2.5, 
+#         'baseline_hci': np.array([2.5, 2.5, 2.5, 0.7, 2.5, 2.5, 5.0, 2.5, 2.5, 2.5], dtype=object), 
+#         'baseline_hce': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object), 
+#         "occ_level_wd": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,1, 0],
+#         "occ_level_we": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,1, 0],
+#         "comf_level_wd": [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,1, 0],
+#         "comf_level_we": [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,1, 0],
+#         'coldest_month': 1, 
+#         'uuid': '9cdbfbeb-f2f7-467c-9a69-3e0cc3a181ee',
+#         "heating_mode": True,
+#         "cooling_mode": True,
+#         "construction_class": "class_i",
+#     }
+# # bui_item = {
 #         'url_api': "http://127.0.0.1:8000/api/v1", 
 #         'latitude':46.66345144066082,
 #         'longitude':9.71636944229362,
@@ -1382,31 +1495,31 @@ bui_item = {
 #         'Eln':10, #
 #         'a_use': 100, 
 #         "slab_on_ground_area":100,#
-#         'H_setpoint':20,     
-#         'C_setpoint':26,
-#         'Phi_H_nd_max':30000,            
-#         'Phi_C_nd_max':10000,
+#         'heating_setpoint':20,     
+#         'cooling_setpoint':26,
+#         'power_heating_max':30000,            
+#         'power_cooling_max':10000,
 #         'air_change_rate_base_value':1.107 ,
 #         'air_change_rate_extra':0.0,
 #         'internal_gains_base_value':1.452,
 #         'internal_gains_extra':0.0,        
-#         'H_tb' : 2.0,
-#         'H_setback':10,
-#         'C_setback':26,
-#         'TypeSub_eli': np.array(['W', 'OP', 'W', 'GR', 'OP', 'W', 'OP', 'OP', 'W', 'OP'],dtype=object), 
-#         'kappa_m_eli': np.array([0.0, 25000.0, 0.0, 279852.0, 25000.0, 0.0, 279852.0, 25000.0, 0.0, 25000.0], dtype=object), 
-#         'A_eli': np.array([1.0, 30.0, 10.0, 100.0, 30.0, 3.0, 100.0, 30.0, 6.0, 30.0],dtype=object), 
-#         'a_sol_eli': np.array([1.0, 0.6, 1.0, 0.0, 0.6, 1.0, 0.0, 0.6, 1.0, 0.6], dtype=object),
-#         'g_w_eli': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.6, 0.0, 0.0, 0.0], dtype=object),
-#         'or_eli': np.array(['NV', 'NV', 'SV', 'HOR', 'SV', 'EV', 'HOR', 'EV', 'WV', 'WV'],dtype=object),
-#         'h_ci_eli': np.array([2.5, 2.5, 2.5, 0.7, 2.5, 2.5, 5.0, 2.5, 2.5, 2.5], dtype=object),
-#         'h_ri_eli': np.array([5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13],dtype=object),
-#         'h_ce_eli': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object),
-#         'h_re_eli': np.array([4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14],dtype=object),
-#         'U_eli': np.array([0.8, 0.8, 0.8, 0.4, 0.8, 0.8, 0.4, 0.8, 0.8, 0.8], dtype=object),
-#         "R_eli": np.array([1.25, 1.25, 1.25, 2.5, 1.25,1.25,1.25,2.5,1.25,1.25,1.25], dtype=object),
+#         'thermal_bridge_heat' : 2.0,
+#         'heating_setback':10,
+#         'cooling_setback':26,
+#         'typology_elements': np.array(['W', 'OP', 'W', 'GR', 'OP', 'W', 'OP', 'OP', 'W', 'OP'],dtype=object), 
+#         'thermal_capacity_elements': np.array([0.0, 25000.0, 0.0, 279852.0, 25000.0, 0.0, 279852.0, 25000.0, 0.0, 25000.0], dtype=object), 
+#         'area_elements': np.array([1.0, 30.0, 10.0, 100.0, 30.0, 3.0, 100.0, 30.0, 6.0, 30.0],dtype=object), 
+#         'solar_area_elements': np.array([1.0, 0.6, 1.0, 0.0, 0.6, 1.0, 0.0, 0.6, 1.0, 0.6], dtype=object),
+#         'g_factor_windows': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.6, 0.0, 0.0, 0.0], dtype=object),
+#         'orientation_elements': np.array(['NV', 'NV', 'SV', 'HOR', 'SV', 'EV', 'HOR', 'EV', 'WV', 'WV'],dtype=object),
+#         'heat_convective_elements_internal': np.array([2.5, 2.5, 2.5, 0.7, 2.5, 2.5, 5.0, 2.5, 2.5, 2.5], dtype=object),
+#         'heat_radiative_elements_internal': np.array([5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13],dtype=object),
+#         'heat_convective_elements_external': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object),
+#         'heat_radiative_elements_external': np.array([4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14],dtype=object),
+#         'transmittance_U_elements': np.array([0.8, 0.8, 0.8, 0.4, 0.8, 0.8, 0.4, 0.8, 0.8, 0.8], dtype=object),
+#         "thermal_resistance_R_elements": np.array([1.25, 1.25, 1.25, 2.5, 1.25,1.25,1.25,2.5,1.25,1.25,1.25], dtype=object),
 #         'R_c_eli': np.array([1.25, 1.25, 1.25, 2.5, 1.25, 1.25, 2.5, 1.25, 1.25, 1.25],dtype=object), 
-#         'F_sk_eli': np.array([0.5, 0.5, 0.5, 0.0, 0.5, 0.5, 1.0, 0.5, 0.5, 0.5], dtype=object), 
+#         'sky_factor_elements': np.array([0.5, 0.5, 0.5, 0.0, 0.5, 0.5, 1.0, 0.5, 0.5, 0.5], dtype=object), 
 #         'occ_level_wd': np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
 #     1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
 #     dtype=object), 
@@ -1422,7 +1535,7 @@ bui_item = {
 #         'sog_area': 100.0, 
 #         'exposed_perimeter': 40.0, 
 #         'wall_thickness': 0.3, 
-#         'R_floor_construction': 2.5, 
+#         'thermal_resistance_floor': 2.5, 
 #         'baseline_hci': np.array([2.5, 2.5, 2.5, 0.7, 2.5, 2.5, 5.0, 2.5, 2.5, 2.5], dtype=object), 
 #         'baseline_hce': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object), 
 #         "occ_level_wd": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,1, 0],
