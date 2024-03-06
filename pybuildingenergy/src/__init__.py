@@ -1,1 +1,1 @@
-from .utils import __ISO52010__, __ISO52016__
+# from .utils import __ISO52010__, __ISO52016__

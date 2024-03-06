@@ -22,7 +22,7 @@ import re
 from src.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
 # from pybuildingenergy.src.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
 
-import examples.weatherdata
+# import examples.weatherdata
 from global_inputs import main_directory_
 # print(os.getcwd(examples.weatherdata))
 
@@ -130,7 +130,8 @@ class __ISO52010__:
         # DEBUG MODE
         # directory = main_directory_+"/pybuildingenergy/pybuildingenergy/examples/weatherdata"
         # MAIN MODE
-        directory = main_directory_+"/examples/weatherdata"
+        directory = main_directory_+"/tests/weatherdata"
+        # directory = main_directory_+"/weatherdata"
     
         if BUI.__getattribute__('tmy_filename') is None:  # get TMY weather file from PVGIS
             if BUI.__getattribute__('location') is None:
@@ -1413,6 +1414,14 @@ class __ISO52016__:
         mask = hourly_results['Q_HC'] < 0
         hourly_results.loc[mask, 'Q_C'] = -hourly_results.loc[mask, 'Q_HC'].astype('int64')
 
+        Q_H_annual = hourly_results['Q_H'].sum()
+        Q_C_annual = hourly_results['Q_C'].sum()
+        Q_H_annual_per_sqm = Q_H_annual / BUI.__getattribute__('a_use')
+        Q_C_annual_per_sqm = Q_C_annual / BUI.__getattribute__('a_use')
+
+        annual_results_dic = {'Q_H_annual' : Q_H_annual, 'Q_C_annual' : Q_C_annual, 'Q_H_annual_per_sqm' : Q_H_annual_per_sqm, 'Q_C_annual_per_sqm' : Q_C_annual_per_sqm}
+        annual_results_df = pd.DataFrame([annual_results_dic])
+
         # heat pump: transformation of heating and cooling thermal load into electric load
         # C_to_K = 273.15
         # COP = 0.09756 * (hourly_results['T_ext'] + C_to_K) - 24.02587  # ref load: 45°C
@@ -1422,8 +1431,8 @@ class __ISO52016__:
         # hourly_results.loc[mask, 'P'] = hourly_results.loc[mask, 'Q_H'] / COP[mask]
         # mask = hourly_results['Q_HC'] < 0  # cooling
         # hourly_results.loc[mask, 'P'] = hourly_results.loc[mask, 'Q_C'] / EER[mask]
-        hourly_results.to_csv('bestest600.csv')
-        return hourly_results    
+        # hourly_results.to_csv('bestest600.csv')
+        return hourly_results, annual_results_df  
     
 
 

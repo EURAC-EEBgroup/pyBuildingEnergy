@@ -246,6 +246,49 @@ def check_dict_format(**kwargs):
     # If all inputs are in dictionary format, return True or do other operations
     return True
 
+
+# ==========
+def ePlus_shape_data(ep_result:pd.DataFrame, A_use: float):
+    '''
+    reshape dataset from energyplus:
+    Param
+    ------
+    ep_result: dataframe of energy plus result
+    A_use: net useful area in m2
+    
+    Result
+    ------
+    '''
+
+    ep_hourly_heating_in_J = ep_result['ZONE ONE:Zone Air System Sensible Heating Energy [J](Hourly)']
+    ep_hourly_cooling_in_J = ep_result['ZONE ONE:Zone Air System Sensible Cooling Energy [J](Hourly) ']  # Note: for some reason, EnergyPlus saves last output in csv with an extra space :-(
+    ep_hourly_T_op = ep_result['ZONE ONE:Zone Operative Temperature [C](Hourly)']
+
+    month_start_hours = [0, 744, 1488, 2160, 2904, 3624, 4368, 5088, 5832, 6576, 7296, 8040, 8760]
+
+    ep_monthly_heating_in_J = np.array([ep_hourly_heating_in_J[month_start_hours[i]:month_start_hours[i + 1]].sum() for i in range(12)])
+    ep_monthly_cooling_in_J = np.array([ep_hourly_cooling_in_J[month_start_hours[i]:month_start_hours[i + 1]].sum() for i in range(12)])
+
+    ep_annual_heating_in_J = ep_hourly_heating_in_J.sum()
+    ep_annual_cooling_in_J = ep_hourly_cooling_in_J.sum()
+
+    ep_annual_heating_in_kWh = ep_annual_heating_in_J / 3.6e6
+    ep_annual_cooling_in_kWh = ep_annual_cooling_in_J / 3.6e6
+
+    ep_monthly_heating_in_kWh = ep_monthly_heating_in_J / 3.6e6
+    ep_monthly_cooling_in_kWh = ep_monthly_cooling_in_J / 3.6e6
+
+    ep_monthly_T_op = np.array([ep_hourly_T_op[month_start_hours[i]:month_start_hours[i + 1]].mean() for i in range(12)])
+
+    EnergyPlus_annual_heating_in_kWh_per_sqm = ep_annual_heating_in_kWh / A_use
+    EnergyPlus_annual_cooling_in_kWh_per_sqm = ep_annual_cooling_in_kWh / A_use
+
+    EnergyPlus_monthly_heating_in_kWh_per_sqm = ep_monthly_heating_in_kWh / A_use
+    EnergyPlus_monthly_cooling_in_kWh_per_sqm = ep_monthly_cooling_in_kWh / A_use
+
+    return EnergyPlus_monthly_heating_in_kWh_per_sqm, EnergyPlus_monthly_cooling_in_kWh_per_sqm, ep_monthly_T_op, \
+        EnergyPlus_annual_heating_in_kWh_per_sqm, EnergyPlus_annual_cooling_in_kWh_per_sqm
+
 # ========================================================================================================
 #                                   FUNCTIONS GRAPHS
 # ========================================================================================================
@@ -350,7 +393,7 @@ def line_and_bar(theme_type:str, x_data:list, y_bar_plot:list, y_name:list, y_ti
     # return line.render(f"{name_chart}.html")
 
 
-def bar_chart_single(y_name:list,y_data_plot:list, theme_type:str, name_chart:str):
+def bar_chart_single(y_name:list,y_data_plot:list, theme_type:str):
 
     c = (
         Bar(init_opts=opts.InitOpts(theme=theme_type))
@@ -375,7 +418,7 @@ def bar_chart_single(y_name:list,y_data_plot:list, theme_type:str, name_chart:st
     c.height = "600px"
     c.width = "1200px"
     
-    return c.render(f"{name_chart}.html")
+    return c
 
 
 

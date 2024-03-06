@@ -4,7 +4,7 @@
 from src.utils import __ISO52010__, __ISO52016__
 from data.building_archetype import Selected_bui_archetype, Buildings_from_dictionary
 from src.graphs import __Graphs__
-from examples.BESTTEST.BT600 import bt_600
+from data.best_tests import bt_600
 import numpy as np
 from global_inputs import bui_types, periods
 import argparse
@@ -163,8 +163,8 @@ if __name__ == "__main__":
 
 
 #%%
-import pandas as pd
-data = pd.read_csv("/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/pybuildingenergy/pybuildingenergy/test_with_epw.csv", index_col=0)
+# import pandas as pd
+# data = pd.read_csv("/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/pybuildingenergy/pybuildingenergy/test_with_epw.csv", index_col=0)
 # data.loc[:,'Q_H'].sum()
 
 # pvgis_=pd.read_csv("/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/pybuildingenergy/pybuildingenergy/weather_epw_pvgis.csv", index_col=0)
