@@ -9,6 +9,6 @@ using the same epw weather file (Denver-Stapleton).
 
 .. image:: https://github.com/DanieleAntonucci20/pyBuildingEnergy/blob/master/pybuildingenergy/assets/testBed600_ePlusVs52016.png
    :width: 800
-   :height: 250
+   :height: 500
 
 
