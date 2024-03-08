@@ -366,19 +366,17 @@ def Calc_52010(BUI) ->_52010:
     '''
     
     # get weather dataframe
-    # weatherData = get_ext_data(lat,long)
     if BUI.__getattribute__('weather_source') == 'pvgis':
         weatherData = __ISO52010__.get_tmy_data(BUI)
     elif BUI.__getattribute__('weather_source') == 'epw':
         weatherData = __ISO52010__.get_tmy(BUI, )
     else: raise ValueError("select the right weather source: 'epw' or 'pvgis'")
-    # sim_df = weatherData['Weather data']
+    
     sim_df = weatherData.weather_data
-    # timezoneW = weatherData['UTC offset']
     timezoneW = weatherData.utc_offset
+    
     # Change time index
     sim_df.index.year.unique().values
-    # sim_df.loc[sim_df.index.year == 2015,:]
     sim_df.index = pd.to_datetime({'year': 2009, 'month': sim_df.index.month, 'day': sim_df.index.day,
                                     'hour': sim_df.index.hour})
     for column in sim_df:
@@ -951,8 +949,8 @@ class __ISO52016__:
         # number of workdays for the entire period of simulation (year + warmup: 13 months)
         number_of_weekdays_with_warmup_period = sum(wd_mask) // 24   
         # Associate the occupancy profile to simulation hourly time of workdays
-        sim_df.loc[wd_mask, 'occupancy level'] = np.tile(occ_level_wd, number_of_weekdays_with_warmup_period)
-        sim_df.loc[wd_mask, 'comfort level'] = np.tile(comf_level_wd, number_of_weekdays_with_warmup_period)
+        sim_df.loc[wd_mask, 'occupancy level'] = np.tile(occ_level_wd.astype(float), number_of_weekdays_with_warmup_period)
+        sim_df.loc[wd_mask, 'comfort level'] = np.tile(comf_level_wd.astype(float), number_of_weekdays_with_warmup_period)
         
         ''' WEEKEND '''
         # number of weekend days for the entire period of simulation (year + warmup: 13 months)
@@ -960,8 +958,8 @@ class __ISO52016__:
         # Number of workdays during the entire simulation period
         we_mask = (sim_df.index.weekday >= 5)
         # Associate the occupancy profile to simulation hourly time of weekends
-        sim_df.loc[we_mask, 'occupancy level'] = np.tile(occ_level_we, number_of_weekend_days_with_warmup_period)
-        sim_df.loc[we_mask, 'comfort level'] = np.tile(comf_level_we,number_of_weekend_days_with_warmup_period)
+        sim_df.loc[we_mask, 'occupancy level'] = np.tile(occ_level_we.astype(float), number_of_weekend_days_with_warmup_period)
+        sim_df.loc[we_mask, 'comfort level'] = np.tile(comf_level_we.astype(float),number_of_weekend_days_with_warmup_period)
 
         ''' HEATING AND COOLING '''
         # periods where occupancy is =1 and comfort is required and occupancy=0 comfort is not required
@@ -1342,13 +1340,7 @@ class __ISO52016__:
                                 MatA[ri, ci] += h_pli_eli[Pli, Eli]
                                 MatA[ri, ci + 1] -= h_pli_eli[Pli, Eli]
 
-                    # total_time_block_in_iterate += (time.perf_counter() - block_in_iterate_start)
-                    # pd.DataFrame(MatA).to_csv("MatA_Notworks.csv")
-                    # pd.DataFrame(VecB).to_csv("VecB_Notworks.csv")
-                    # start_time_solver = time.perf_counter()
                     theta = np.linalg.solve(MatA, VecB)
-                    # end_time_solver = time.perf_counter()
-                    # total_time_solver += (end_time_solver - start_time_solver)
                     VecB = theta
 
                     Theta_int_air[Tstepi, :] = VecB[0, :]
@@ -1399,14 +1391,10 @@ class __ISO52016__:
                 pbar.update(1)
         # post-processing
         Tstep_first_act = 744  # 744 = 24 * 31; actual first time step (1 January) after warmup month of December
-        # Tstepn_act = 8760
 
-        # simulation_calendar_year = weather_data.index[0].year  # arbitrary non-leap year
-        # index = pd.date_range(start='2018-12-01', end='2020-01-01', freq='H', inclusive='left')
         hourly_results = pd.DataFrame(data=np.vstack((Phi_HC_nd_act[Tstep_first_act:], Theta_op_act[Tstep_first_act:], sim_df['T2m'][Tstep_first_act:])).T, index=sim_df[Tstep_first_act:].index,
                                     columns=['Q_HC', 'T_op', 'T_ext'])
-        # hourly_results.drop(index=pd.date_range(start='2018-12-01', end='2019-01-01', freq='H', inclusive='left'),
-        #                     inplace=True)  # remove warmup period
+
         hourly_results['Q_H'] = 0
         mask = hourly_results['Q_HC'] > 0
         hourly_results.loc[mask, 'Q_H'] = hourly_results.loc[mask, 'Q_HC'].astype('int64')
@@ -1436,154 +1424,3 @@ class __ISO52016__:
     
 
 
-
-#%%
-# ========================================================================
-# TEST 
-
-# bui_item = {
-#         'url_api': "http://127.0.0.1:8000/api/v1", 
-#         'latitude':46.66345144066082,
-#         'longitude':9.71636944229362,
-#         'Eln':10, #
-#         'a_use': 100, 
-#         "slab_on_ground_area":100,#
-#         'heating_setpoint':20,     
-#         'cooling_setpoint':26,
-#         'power_heating_max':30000,            
-#         'power_cooling_max':-10000,
-#         'air_change_rate_base_value':1.107 ,
-#         'air_change_rate_extra':0.0,
-#         'internal_gains_base_value':1.452,
-#         'internal_gains_extra':0.0,        
-#         'thermal_bridge_heat' : 2.0,
-#         'heating_setback':10,
-#         'cooling_setback':26,
-#         'typology_elements': np.array(['W', 'OP', 'W', 'GR', 'OP', 'W', 'OP', 'OP', 'W', 'OP'],dtype=object), 
-#         'thermal_capacity_elements': np.array([0.0, 25000.0, 0.0, 279852.0, 25000.0, 0.0, 279852.0, 25000.0, 0.0, 25000.0], dtype=object), 
-#         'area_elements': np.array([1.0, 30.0, 10.0, 100.0, 30.0, 3.0, 100.0, 30.0, 6.0, 30.0],dtype=object), 
-#         'solar_area_elements': np.array([1.0, 0.6, 1.0, 0.0, 0.6, 1.0, 0.0, 0.6, 1.0, 0.6], dtype=object),
-#         'g_factor_windows': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.6, 0.0, 0.0, 0.0], dtype=object),
-#         'orientation_elements': np.array(['NV', 'NV', 'SV', 'HOR', 'SV', 'EV', 'HOR', 'EV', 'WV', 'WV'],dtype=object),
-#         'heat_convective_elements_internal': np.array([2.5, 2.5, 2.5, 0.7, 2.5, 2.5, 5.0, 2.5, 2.5, 2.5], dtype=object),
-#         'heat_radiative_elements_internal': np.array([5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13],dtype=object),
-#         'heat_convective_elements_external': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object),
-#         'heat_radiative_elements_external': np.array([4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14],dtype=object),
-#         'transmittance_U_elements': np.array([0.8, 0.8, 0.8, 0.4, 0.8, 0.8, 0.4, 0.8, 0.8, 0.8], dtype=object),
-#         'thermal_resistance_R_elements': np.array([1.25, 1.25, 1.25, 2.5, 1.25, 1.25, 2.5, 1.25, 1.25, 1.25],dtype=object), 
-#         'sky_factor_elements': np.array([0.5, 0.5, 0.5, 0.0, 0.5, 0.5, 1.0, 0.5, 0.5, 0.5], dtype=object), 
-#         'occ_level_wd': np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-#                 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]), 
-#         'occ_level_we': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-#                 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]), 
-#         'comf_level_wd': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-#                 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]), 
-#         'comf_level_we': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-#                 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]), 
-#         'sog_area': 100.0, 
-#         'exposed_perimeter': 40.0, 
-#         'wall_thickness': 0.3, 
-#         'thermal_resistance_floor': 2.5, 
-#         'baseline_hci': np.array([2.5, 2.5, 2.5, 0.7, 2.5, 2.5, 5.0, 2.5, 2.5, 2.5], dtype=object), 
-#         'baseline_hce': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object), 
-#         "occ_level_wd": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,1, 0],
-#         "occ_level_we": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,1, 0],
-#         "comf_level_wd": [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,1, 0],
-#         "comf_level_we": [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,1, 0],
-#         'coldest_month': 1, 
-#         'uuid': '9cdbfbeb-f2f7-467c-9a69-3e0cc3a181ee',
-#         "heating_mode": True,
-#         "cooling_mode": True,
-#         "construction_class": "class_i",
-#     }
-# # bui_item = {
-#         'url_api': "http://127.0.0.1:8000/api/v1", 
-#         'latitude':46.66345144066082,
-#         'longitude':9.71636944229362,
-        
-#         'Eln':10, #
-#         'a_use': 100, 
-#         "slab_on_ground_area":100,#
-#         'heating_setpoint':20,     
-#         'cooling_setpoint':26,
-#         'power_heating_max':30000,            
-#         'power_cooling_max':10000,
-#         'air_change_rate_base_value':1.107 ,
-#         'air_change_rate_extra':0.0,
-#         'internal_gains_base_value':1.452,
-#         'internal_gains_extra':0.0,        
-#         'thermal_bridge_heat' : 2.0,
-#         'heating_setback':10,
-#         'cooling_setback':26,
-#         'typology_elements': np.array(['W', 'OP', 'W', 'GR', 'OP', 'W', 'OP', 'OP', 'W', 'OP'],dtype=object), 
-#         'thermal_capacity_elements': np.array([0.0, 25000.0, 0.0, 279852.0, 25000.0, 0.0, 279852.0, 25000.0, 0.0, 25000.0], dtype=object), 
-#         'area_elements': np.array([1.0, 30.0, 10.0, 100.0, 30.0, 3.0, 100.0, 30.0, 6.0, 30.0],dtype=object), 
-#         'solar_area_elements': np.array([1.0, 0.6, 1.0, 0.0, 0.6, 1.0, 0.0, 0.6, 1.0, 0.6], dtype=object),
-#         'g_factor_windows': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.6, 0.0, 0.0, 0.0], dtype=object),
-#         'orientation_elements': np.array(['NV', 'NV', 'SV', 'HOR', 'SV', 'EV', 'HOR', 'EV', 'WV', 'WV'],dtype=object),
-#         'heat_convective_elements_internal': np.array([2.5, 2.5, 2.5, 0.7, 2.5, 2.5, 5.0, 2.5, 2.5, 2.5], dtype=object),
-#         'heat_radiative_elements_internal': np.array([5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13, 5.13],dtype=object),
-#         'heat_convective_elements_external': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object),
-#         'heat_radiative_elements_external': np.array([4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14, 4.14],dtype=object),
-#         'transmittance_U_elements': np.array([0.8, 0.8, 0.8, 0.4, 0.8, 0.8, 0.4, 0.8, 0.8, 0.8], dtype=object),
-#         "thermal_resistance_R_elements": np.array([1.25, 1.25, 1.25, 2.5, 1.25,1.25,1.25,2.5,1.25,1.25,1.25], dtype=object),
-#         'R_c_eli': np.array([1.25, 1.25, 1.25, 2.5, 1.25, 1.25, 2.5, 1.25, 1.25, 1.25],dtype=object), 
-#         'sky_factor_elements': np.array([0.5, 0.5, 0.5, 0.0, 0.5, 0.5, 1.0, 0.5, 0.5, 0.5], dtype=object), 
-#         'occ_level_wd': np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-#     1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-#     dtype=object), 
-#         'occ_level_we': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-#     1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-#     dtype=object), 
-#         'comf_level_wd': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-#     1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-#     dtype=object), 
-#         'comf_level_we': np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-#     1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-#     dtype=object), 
-#         'sog_area': 100.0, 
-#         'exposed_perimeter': 40.0, 
-#         'wall_thickness': 0.3, 
-#         'thermal_resistance_floor': 2.5, 
-#         'baseline_hci': np.array([2.5, 2.5, 2.5, 0.7, 2.5, 2.5, 5.0, 2.5, 2.5, 2.5], dtype=object), 
-#         'baseline_hce': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object), 
-#         "occ_level_wd": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,1, 0],
-#         "occ_level_we": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,1, 0],
-#         "comf_level_wd": [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,1, 0],
-#         "comf_level_we": [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,1, 0],
-#         'coldest_month': 1, 
-#         'uuid': '9cdbfbeb-f2f7-467c-9a69-3e0cc3a181ee',
-#         "heating": True,
-#         "cooling": True,
-#         "construction_class": "class_i",
-#     }
-
-#%%
-
-
-#%%
-# TEST:
-# inizialize_weather_class = __ISO52010__(46.66345144066082, 9.71636944229362, bui_item)
-# hourly_sim = __ISO52016__(bui_item).Temperature_and_Energy_needs_calculation()
-# hourly_sim
-# inizialize.Temperature_and_Energy_needs_calculation(**bui_item)
-
-# ==========================================================================
-
-# %%
-# import plotly.graph_objects as go
-
-# # Create trace for variable 1
-# trace1 = go.Scatter(x=hourly_sim.index, y=hourly_sim['Q_H'], mode='lines', name='Variable 1')
-
-# # Create layout
-# layout = go.Layout(title='Time Series Chart',
-#                    xaxis=dict(title='Timestamp'),
-#                    yaxis=dict(title='Value'))
-
-# # Create figure
-# fig = go.Figure(data=[trace1], layout=layout)
-
-# # Show the plot
-# fig.show()
-# %%

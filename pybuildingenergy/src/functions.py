@@ -14,6 +14,8 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 from datetime import datetime
+from global_inputs import main_directory_
+import pickle
 
 
 # ===========================================================================================
@@ -25,14 +27,20 @@ def get_period_from_tmy_filename(tmy_filename):
     end = int(tmp[1].split('.')[0])
     return [start, end]
 
-
-
 # ===========================================================================================
+def is_float(value):
+    try:
+        float_value = float(value)
+        return isinstance(float_value, float)
+    except ValueError:
+        return False
+
 def capitalize_first_letter(s):
     if not s:
         return s
     return s[0].upper() + s[1:]
 
+# ===========================================================================================
 def Equation_of_time(day_of_year:pd.Series) -> pd.Series:
     '''
     Equation of time according to formula 6.4.1.2 of ISO52010
@@ -604,3 +612,51 @@ def Scatter_with_regression(x_data:list, y_data:list, colorPoints:list, colorReg
 
     return chart
 
+
+def get_buildings_demos():
+    '''
+    get archetypes and demo buildings
+    '''
+    # pickle_file_path = main_directory_ + "/pybuildingenergy/pybuildingenergy/data/archetypes.pickle"
+    pickle_file_path = main_directory_ + "/archetypes.pickle"
+    with open(pickle_file_path, 'rb') as f:
+            archetypes = pickle.load(f)
+
+    return archetypes
+
+
+# # Check facade elements
+# def update_bui_removing_elemenbts_0_area(BUI, bui_new):
+#     '''
+#     update building object, removing facade elemetns in which the area is equal to 0
+#     Param
+#     ------
+#     BUI: building object
+
+#     Return
+#     -------
+#     BUI building object uipdated
+#     '''
+#     # get index of elements where the area is equal to 0
+#     indices = [index for index, value in enumerate(bui_new['area_elements']) if value != 0]
+
+#     # new facade elements properities
+#     facade_elements_updated = {
+#         'typology_elements': [bui_new['typology_elements'][i] for i in indices], 
+#         'area_elements':[bui_new['area_elements'][i] for i in indices], 
+#         'orientation_elements': [bui_new['orientation_elements'][i] for i in indices],
+#         'solar_area_elements': [bui_new['solar_area_elements'][i] for i in indices],
+#         'transmittance_U_elements': [bui_new['transmittance_U_elements'][i] for i in indices],
+#         'thermal_resistance_R_elements' : [1/bui_new['transmittance_U_elements'][i] for i in indices],
+#         'thermal_capacity_elements' : [bui_new['thermal_capacity_elements'][i] for i in indices],
+#         'g_factor_windows' :  [bui_new['g_factor_windows'][i] for i in indices],
+#         'heat_convective_elements_internal':  [bui_new['heat_convective_elements_internal'][i] for i in indices],
+#         'heat_radiative_elements_internal': [bui_new['heat_radiative_elements_internal'][i] for i in indices],
+#         'heat_convective_elements_external': [bui_new['heat_convective_elements_external'][i] for i in indices],
+#         'heat_radiative_elements_external': [bui_new['heat_radiative_elements_external'][i] for i in indices],
+#         'sky_factor_elements': [bui_new['sky_factor_elements'][i] for i in indices],
+#     }
+
+#     # Update building objetc
+    
+#     return BUI.update_facade_elements(facade_elements_updated)

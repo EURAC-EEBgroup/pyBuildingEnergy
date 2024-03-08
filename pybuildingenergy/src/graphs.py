@@ -7,6 +7,7 @@ from pyecharts.faker import Faker
 from pyecharts.globals import ThemeType
 import pandas as pd
 import os
+import webbrowser
 
 # from pybuildingenergy.src.functions import capitalize_first_letter, line_and_bar, bar_chart_single, energy_gauge_chart,season_type,\
 #     Scatter_with_regression, Heating_Degree_days,Simple_regeression
@@ -30,7 +31,7 @@ class __Graphs__:
             raise ValueError(f"Invalid choice for sesaon. Select heating or cooling")
    
 
-    def single_variable_plot(self, name_chart:str):
+    def single_variable_plot(self,folder_directory:str, name_file:str):
         '''
         Plot bar chart of monthly consumption
         Param
@@ -60,12 +61,18 @@ class __Graphs__:
             y_name = ["Heating", "Cooling"]
             theme_type = ThemeType.ROMA
         print(y_name, y_data)
+
+        Chart = bar_chart_single(y_name, y_data, theme_type)
+
+        file_path = "{}/{}.html".format(folder_directory, name_file)
+        # directory_chart = os.getcwd()+f"/charts/{chart_name}.html"
+        Chart.render(file_path)
         
-        return bar_chart_single(y_name, y_data, theme_type, f"{name_chart}")
+        return  Chart
 
     
     def variables_plot(self, month_selected:bool=False, _month:int=1, _frequency: str="hourly",
-                       energy_var:str="heating", chart_name:str="enegry_profile"):
+                       energy_var:str="heating", folder_directory:str="",name_file:str="enegry_profile"):
         '''
         Visualize data as a combination of barchart and linechart
         Example:
@@ -107,7 +114,7 @@ class __Graphs__:
             "yearly": 'YE',
             "monthly": 'ME',
             "daily": 'D',
-            "hourly": 'H'
+            "hourly": 'h'
         }
 
         # Get the resampling frequency code
@@ -154,12 +161,13 @@ class __Graphs__:
             name_chart="time_line",
         )
         # Chart.render(os.getcwd()+f"/pybuildingenergy/charts/{chart_name}.html")
-        print(os.path.dirname(__file__))
-        Chart.render(os.getcwd()+f"/charts/{chart_name}.html")
+        file_path = "{}/{}.html".format(folder_directory, name_file)
+        # directory_chart = os.getcwd()+f"/charts/{chart_name}.html"
+        Chart.render(file_path)
         return Chart
 
     
-    def annual_charts(self, bui_area:float = 150, chart_name:str="Yearly_eNeed_gauge"):
+    def annual_charts(self, bui_area:float = 150, folder_directory:str="", name_file:str="Yearly_eNeed_gauge"):
         '''
         visualize result as gauge chart. Useful for yearly energy 
         Recommended for displaying annual energy consumption for heating or cooling according to categories defined at the national level.
@@ -176,11 +184,14 @@ class __Graphs__:
         Chart = energy_gauge_chart('Heating', value, unit="kWh/m2", title_graph='Annual energy need for  heating')
         # Plot chart in a single html file
         # Chart.render(os.getcwd()+f"/pybuildingenergy/charts/{chart_name}.html")
-        Chart.render(os.getcwd()+f"/charts/{chart_name}.html")
+        file_path = "{}/{}.html".format(folder_directory, name_file)
+        # directory_chart = os.getcwd()+f"/charts/{chart_name}.html"
+        Chart.render(file_path)
+
         return Chart
 
     
-    def energy_signature(self, _frequency:str='daily', clean_data: bool=True, chart_name:str="energy_signature"):
+    def energy_signature(self, _frequency:str='daily', clean_data: bool=True, name_file:str="energy_signature", folder_directory:str=""):
         '''
         Plotting energy signature between heating consumption and HDD
         Data:
@@ -244,21 +255,44 @@ class __Graphs__:
         )
         
         # Chart.render(os.getcwd()+f"/pybuildingenergy/charts/{chart_name}.html")
-        Chart.render(os.getcwd()+f"/charts/{chart_name}.html")
+        file_path = "{}/{}.html".format(folder_directory, name_file)
+        # directory_chart = os.getcwd()+f"/charts/{chart_name}.html"
+        Chart.render(file_path)
+
         return Chart
 
     #
-    def bui_analysis_page(self):
+    def bui_analysis_page(self, folder_directory:str, name_file:str):
+        '''
+        Create a simple report with building performance graphs:
+        Param
+        ------
+        folder_directory : directory of the folder where to save the report
+        name_file: name of the report
+        
+        Return 
+        -------
+        page: html file 
+        '''
+        print(folder_directory)
         page = Page(layout=Page.SimplePageLayout)
         page.add(
-            self.variables_plot(energy_var="heating"),
-            self.variables_plot(_frequency = 'monthly', chart_name="monthly_heating_need"),
-            self.variables_plot(_frequency = 'monthly', energy_var = "heating_and_cooling", chart_name="monthly_heating_cooling_need"),
-            self.energy_signature(),
-            self.annual_charts()
+            self.variables_plot(energy_var="heating", folder_directory=folder_directory, name_file="line_chart"),
+            self.variables_plot(_frequency = 'monthly', folder_directory=folder_directory, name_file="monthly_heating_need"),
+            self.variables_plot(_frequency = 'monthly', folder_directory=folder_directory, energy_var = "heating_and_cooling", name_file="monthly_heating_cooling_need"),
+            self.energy_signature(folder_directory=folder_directory),
+            self.annual_charts(folder_directory=folder_directory)
         )
         # page.render(os.getcwd()+"/pybuildingenergy/charts/bui_data_analysis.html")
-        page.render(os.getcwd()+"/charts/bui_data_analysis.html")
+        # MAIN 
+        # page.render(os.getcwd()+"/charts/bui_data_analysis.html")
+        # DEBUG
+        # page.render(os.getcwd()+"/charts/bui_data_analysis.html")
+        file_path = "{}/{}.html".format(folder_directory, name_file)
+        page.render(file_path)
+        
+        print("Report created!")
+        
 
 # TEST
 # import pandas as pd

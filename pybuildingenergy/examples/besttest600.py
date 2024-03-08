@@ -1,4 +1,3 @@
-
 import sys
 import os
 
@@ -8,15 +7,13 @@ sys.path.append("/".join(os.path.realpath(__file__).split("/")[0:-2]))
 
 from src.utils import __ISO52016__
 from data.building_archetype import Buildings_from_dictionary
-from global_inputs import main_directory_, months
-from src.functions import bar_chart_single, ePlus_shape_data
-from pyecharts import options as opts
-from pyecharts.charts import Bar, Scatter, Line, Gauge
+from global_inputs import main_directory_
+from src.functions import bar_chart_single, ePlus_shape_data, get_buildings_demos
 from pyecharts.globals import ThemeType
-from data.best_tests import bt_600
 import pandas as pd
 
-
+demo_buis = get_buildings_demos()
+bt_600 = [bui for bui in demo_buis if bui['building_type'] == 'BestTest600'][0]
 
 def main(name_chart):
     # SIMULATE BUILDING
@@ -27,9 +24,9 @@ def main(name_chart):
     # ISO 52016
     ISO52016_annual_heating = annual_results_df['Q_H_annual_per_sqm'].squeeze() / 1000
     ISO52016_annual_cooling = annual_results_df['Q_C_annual_per_sqm'].squeeze() / 1000
-    ISO52016_monthly_heating_in_kWh_per_sqm = hourly_results['Q_H'].resample('M').sum() / (1e3 * BUI.__getattribute__('a_use'))
-    ISO52016_monthly_cooling_in_kWh_per_sqm = hourly_results['Q_C'].resample('M').sum() / (1e3 * BUI.__getattribute__('a_use'))
-    ISO52016_monthly_T_op = hourly_results['T_op'].resample('M').mean()
+    ISO52016_monthly_heating_in_kWh_per_sqm = hourly_results['Q_H'].resample('ME').sum() / (1e3 * BUI.__getattribute__('a_use'))
+    ISO52016_monthly_cooling_in_kWh_per_sqm = hourly_results['Q_C'].resample('ME').sum() / (1e3 * BUI.__getattribute__('a_use'))
+    ISO52016_monthly_T_op = hourly_results['T_op'].resample('ME').mean()
     index = ISO52016_monthly_heating_in_kWh_per_sqm.index
 
     # ENERGYPLUS
