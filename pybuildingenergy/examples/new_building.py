@@ -77,9 +77,9 @@ new_bui = {
 
 # Create building object
 BUI = Buildings_from_dictionary(new_bui)
-
+path_weather_file_ = ""
 # Run Simulation and generate graphs 
-hourly_sim, annual_results_df = __ISO52016__().Temperature_and_Energy_needs_calculation(BUI, weather_source ='pvgis') 
+hourly_sim, annual_results_df = __ISO52016__().Temperature_and_Energy_needs_calculation(BUI, weather_source ='pvgis', path_weather_file=path_weather_file_) 
 # Provide directory to save data and name of chart file
 __Graphs__(df = hourly_sim,season ='heating_cooling').bui_analysis_page(folder_directory="/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/pybuildingenergy/pybuildingenergy/charts",
                                                                         name_file="new_building_")
