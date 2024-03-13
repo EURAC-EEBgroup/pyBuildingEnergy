@@ -52,13 +52,12 @@ The following graphs display some results for simulations using weather files (E
 .. image:: https://github.com/DanieleAntonucci20/pyBuildingEnergy/blob/master/pybuildingenergy/assets/iso52016_vs_EPlus_bt600_Athens.png
    :width: 800
    :height: 400
-   :caption: This is a caption for the image.
 
 **BERLIN**
+
 .. image:: https://github.com/DanieleAntonucci20/pyBuildingEnergy/blob/master/pybuildingenergy/assets/iso52016_vs_EPlus_bt600_Berlin.png
    :width: 800
    :height: 400
-   :caption: This is a caption for the image.
 
 
 
