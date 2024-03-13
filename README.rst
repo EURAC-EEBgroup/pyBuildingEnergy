@@ -100,6 +100,15 @@ The calculation methods can be used for residential or non-residential buildings
 ISO 52016-1:2017 also contains specifications for the assessment of thermal zones in the building or in the part of a building. The calculations are performed per thermal zone. In the calculations, the thermal zones can be assumed to be thermally coupled or not.
 ISO 52016-1:2017 is applicable to buildings at the design stage, to new buildings after construction and to existing buildings in the use phase
 
+Weather Data
+------------
+The tool can use wather data coming from 2 main sources:
+
+- pvgis api (https://re.jrc.ec.europa.eu/pvg_tools/en/) - PHOTOVOLTAIC GEOGRAPHICAL INFORMATION SYSTEM
+- .epw file from https://www.ladybug.tools/epwmap/
+
+More details in the example folder
+
 Limitations
 --------
 The calculation is currently aimed at single-zone buildings with ground floor. The evaluation of multi-zone buildings is under evaluation.

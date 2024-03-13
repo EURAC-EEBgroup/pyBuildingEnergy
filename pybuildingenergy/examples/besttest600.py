@@ -16,9 +16,32 @@ demo_buis = get_buildings_demos()
 bt_600 = [bui for bui in demo_buis if bui['building_type'] == 'BestTest600'][0]
 
 #eplusout
-def main(name_chart,weather_type, path_weather_file_, eplus_file_name):
+def main(name_chart:str,weather_type:str, 
+         latitude_bui:float = None, longitude_bui:float = None, 
+         path_weather_file_:str= None, eplus_file_name:str=None):
+    
     # SIMULATE BUILDING
     BUI = Buildings_from_dictionary(bt_600)
+    BUI.__setattr__('weather_source', weather_type)
+    
+    if weather_type not in ["pvgis", "epw"]:
+        raise ValueError("weather_type must be 'pvgis' or 'epw'")
+    else:
+        if weather_type == "pvgis":
+            if latitude_bui is not None:
+                BUI.__setattr__('latitude', latitude_bui)
+            if longitude_bui is not None:
+                BUI.__setattr__('longitude', longitude_bui)
+
+        # elif weather_type == "epw":
+        #     # Check if path_weather_file_ and eplus_file_name_ are provided
+        #     if not path_weather_file_ or not isinstance(path_weather_file_, str):
+        #         raise ValueError("Value must be a non-empty string")
+        #     if not eplus_file_name or not isinstance(eplus_file_name, str):
+        #         raise ValueError("Value must be a non-empty string")
+
+
+    
     hourly_results, annual_results_df = __ISO52016__().Temperature_and_Energy_needs_calculation(BUI, weather_source=weather_type, path_weather_file=path_weather_file_) 
 
     # RESHAPE DATA
@@ -56,8 +79,11 @@ def main(name_chart,weather_type, path_weather_file_, eplus_file_name):
 
 
 if __name__ == "__main__":
-    main(name_chart = 'BESTEST600_iso_vs_energyplus_Athens',
-         weather_type ='epw', 
-        #  path_weather_file_=main_directory_+"/tests/weatherdata/tmy_39.783_-104.892_2005_2015.epw",
-         path_weather_file_=main_directory_+"/tests/weatherdata/2020_Athens.epw",
-         eplus_file_name = "Case600_V22.1.0out_Athens")
+    main(
+        name_chart = 'BESTEST600_iso_vs_energyplus_Athens',
+        weather_type ='pvgis', 
+        latitude_bui = 44.78,
+        longitude_bui = 9.78,
+        eplus_file_name = "Case600_V22.1.0out_Athens",
+        path_weather_file_=main_directory_+"/examples/weatherdata/2020_Athens.epw"
+    )

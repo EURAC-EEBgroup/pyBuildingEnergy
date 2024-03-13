@@ -19,7 +19,7 @@ def main(archetype=False, best_test=False, folder_dir="", name_file_="", archety
         if select_archetype == 1:
 
             building_archetype = input("select type of building archetype (e.g. 'single_family_house'):")
-            period_archetype = input("Year of building construction(e.g.'before 1900'): ")
+            period_archetype = input("Year of building construction(e.g. 'before 1900', '1901-1920','1921-1945','1946-1960','1961-1875','1976-1990','1991-2005','2006-today'): ")
             latitude = input('latitude of the building location in decimal:')
             longitude = input('longitude fo the building location in decimal:')
         # check building archetype:
@@ -29,7 +29,6 @@ def main(archetype=False, best_test=False, folder_dir="", name_file_="", archety
                     BUI = Selected_bui_archetype(building_archetype,period_archetype,float(latitude), float(longitude)).get_archetype(archetype_db_path)
                     hourly_sim, annual_results_df = __ISO52016__().Temperature_and_Energy_needs_calculation(BUI, weather_source ='pvgis',  path_weather_file=main_directory_ + "/data/examples/weatherdata/2020_Athens.epw") 
                     __Graphs__(hourly_sim,'heating_cooling').bui_analysis_page(folder_directory=folder_dir, name_file=name_file_)
-                    print("Report created! check in the charts folder")
                 
                 else:
                     raise TypeError("Check if latitude and longitude are written in a proper way (as float)")
@@ -69,4 +68,3 @@ if __name__ == "__main__":
     name_file="new_building_from_archetype"
     archetypes_path = file_path = "{}/{}".format(main_directory_, "archetypes.pickle")
     main(archetype=args.archetype, best_test=args.best_test, folder_dir=folder_dir, name_file_=name_file, archetype_db_path=archetypes_path)
-
