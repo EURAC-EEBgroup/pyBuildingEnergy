@@ -47,19 +47,17 @@ The building has been simulated using different weather file (.epw). The results
 
 The following graphs display some results for simulations using weather files (EPW) from Athens and Berlin.
 
+**ATHENS**
 
 .. image:: https://github.com/DanieleAntonucci20/pyBuildingEnergy/blob/master/pybuildingenergy/assets/iso52016_vs_EPlus_bt600_Athens.png
    :width: 800
    :height: 400
-   :alt: Image description
-   :align: center
    :caption: This is a caption for the image.
 
-.. image:: https://github.com/DanieleAntonucci20/pyBuildingEnergy/blob/master/pybuildingenergy/assets/iso52016_vs_EPlus_bt600_Athens.png
+**BERLIN**
+.. image:: https://github.com/DanieleAntonucci20/pyBuildingEnergy/blob/master/pybuildingenergy/assets/iso52016_vs_EPlus_bt600_Berlin.png
    :width: 800
    :height: 400
-   :alt: Image description
-   :align: center
    :caption: This is a caption for the image.
 
 
