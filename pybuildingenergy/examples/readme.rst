@@ -27,7 +27,9 @@ in bestets600.py, you have to provide the following inputs:
    - path_weather_file: direcotry of .epw files. Mandatory if weather_type = 'epw'
    - eplus_file_name: name of the energy plus results to be used for comparison (mandatory)
 
-   
+
+.. code-block:: python
+
    if __name__ == "__main__":
       main(
          name_chart = 'BESTEST600_iso_vs_energyplus_Athens',
