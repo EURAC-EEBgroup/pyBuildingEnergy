@@ -18,8 +18,9 @@ Weather data
 - **Best test 600**
  
 in bestets600.py, you have to provide the following inputs:
+
    - name chart: name of the chart file
-   - weather tpye. Type of weather source to get weather data. Possible choices are:
+   - weather type. Type of weather source to get weather data. Possible choices are:
       -'pvgis': connection to pvgis website and getting data according to latitude and longitude values available in BUI object.
       -'epw': use epw files located in specific folder defined in path_weather_file
    - latitude: latitude of the building location. Mandatory if weather type = 'pvgis'
