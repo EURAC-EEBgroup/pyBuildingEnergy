@@ -18,6 +18,8 @@ import os
 import multiprocessing
 import sys
 import re
+from pvlib.iotools import epw
+from datetime import datetime
 
 from src.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
 # from pybuildingenergy.src.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
@@ -35,6 +37,8 @@ class WeatherDataResult:
     elevation: float
     weather_data: pd.DataFrame
     utc_offset:int
+    latitude: float
+    longitude: float
 
     # def __getitem__(self, item):
     #     return getattr(self, item)
@@ -105,7 +109,7 @@ class MyClass:
 # ===============================================================================================
 
 class __ISO52010__:
-    n_timesteps = 8760 # number of hours in a year
+    # n_timesteps = 8760 # number of hours in a year
     solar_constant = 1370  # [W/m2]
     K_eps = 1.104  # [rad^-3]
     Perez_coefficients_matrix = np.array(
@@ -122,59 +126,103 @@ class __ISO52010__:
 
     # GET WEATHER DATA FROM .epw FILE
     @classmethod
-    def get_tmy(cls, BUI):
-        # ctx = ssl.create_default_context(cafile=certifi.where())  # to avoid ssl.SSLCertVerificationError; seems not needed anymore with newest requests and urllib3 libraries
-        # geopy.geocoders.options.default_ssl_context = ctx
-        latitude = BUI.__getattribute__('latitude')
-        longitude = BUI.__getattribute__('longitude')
-        # DEBUG MODE
-        # directory = main_directory_+"/pybuildingenergy/pybuildingenergy/examples/weatherdata"
-        # MAIN MODE
-        directory = main_directory_+"/tests/weatherdata"
-        # directory = main_directory_+"/weatherdata"
-    
-        if BUI.__getattribute__('tmy_filename') is None:  # get TMY weather file from PVGIS
-            if BUI.__getattribute__('location') is None:
-                sys.exit('Error. You must specify either a TMY weather file or a location.')
-            else:
-                geo_location = geopy.geocoders.Nominatim(user_agent="GetLoc")
-                get_location = geo_location.geocode(BUI.__getattribute__('location'))
-                latitude = get_location.latitude
-                longitude = get_location.longitude
-
-                url = 'https://re.jrc.ec.europa.eu/api/tmy?lat=' + str(latitude) + '&lon=' + str(
-                    longitude) + '&outputformat=csv&browser=1'
-                r = requests.get(url, allow_redirects=True)
-                BUI.__setattr__('tmy_filename'), os.path.join(directory, r.headers['Content-disposition'].split('filename=')[1])
-
-                with open(BUI.__getattribute__('tmy_filename'), 'wb') as tmy_file:
-                    tmy_file.write(r.content)
-        else:
-            if BUI.__getattribute__('location') is not None:
-                print('Warning: location is ignored since you specified a TMY weather file.')
-            
-            # latitude = float(tmy_filename.split('_')[1])
-            # longitude = float(tmy_filename.split('_')[2])
-            tmy_filename = os.path.join(directory, BUI.__getattribute__('tmy_filename'))
+    def get_tmy(cls,BUI, path_weather_file):
         
-        tmy_header_no_of_rows = 16
-        tmy_footer_no_of_rows = 12
-        tmy_weather_data = pd.read_csv(tmy_filename, skiprows=tmy_header_no_of_rows, skipfooter=tmy_footer_no_of_rows,
-                                    index_col=0, parse_dates=True,
-                                    date_parser=lambda x: dt.datetime.strptime(x, "%Y%m%d:%H%M"), engine='python')
+        '''
+        read epw file and get back information realted to:
+        - weather data
+        - altitude 
+        - utc offset
+        Param
+        ------
+        epw_file: path to the epw file 
+        
+        '''
+        
+        # Read EPW file
+        weather_data = epw.read_epw(path_weather_file)
 
-        # elevation is not needed for the energy demand calculation, only for the PV optimization
-        elevation = float(re.findall("\d+\.\d+", pd.read_csv(tmy_filename, header=None, nrows=3).iloc[2].squeeze())[0])
+        # Weather data filter in a format to be used by ISO52016 in a csv
+        df_weather_time_series = weather_data[0]
+        tmy_weather_data = df_weather_time_series.loc[:, ["temp_air",'relative_humidity','ghi','dni','dhi', 'ghi_infrared',
+                'wind_speed', 'wind_direction','atmospheric_pressure']]
+        tmy_weather_data.index.name = "time(UTC)"
+        #Convert DatetimeIndex to the desired format
+        tmy_weather_data.index = df_weather_time_series.index.tz_convert(None)  # Remove timezone information
+        tmy_weather_data.index = df_weather_time_series.index.strftime('%Y-%m-%d %H:%M:%S')  # Format datetime index
+        tmy_weather_data.index = pd.DatetimeIndex(tmy_weather_data.index)
+        # 
+        tmy_weather_data.columns = ["T2m","RH","G(h)","Gb(n)","Gd(h)","IR(h)","WS10m","WD10m","SP"]  
 
-        tf = TimezoneFinder()
-        utcoffset_in_hours = int(timezone(tf.timezone_at(lng=longitude, lat=latitude)).localize(tmy_weather_data.index[0]).utcoffset().total_seconds() / 3600.0)
-
+        #
+        location_info = weather_data[1]
+        elevation=location_info['altitude']
+        utcoffset_in_hours = int(location_info['TZ'])
+        latitude_ = location_info['latitude']
+        longitude_ = location_info['longitude']
 
         return WeatherDataResult(
             elevation=elevation,
             weather_data=tmy_weather_data,
-            utc_offset=utcoffset_in_hours
+            utc_offset=utcoffset_in_hours,
+            latitude = latitude_,
+            longitude = longitude_,
         )
+    
+    # @classmethod
+    # def get_tmy(cls, BUI, path_weather_file):
+    #     # ctx = ssl.create_default_context(cafile=certifi.where())  # to avoid ssl.SSLCertVerificationError; seems not needed anymore with newest requests and urllib3 libraries
+    #     # geopy.geocoders.options.default_ssl_context = ctx
+    #     latitude = BUI.__getattribute__('latitude')
+    #     longitude = BUI.__getattribute__('longitude')
+    #     # DEBUG MODE
+    #     # directory = main_directory_+"/pybuildingenergy/pybuildingenergy/examples/weatherdata"
+    #     # MAIN MODE
+    #     directory = main_directory_+"/tests/weatherdata"
+    #     # directory = main_directory_+"/weatherdata"
+    
+    #     if BUI.__getattribute__('tmy_filename') is None:  # get TMY weather file from PVGIS
+    #         if BUI.__getattribute__('location') is None:
+    #             sys.exit('Error. You must specify either a TMY weather file or a location.')
+    #         else:
+    #             geo_location = geopy.geocoders.Nominatim(user_agent="GetLoc")
+    #             get_location = geo_location.geocode(BUI.__getattribute__('location'))
+    #             latitude = get_location.latitude
+    #             longitude = get_location.longitude
+
+    #             url = 'https://re.jrc.ec.europa.eu/api/tmy?lat=' + str(latitude) + '&lon=' + str(
+    #                 longitude) + '&outputformat=csv&browser=1'
+    #             r = requests.get(url, allow_redirects=True)
+    #             BUI.__setattr__('tmy_filename'), os.path.join(directory, r.headers['Content-disposition'].split('filename=')[1])
+
+    #             with open(BUI.__getattribute__('tmy_filename'), 'wb') as tmy_file:
+    #                 tmy_file.write(r.content)
+    #     else:
+    #         if BUI.__getattribute__('location') is not None:
+    #             print('Warning: location is ignored since you specified a TMY weather file.')
+            
+    #         # latitude = float(tmy_filename.split('_')[1])
+    #         # longitude = float(tmy_filename.split('_')[2])
+    #         tmy_filename = os.path.join(directory, BUI.__getattribute__('tmy_filename'))
+        
+    #     tmy_header_no_of_rows = 16
+    #     tmy_footer_no_of_rows = 12
+    #     tmy_weather_data = pd.read_csv(tmy_filename, skiprows=tmy_header_no_of_rows, skipfooter=tmy_footer_no_of_rows,
+    #                                 index_col=0, parse_dates=True,
+    #                                 date_parser=lambda x: dt.datetime.strptime(x, "%Y%m%d:%H%M"), engine='python')
+
+    #     # elevation is not needed for the energy demand calculation, only for the PV optimization
+    #     elevation = float(re.findall("\d+\.\d+", pd.read_csv(tmy_filename, header=None, nrows=3).iloc[2].squeeze())[0])
+
+    #     tf = TimezoneFinder()
+    #     utcoffset_in_hours = int(timezone(tf.timezone_at(lng=longitude, lat=latitude)).localize(tmy_weather_data.index[0]).utcoffset().total_seconds() / 3600.0)
+
+
+    #     return WeatherDataResult(
+    #         elevation=elevation,
+    #         weather_data=tmy_weather_data,
+    #         utc_offset=utcoffset_in_hours
+    #     )
 
     # GET DATA FROM PVGIS
     @classmethod
@@ -201,7 +249,8 @@ class __ISO52010__:
         
         # Elevation is not needed for the energy demand calculation, only for the PV optimization
         loc_elevation = data['inputs']['location']['elevation']
-    
+        latitude_ = data['inputs']['location']['latitude']
+        longitude_ = data['inputs']['location']['longitude']
         # TIMEZONE FINDER
         tf = TimezoneFinder()
         utcoffset_in_hours = int(timezone(tf.timezone_at(lng=longitude, lat=latitude)).localize(df_weather.index[0]).utcoffset().total_seconds() / 3600.0)
@@ -210,88 +259,47 @@ class __ISO52010__:
         return WeatherDataResult(
             elevation=loc_elevation,
             weather_data=df_weather,
-            utc_offset=utcoffset_in_hours
+            utc_offset=utcoffset_in_hours,
+            latitude = latitude_,
+            longitude = longitude_,
         )
     
     @classmethod
-    def Solar_irradiance_calc(cls, BUI, timezone_utc, beta_ic_deg, gamma_ic_deg, DHI, DNI, ground_solar_reflectivity,
-                    calendar, n_timesteps=n_timesteps, solar_constant=solar_constant, K_eps = K_eps,
-                    Perez_coefficients_matrix = Perez_coefficients_matrix)->Solar_irradiance:
-        """
-        ISO 52010-1:2017 specifies a calculation procedure for the conversion of climatic data for energy calculations.
-        The main element in ISO 52010-1:2017 is the calculation of solar irradiance on a surface with arbitrary orientation and tilt. 
-        A simple method for conversion of solar irradiance to illuminance is also provided.
-        The solar irradiance and illuminance on an arbitrary surface are applicable as input for energy and daylighting calculations, for building elements 
-        (such as roofs, facades and windows) and for components of technical building systems (such as thermal solar collectors, PV panels)
-
-
-        Parameters
-        ------------
-        timezone_utc: The UTC offset (or time offset) is an amount of time subtracted from or added to Coordinated Universal Time (UTC) time to specify the local solar time.
+    def Solar_irradiance_calc(cls,latitude_deg, longitude_deg, timezone, beta_ic_deg, gamma_ic_deg, DHI, DNI, ground_solar_reflectivity,
+                  calendar, n_timesteps, n_days ):
+        """Latitude and longitude in degrees.
         beta_ic_deg=Tilt angle of inclined surface from horizontal is measured upwards facing (hor.facing upw=0, vert=90, hor.facing down=180).
-        gamma_ic_deg=Orientation angle of the inclined (ic) surface, expressed as the geographical azimuth angle of the horizontal projection of the inclined (S=0, E=pos., W=neg.) surface normal.
-        DHI = Diffuse horizontal irradiance - [W/m2]
-        DNI = Direct (beam) irradiance - [W/m2]
-        ground_solar_reflectivity = solar reflectivity of the ground
-        calendar: dataframe with days of the year (from 1 to 365) and hour of day (1 to 24), 
-        n_timesteps: number of hour in a year = 8760
-        Return 
-        --------
-
-        Examples
-        --------
-        .. code-block:: python
-
-        calendar: 
-                            day of year	hour of day
-        2015-05-01 00:00:00	121	1
-        2015-05-01 01:00:00	121	2
-        2015-05-01 02:00:00	121	3
-        2015-05-01 03:00:00	121	4
-        2015-05-01 04:00:00	121	5
-        ...	...	...
-        2015-09-30 19:00:00	273	20
-        2015-09-30 20:00:00	273	21
-        2015-09-30 21:00:00	273	22
-        2015-09-30 22:00:00	273	23
-        2015-09-30 23:00:00	273	24
-        """
-        
+        gamma_ic_deg=Orientation angle of the inclined (ic) surface, expressed as the geographical azimuth angle of the horizontal projection of the inclined (S=0, E=pos., W=neg.) surface normal."""
         beta_ic = np.radians(beta_ic_deg)
         gamma_ic = np.radians(gamma_ic_deg)
-        latitude = np.radians(BUI.__getattribute__('latitude'))
-        # DayWeekJan1 = 1  # doy of week of 1 January; 1=Monday, 7=Sunday
-        #
-        # Earth Orbit Deviation. 
-        earth_orbit_deviation_deg = 360 / 365 * calendar['day of year']  # [deg]
+        DayWeekJan1 = 1  # doy of week of 1 January; 1=Monday, 7=Sunday
+        # n_timesteps = 8760
+        latitude = np.radians(latitude_deg)
+        earth_orbit_deviation_deg = 360 / n_days * calendar['day of year']  # [deg]
         earth_orbit_deviation = np.radians(earth_orbit_deviation_deg)  # [rad]
-        # Declination - Formula. 6.4.1.1. Unit:deg. Value: hourly
         declination_deg = 0.33281 - 22.984 * np.cos(earth_orbit_deviation) - 0.3499 * np.cos(
             2 * earth_orbit_deviation) - 0.1398 * np.cos(3 * earth_orbit_deviation) + 3.7872 * np.sin(
             earth_orbit_deviation) + 0.03205 * np.sin(2 * earth_orbit_deviation) + 0.07187 * np.sin(
             3 * earth_orbit_deviation)  # [deg]
         declination = np.radians(declination_deg)
-        #
         t_eq = Equation_of_time(calendar['day of year'])  # [min]
-        time_shift = timezone_utc - (BUI.__getattribute__('longitude') / 15)  # [h]
+        time_shift = timezone - (longitude_deg / 15)  # [h]
         solar_time = calendar['hour of day'] - t_eq / 60 - time_shift  # [h]
         hour_angle_deg = Hour_angle_calc(solar_time)  # [deg]
         hour_angle = np.radians(hour_angle_deg)
-        #
         solar_altitude_angle_sin = np.sin(declination) * np.sin(latitude) + np.cos(declination) * np.cos(
             latitude) * np.cos(hour_angle)
         solar_altitude_angle = np.arcsin(
             np.sin(declination) * np.sin(latitude) + np.cos(declination) * np.cos(latitude) * np.cos(hour_angle))
         solar_altitude_angle[solar_altitude_angle < 1e-4] = 0
-        # Solar angle of incidence on the inclined surface - Formula 6.4.1.8
         solar_incidence_angle_ic_cos = np.sin(declination) * np.sin(latitude) * np.cos(
             beta_ic) - np.sin(declination) * np.cos(latitude) * np.sin(beta_ic) * np.cos(
             gamma_ic) + np.cos(declination) * np.cos(latitude) * np.cos(beta_ic) * np.cos(hour_angle) + np.cos(
             declination) * np.sin(latitude) * np.sin(beta_ic) * np.cos(gamma_ic) * np.cos(hour_angle) + np.cos(
             declination) * np.sin(beta_ic) * np.sin(gamma_ic) * np.sin(hour_angle)  # ic=inclined surface
         solar_incidence_angle_ic = np.arccos(solar_incidence_angle_ic_cos)
-        #
         air_mass = Air_mass_calc(solar_altitude_angle)  # [-]
+        solar_constant = 1370  # [W/m2]
         I_ext = solar_constant * (1 + 0.033 * np.cos(earth_orbit_deviation))  # extra-terrestrial radiation [W/m2]
         solar_zenith_angle = np.pi / 2 - solar_altitude_angle
         solar_azimuth_angle_aux_1_sin = (np.cos(declination) * np.sin(np.pi - hour_angle)) / np.cos(
@@ -306,24 +314,24 @@ class __ISO52010__:
         mask = solar_azimuth_angle_aux_1_cos < 0
         solar_azimuth_angle[mask] = solar_azimuth_angle_aux_2[mask]
         a_perez = pd.Series(np.zeros(n_timesteps), index=calendar.index)
-        
-        ###### TO BE CHECKED
-        # mask = solar_incidence_angle_ic_cos > 0
-        # a_perez[mask] = solar_incidence_angle_ic_cos[mask]
-        mask = solar_incidence_angle_ic > 0
-        a_perez[mask] = solar_incidence_angle_ic[mask]
-        #########
-        
+        mask = solar_incidence_angle_ic_cos > 0
+        a_perez[mask] = solar_incidence_angle_ic_cos[mask]
         b_perez = np.maximum(np.cos(np.radians(85)) * np.ones(n_timesteps), np.cos(solar_zenith_angle))
         clearness = pd.Series(999 * np.ones(n_timesteps), index=calendar.index)  # [-]
+        K_eps = 1.104  # [rad^-3]
         mask = DHI > 0  # DHI=diffuse horizontal irradiance; DNI=direct (beam) normal irradiance; GHI=global horizontal irradiance
         clearness[mask] = ((DHI[mask] + DNI[mask]) / DHI[mask] + K_eps * np.float_power(solar_altitude_angle[mask], 3)) / (
                     1 + K_eps * np.float_power(solar_altitude_angle[mask], 3))
         sky_brightness = pd.Series(np.zeros(n_timesteps), index=calendar.index)  # [-]
         sky_brightness[mask] = air_mass[mask] * DHI[mask] / I_ext[mask]
-        
+        Perez_coefficients_matrix = np.array(
+            [[1.065, -0.008, 0.588, -0.062, -0.060, 0.072, -0.022], [1.230, 0.130, 0.683, -0.151, -0.019, 0.066, -0.029],
+            [1.500, 0.330, 0.487, -0.221, 0.055, -0.064, -0.026], [1.950, 0.568, 0.187, -0.295, 0.109, -0.152, -0.014],
+            [2.800, 0.873, -0.392, -0.362, 0.226, -0.462, 0.001], [4.500, 1.132, -1.237, -0.412, 0.288, -0.823, 0.056],
+            [6.200, 1.060, -1.600, -0.359, 0.264, -1.127, 0.131], [99999, 0.678, -0.327, -0.250, 0.156, -1.377,
+                                                                    0.251]])  # see Excel implementation of ISO 52010-1; columns in this order: epsilon, f11, f12, f13, f21, f22, f23
         PerezF = np.zeros((n_timesteps, 6))  # columns in the order: F11, F12, F13, F21, F22, F23
-        #
+
         mask_DHI = DHI > 0
         for i in range(6):
             mask_clearness = clearness < Perez_coefficients_matrix[0, 0]
@@ -337,7 +345,23 @@ class __ISO52010__:
             mask_clearness = clearness >= Perez_coefficients_matrix[6, 0]
             mask = mask_DHI & mask_clearness
             PerezF[mask, i] = Perez_coefficients_matrix[7, i + 1]
-        #
+
+            # if clearness < Perez_coefficients_matrix[0, 0]:
+            #         PerezF[i] = Perez_coefficients_matrix[0, i]
+            #     elif clearness < Perez_coefficients_matrix[1, 0]:
+            #         PerezF[i] = Perez_coefficients_matrix[1, i]
+            #     elif clearness < Perez_coefficients_matrix[2, 0]:
+            #         PerezF[i] = Perez_coefficients_matrix[2, i]
+            #     elif clearness < Perez_coefficients_matrix[3, 0]:
+            #         PerezF[i] = Perez_coefficients_matrix[3, i]
+            #     elif clearness < Perez_coefficients_matrix[4, 0]:
+            #         PerezF[i] = Perez_coefficients_matrix[4, i]
+            #     elif clearness < Perez_coefficients_matrix[5, 0]:
+            #         PerezF[i] = Perez_coefficients_matrix[5, i]
+            #     elif clearness < Perez_coefficients_matrix[6, 0]:
+            #         PerezF[i] = Perez_coefficients_matrix[6, i]
+            #     else:
+            #         PerezF[i] = Perez_coefficients_matrix[7, i]
         PerezF1 = np.maximum(0, PerezF[:, 0] + PerezF[:, 1] * sky_brightness + PerezF[:, 2] * solar_zenith_angle)
         PerezF2 = PerezF[:, 3] + PerezF[:, 4] * sky_brightness + PerezF[:, 5] * solar_zenith_angle
         I_dir = pd.Series(np.zeros(n_timesteps), index=calendar.index)  # [W/m2]
@@ -356,8 +380,175 @@ class __ISO52010__:
         
         return Solar_irradiance(solar_irradiance=I_tot)
 
+    # def simple_schedule_setpoint_iwg5(df: pd.DataFrame):
+    #     '''
+    #     Dataframe with setpoints and hourly time
+    #     '''
+    #     df = pd.read_csv("/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/pybuildingenergy/pybuildingenergy/tests/sim_df_test_hourly_setpoints.csv", header=0, index_col=0)
+    #     df.index = pd.DatetimeIndex(df.index)
+    #     # Get hour
+    #     df['Hour'] = df.index.hour
+    #     # Check sunday
+    #     # Iterate over the datetime index and set values based on whether it's Sunday or not
+    #     for date in df.index:
+    #         if date.dayofweek == 6:  # Sunday is represented by 6 in the dayofweek property
+    #             df.loc[date, 'is_sunday'] = 1
+    #         else:
+    #             df.loc[date, 'is_sunday'] = 0
+        
+    #     # change setpoint during sunday hours according to schedule
+    #     for i, hour in enumerate(df['Hour']):
+    #         if df.iloc[i]['is_sunday'] == 1:
+    #             if 7 < hour <= 20:
+    #                 df.at[i, 'Heating'] = 20
+    #             else:
+    #                 df.at[i, 'Heating'] = 18
+            
+        
 
-def Calc_52010(BUI) ->_52010:
+    # def Solar_irradiance_calc(cls, BUI, timezone_utc, beta_ic_deg, gamma_ic_deg, DHI, DNI, ground_solar_reflectivity,
+    #                 calendar, n_timesteps, n_days, solar_constant=solar_constant, K_eps = K_eps,
+    #                 Perez_coefficients_matrix = Perez_coefficients_matrix, )->Solar_irradiance:
+    #     """
+    #     ISO 52010-1:2017 specifies a calculation procedure for the conversion of climatic data for energy calculations.
+    #     The main element in ISO 52010-1:2017 is the calculation of solar irradiance on a surface with arbitrary orientation and tilt. 
+    #     A simple method for conversion of solar irradiance to illuminance is also provided.
+    #     The solar irradiance and illuminance on an arbitrary surface are applicable as input for energy and daylighting calculations, for building elements 
+    #     (such as roofs, facades and windows) and for components of technical building systems (such as thermal solar collectors, PV panels)
+
+
+    #     Parameters
+    #     ------------
+    #     timezone_utc: The UTC offset (or time offset) is an amount of time subtracted from or added to Coordinated Universal Time (UTC) time to specify the local solar time.
+    #     beta_ic_deg=Tilt angle of inclined surface from horizontal is measured upwards facing (hor.facing upw=0, vert=90, hor.facing down=180).
+    #     gamma_ic_deg=Orientation angle of the inclined (ic) surface, expressed as the geographical azimuth angle of the horizontal projection of the inclined (S=0, E=pos., W=neg.) surface normal.
+    #     DHI = Diffuse horizontal irradiance - [W/m2]
+    #     DNI = Direct (beam) irradiance - [W/m2]
+    #     ground_solar_reflectivity = solar reflectivity of the ground
+    #     calendar: dataframe with days of the year (from 1 to 365) and hour of day (1 to 24), 
+    #     n_timesteps: number of hour in a year = 8760
+    #     Return 
+    #     --------
+
+    #     Examples
+    #     --------
+    #     .. code-block:: python
+
+    #     calendar: 
+    #                         day of year	hour of day
+    #     2015-05-01 00:00:00	121	1
+    #     2015-05-01 01:00:00	121	2
+    #     2015-05-01 02:00:00	121	3
+    #     2015-05-01 03:00:00	121	4
+    #     2015-05-01 04:00:00	121	5
+    #     ...	...	...
+    #     2015-09-30 19:00:00	273	20
+    #     2015-09-30 20:00:00	273	21
+    #     2015-09-30 21:00:00	273	22
+    #     2015-09-30 22:00:00	273	23
+    #     2015-09-30 23:00:00	273	24
+    #     """
+    #     beta_ic = np.radians(beta_ic_deg)
+    #     gamma_ic = np.radians(gamma_ic_deg)
+    #     latitude = np.radians(BUI.__getattribute__('latitude'))
+    #     # DayWeekJan1 = 1  # doy of week of 1 January; 1=Monday, 7=Sunday
+    #     #
+    #     # Earth Orbit Deviation. 
+    #     earth_orbit_deviation_deg = 360 / n_days * calendar['day of year']  # [deg]
+    #     earth_orbit_deviation = np.radians(earth_orbit_deviation_deg)  # [rad]
+    #     # Declination - Formula. 6.4.1.1. Unit:deg. Value: hourly
+    #     declination_deg = 0.33281 - 22.984 * np.cos(earth_orbit_deviation) - 0.3499 * np.cos(
+    #         2 * earth_orbit_deviation) - 0.1398 * np.cos(3 * earth_orbit_deviation) + 3.7872 * np.sin(
+    #         earth_orbit_deviation) + 0.03205 * np.sin(2 * earth_orbit_deviation) + 0.07187 * np.sin(
+    #         3 * earth_orbit_deviation)  # [deg]
+    #     declination = np.radians(declination_deg)
+    #     #
+    #     t_eq = Equation_of_time(calendar['day of year'])  # [min]
+    #     time_shift = timezone_utc - (BUI.__getattribute__('longitude') / 15)  # [h]
+    #     solar_time = calendar['hour of day'] - t_eq / 60 - time_shift  # [h]
+    #     hour_angle_deg = Hour_angle_calc(solar_time)  # [deg]
+    #     hour_angle = np.radians(hour_angle_deg)
+    #     #
+    #     solar_altitude_angle_sin = np.sin(declination) * np.sin(latitude) + np.cos(declination) * np.cos(
+    #         latitude) * np.cos(hour_angle)
+    #     solar_altitude_angle = np.arcsin(
+    #         np.sin(declination) * np.sin(latitude) + np.cos(declination) * np.cos(latitude) * np.cos(hour_angle))
+    #     solar_altitude_angle[solar_altitude_angle < 1e-4] = 0
+    #     # Solar angle of incidence on the inclined surface - Formula 6.4.1.8
+    #     solar_incidence_angle_ic_cos = np.sin(declination) * np.sin(latitude) * np.cos(
+    #         beta_ic) - np.sin(declination) * np.cos(latitude) * np.sin(beta_ic) * np.cos(
+    #         gamma_ic) + np.cos(declination) * np.cos(latitude) * np.cos(beta_ic) * np.cos(hour_angle) + np.cos(
+    #         declination) * np.sin(latitude) * np.sin(beta_ic) * np.cos(gamma_ic) * np.cos(hour_angle) + np.cos(
+    #         declination) * np.sin(beta_ic) * np.sin(gamma_ic) * np.sin(hour_angle)  # ic=inclined surface
+    #     solar_incidence_angle_ic = np.arccos(solar_incidence_angle_ic_cos)
+    #     #
+    #     air_mass = Air_mass_calc(solar_altitude_angle)  # [-]
+    #     I_ext = solar_constant * (1 + 0.033 * np.cos(earth_orbit_deviation))  # extra-terrestrial radiation [W/m2]
+    #     solar_zenith_angle = np.pi / 2 - solar_altitude_angle
+    #     solar_azimuth_angle_aux_1_sin = (np.cos(declination) * np.sin(np.pi - hour_angle)) / np.cos(
+    #         np.arcsin(solar_altitude_angle_sin))
+    #     solar_azimuth_angle_aux_1_cos = (np.cos(latitude) * np.sin(declination) + np.sin(latitude) * np.cos(
+    #         declination) * np.cos(np.pi - hour_angle)) / np.cos(np.arcsin(solar_altitude_angle_sin))
+    #     solar_azimuth_angle_aux_2 = np.arcsin(
+    #         np.cos(declination) * np.sin(np.pi - hour_angle) / np.cos(np.arcsin(solar_altitude_angle_sin)))
+    #     solar_azimuth_angle = -(np.pi + solar_azimuth_angle_aux_2)
+    #     mask = (solar_azimuth_angle_aux_1_cos > 0) & (solar_azimuth_angle_aux_1_sin >= 0)
+    #     solar_azimuth_angle[mask] = np.pi - solar_azimuth_angle_aux_2[mask]
+    #     mask = solar_azimuth_angle_aux_1_cos < 0
+    #     solar_azimuth_angle[mask] = solar_azimuth_angle_aux_2[mask]
+    #     a_perez = pd.Series(np.zeros(n_timesteps), index=calendar.index)
+        
+    #     ###### TO BE CHECKED
+    #     # mask = solar_incidence_angle_ic_cos > 0
+    #     # a_perez[mask] = solar_incidence_angle_ic_cos[mask]
+    #     mask = solar_incidence_angle_ic > 0
+    #     a_perez[mask] = solar_incidence_angle_ic[mask]
+    #     #########
+        
+    #     b_perez = np.maximum(np.cos(np.radians(85)) * np.ones(n_timesteps), np.cos(solar_zenith_angle))
+    #     clearness = pd.Series(999 * np.ones(n_timesteps), index=calendar.index)  # [-]
+    #     mask = DHI > 0  # DHI=diffuse horizontal irradiance; DNI=direct (beam) normal irradiance; GHI=global horizontal irradiance
+    #     clearness[mask] = ((DHI[mask] + DNI[mask]) / DHI[mask] + K_eps * np.float_power(solar_altitude_angle[mask], 3)) / (
+    #                 1 + K_eps * np.float_power(solar_altitude_angle[mask], 3))
+    #     sky_brightness = pd.Series(np.zeros(n_timesteps), index=calendar.index)  # [-]
+    #     sky_brightness[mask] = air_mass[mask] * DHI[mask] / I_ext[mask]
+        
+    #     PerezF = np.zeros((n_timesteps, 6))  # columns in the order: F11, F12, F13, F21, F22, F23
+    #     #
+    #     mask_DHI = DHI > 0
+    #     for i in range(6):
+    #         mask_clearness = clearness < Perez_coefficients_matrix[0, 0]
+    #         mask = mask_DHI & mask_clearness
+    #         PerezF[mask, i] = Perez_coefficients_matrix[0, i + 1]
+    #         for j in range(6):
+    #             mask_clearness = (clearness >= Perez_coefficients_matrix[j, 0]) & (
+    #                         clearness < Perez_coefficients_matrix[j + 1, 0])
+    #             mask = mask_DHI & mask_clearness
+    #             PerezF[mask, i] = Perez_coefficients_matrix[j + 1, i + 1]
+    #         mask_clearness = clearness >= Perez_coefficients_matrix[6, 0]
+    #         mask = mask_DHI & mask_clearness
+    #         PerezF[mask, i] = Perez_coefficients_matrix[7, i + 1]
+    #     #
+    #     PerezF1 = np.maximum(0, PerezF[:, 0] + PerezF[:, 1] * sky_brightness + PerezF[:, 2] * solar_zenith_angle)
+    #     PerezF2 = PerezF[:, 3] + PerezF[:, 4] * sky_brightness + PerezF[:, 5] * solar_zenith_angle
+    #     I_dir = pd.Series(np.zeros(n_timesteps), index=calendar.index)  # [W/m2]
+    #     mask = solar_incidence_angle_ic_cos > 0
+    #     I_dir[mask] = DNI[mask] * solar_incidence_angle_ic_cos[mask]
+    #     I_dif = pd.Series(np.zeros(n_timesteps), index=calendar.index)  # [W/m2]
+    #     mask = DHI > 0
+    #     I_dif[mask] = DHI[mask] * (
+    #                     (1 - PerezF1[mask]) * (1 + np.cos(beta_ic)) / 2 + PerezF1[mask] * a_perez[mask] / b_perez[mask] + PerezF2[mask] * np.sin(beta_ic))
+    #     I_dif_ground = (DHI + DNI * np.sin(solar_altitude_angle)) * ground_solar_reflectivity * (
+    #                 1 - np.cos(beta_ic)) / 2  # [W/m2]
+    #     I_circum = DHI * PerezF1 * a_perez / b_perez  # [W/m2]
+    #     I_dif_tot = I_dif - I_circum + I_dif_ground
+    #     I_dir_tot = I_dir + I_circum
+    #     I_tot = I_dif_tot + I_dir_tot
+        
+    #     return Solar_irradiance(solar_irradiance=I_tot)
+
+
+def Calc_52010(BUI, path_weather_file) ->_52010:
     '''
     Param:
     -------
@@ -369,16 +560,21 @@ def Calc_52010(BUI) ->_52010:
     if BUI.__getattribute__('weather_source') == 'pvgis':
         weatherData = __ISO52010__.get_tmy_data(BUI)
     elif BUI.__getattribute__('weather_source') == 'epw':
-        weatherData = __ISO52010__.get_tmy(BUI, )
+        weatherData = __ISO52010__.get_tmy(BUI,path_weather_file)
+        # weatherData = __ISO52010__.get_tmy(BUI)
     else: raise ValueError("select the right weather source: 'epw' or 'pvgis'")
     
     sim_df = weatherData.weather_data
     timezoneW = weatherData.utc_offset
     
     # Change time index
-    sim_df.index.year.unique().values
-    sim_df.index = pd.to_datetime({'year': 2009, 'month': sim_df.index.month, 'day': sim_df.index.day,
+    # sim_df.index.year.unique().values
+    if len(sim_df) > 8760: # In the case of a leap year, (ITA: anno bisestile) 
+        pass 
+    else:
+        sim_df.index = pd.to_datetime({'year': 2009, 'month': sim_df.index.month, 'day': sim_df.index.day,
                                     'hour': sim_df.index.hour})
+    
     for column in sim_df:
         sim_df[column] = np.roll(sim_df[column], timezoneW)
     sim_df.rename_axis(index={'time(UTC)': 'time(local)'}, inplace=True)
@@ -386,24 +582,44 @@ def Calc_52010(BUI) ->_52010:
     sim_df['hour of day'] = sim_df.index.hour + 1  # 1 to 24
     or_tilt_azim_dic = {'HOR': (0, 0), 'SV': (90, 0), 'EV': (90, 90), 'NV': (90, 180), 'WV': (90,-90)}  # dictionary mapping orientation in orientation_elements with (beta_ic_deg=elevation/tilt, gamma_ic_deg=azimuth), see util.util.ISO52010_calc()
 
+    if len(sim_df) > 8760:
+        n_tsteps = 8784
+        n_days_year = 366
+    else:
+        n_tsteps = 8760
+        n_days_year = 365
     # Convert the NumPy array to a tuple
     for orientation in set(BUI.__getattribute__('orientation_elements')):
     # for orientation in orientations.tolist():
+        # sim_df[orientation] = __ISO52010__.Solar_irradiance_calc(
+        #     n_timesteps= n_tsteps,
+        #     n_days = n_days_year,
+        #     BUI=BUI,
+        #     timezone_utc = timezoneW, 
+        #     beta_ic_deg = or_tilt_azim_dic[orientation][0], 
+        #     gamma_ic_deg = or_tilt_azim_dic[orientation][1], 
+        #     DHI=sim_df['Gd(h)'], 
+        #     DNI=sim_df['Gb(n)'], 
+        #     ground_solar_reflectivity=0.2,
+        #     calendar= sim_df[['day of year', 'hour of day']]).solar_irradiance
+        
         sim_df[orientation] = __ISO52010__.Solar_irradiance_calc(
-            BUI=BUI,
-            timezone_utc = timezoneW, 
+            n_timesteps= n_tsteps,
+            n_days = n_days_year,
+            latitude_deg = weatherData.latitude,
+            longitude_deg = weatherData.longitude,
+            timezone=timezoneW,
             beta_ic_deg = or_tilt_azim_dic[orientation][0], 
             gamma_ic_deg = or_tilt_azim_dic[orientation][1], 
             DHI=sim_df['Gd(h)'], 
             DNI=sim_df['Gb(n)'], 
             ground_solar_reflectivity=0.2,
-            calendar= sim_df[['day of year', 'hour of day']]).solar_irradiance
-        
+            calendar=sim_df[['day of year', 'hour of day']]).solar_irradiance
+
     sim_df = pd.concat([sim_df[sim_df.index.month == 12],sim_df])  # weather_data augmented by warmup period consisting of December month copied at the beginning
     
 
     return _52010(sim_df=sim_df)
-
 
 #                                       ISO 52016
 # ===============================================================================================
@@ -415,10 +631,10 @@ class __ISO52016__:
    
 
     __slots__=("inputs","sim_df")
-    # def __init__(self, inputs:dict):
+    
     def __init__(self):
         pass
-    # def __init__(self, BUI:object):
+    
         '''
         Simulate the Final Energy consumption of the building using the ISO52016
         Parameters
@@ -426,11 +642,8 @@ class __ISO52016__:
         lat : latitude of the building location
         long : longitude of the building location
         '''
-        # self.sim_df = Calc_52010(BUI).sim_df
 
-    
 
-    # def Number_of_nodes_element(self,**kwargs) ->numb_nodes_facade_elements:
     @classmethod
     def Number_of_nodes_element(cls, BUI) ->numb_nodes_facade_elements:
         '''
@@ -465,7 +678,7 @@ class __ISO52016__:
         return numb_nodes_facade_elements(Rn, Pln, PlnSum)
     
     @classmethod
-    def Conduttance_node_of_element(cls, BUI, lambda_gr=2.0, **kwargs) -> conduttance_elements:
+    def Conduttance_node_of_element(cls, BUI, lambda_gr=2.0) -> conduttance_elements:
         '''
         Calculation of the conduttance between node "pli" adn node "pli-1", as determined per type of construction 
         element in 6.5.7 in W/m2K    
@@ -505,11 +718,10 @@ class __ISO52016__:
         h_ce_eli = BUI.__getattribute__('heat_convective_elements_external')
         h_re_eli = BUI.__getattribute__('heat_radiative_elements_external')
 
-        for i in range(1, len(el_type)):
+        for i in range(0, len(el_type)):
             if R_c_eli[i] == 0.0:
                 R_c_eli[i] = 1 / U_eli[i] - 1 / (h_ci_eli[i] + h_ri_eli[i]) - 1 / (h_ce_eli[i] + h_re_eli[i])
-
-
+        
         # layer = 1 
         layer_no = 0
         for i in range(len(el_type)):
@@ -559,7 +771,7 @@ class __ISO52016__:
         return conduttance_elements(h_pli_eli=h_pli_eli)
 
     @classmethod
-    def Solar_absorption_of_element(cls, BUI, **kwargs) -> solar_abs_elements:
+    def Solar_absorption_of_element(cls, BUI) -> solar_abs_elements:
         '''
         Calculation of solar absorption for each single elements
         Param
@@ -597,7 +809,7 @@ class __ISO52016__:
         return solar_abs_elements(a_sol_pli_eli=a_sol_pli_eli)
 
     @classmethod    
-    def Areal_heat_capacity_of_element(cls, BUI, **kwargs) -> aeral_heat_capacity:
+    def Areal_heat_capacity_of_element(cls, BUI) -> aeral_heat_capacity:
         '''
         Calculation of the aeral heat capacity of the node "pli" and node "pli-1" as 
         determined per type of construction element [W/m2K] - 6.5.7 ISO 52016
@@ -748,7 +960,9 @@ class __ISO52016__:
         
         # ============================ 
         # GET MIN, MAX AND MEAN of External temperature values at monthly(M) resolution
-        sim_df = Calc_52010(BUI).sim_df
+        path_weather_file_ = kwargs.get('path_weather_file')
+        sim_df = Calc_52010(BUI, path_weather_file_).sim_df
+        
         external_temperature_monthly_averages = sim_df['T2m'].resample('ME').mean()
         external_temperature_monthly_minima = sim_df['T2m'].resample('ME').min()
         external_temperature_monthly_maxima = sim_df['T2m'].resample('ME').max()
@@ -902,7 +1116,7 @@ class __ISO52016__:
         return temp_ground(R_gr_ve=R_gr_ve,Theta_gr_ve=Theta_gr_ve, thermal_bridge_heat=BUI.__getattribute__('thermal_bridge_heat'))
 
     @classmethod
-    def Occupancy_profile(cls, BUI, **kwargs) -> simulation_df:
+    def Occupancy_profile(cls, BUI, path_weather_file) -> simulation_df:
         '''
         Definition of occupancy profile for:
         1) Internal gains 
@@ -928,7 +1142,7 @@ class __ISO52016__:
         # WEATHER DATA
         # sim_df = pd.DataFrame(self.get_tmy_data().weather_data)
         
-        sim_df = pd.DataFrame(Calc_52010(BUI).sim_df)
+        sim_df = pd.DataFrame(Calc_52010(BUI,path_weather_file).sim_df)
         sim_df.index = pd.DatetimeIndex(sim_df.index)
         # number of days of simulation (13 months)
         number_of_days_with_warmup_period = len(sim_df) // 24
@@ -981,7 +1195,7 @@ class __ISO52016__:
         return simulation_df(simulation_df = sim_df)
 
     @classmethod
-    def Vent_heat_transf_coef_and_Int_gains(cls, BUI, c_air=1006, rho_air=1.204, **kwargs) -> h_vent_and_int_gains:
+    def Vent_heat_transf_coef_and_Int_gains(cls, BUI, path_weather_file, c_air=1006, rho_air=1.204) -> h_vent_and_int_gains:
         '''
         Calculation of heat transfer coefficient (section 8 - ISO 13789:2017 and 6.6.6 ISO 52016:2017 ) and internal gains
         
@@ -1004,7 +1218,7 @@ class __ISO52016__:
         Phi_int: internal gains [W]
         '''
         # VENTILATION (CONDUTTANCE)
-        sim_df = __ISO52016__().Occupancy_profile(BUI).simulation_df
+        sim_df = __ISO52016__().Occupancy_profile(BUI, path_weather_file).simulation_df
         comfort_hi_mask = (sim_df['comfort level'] == 1)
         sim_df['air flow rate'] = BUI.__getattribute__('air_change_rate_base_value') * BUI.__getattribute__('a_use') # [m3/h]
         sim_df.loc[comfort_hi_mask, 'air flow rate'] += BUI.__getattribute__('air_change_rate_extra') * BUI.__getattribute__('a_use') 
@@ -1108,7 +1322,8 @@ class __ISO52016__:
             pbar.set_postfix({"Info": f"Inizailization {i}"})
             
             # INIZIALIZATION 
-            int_gains_vent =__ISO52016__().Vent_heat_transf_coef_and_Int_gains(BUI)
+            path_weather_file_ = kwargs['path_weather_file']
+            int_gains_vent =__ISO52016__().Vent_heat_transf_coef_and_Int_gains(BUI,path_weather_file = path_weather_file_)
             sim_df = int_gains_vent.sim_df_update
             Tstepn = len(sim_df) # number of hours to perform the simulation 
 
@@ -1178,7 +1393,7 @@ class __ISO52016__:
             pbar.update(1)
             #
             # Temperature ground and thermal bridges
-            t_Th = __ISO52016__().Temp_calculation_of_ground(BUI)
+            t_Th = __ISO52016__().Temp_calculation_of_ground(BUI, path_weather_file=path_weather_file_)
             #
             pbar.set_postfix({"Info": f"Calculating ground temperature"})
             pbar.update(1)

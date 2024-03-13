@@ -270,7 +270,7 @@ def ePlus_shape_data(ep_result:pd.DataFrame, A_use: float):
 
     ep_hourly_heating_in_J = ep_result['ZONE ONE:Zone Air System Sensible Heating Energy [J](Hourly)']
     ep_hourly_cooling_in_J = ep_result['ZONE ONE:Zone Air System Sensible Cooling Energy [J](Hourly) ']  # Note: for some reason, EnergyPlus saves last output in csv with an extra space :-(
-    ep_hourly_T_op = ep_result['ZONE ONE:Zone Operative Temperature [C](Hourly)']
+    # ep_hourly_T_op = ep_result['ZONE ONE:Zone Operative Temperature [C](Hourly)']
 
     month_start_hours = [0, 744, 1488, 2160, 2904, 3624, 4368, 5088, 5832, 6576, 7296, 8040, 8760]
 
@@ -286,7 +286,7 @@ def ePlus_shape_data(ep_result:pd.DataFrame, A_use: float):
     ep_monthly_heating_in_kWh = ep_monthly_heating_in_J / 3.6e6
     ep_monthly_cooling_in_kWh = ep_monthly_cooling_in_J / 3.6e6
 
-    ep_monthly_T_op = np.array([ep_hourly_T_op[month_start_hours[i]:month_start_hours[i + 1]].mean() for i in range(12)])
+    # ep_monthly_T_op = np.array([ep_hourly_T_op[month_start_hours[i]:month_start_hours[i + 1]].mean() for i in range(12)])
 
     EnergyPlus_annual_heating_in_kWh_per_sqm = ep_annual_heating_in_kWh / A_use
     EnergyPlus_annual_cooling_in_kWh_per_sqm = ep_annual_cooling_in_kWh / A_use
@@ -294,7 +294,7 @@ def ePlus_shape_data(ep_result:pd.DataFrame, A_use: float):
     EnergyPlus_monthly_heating_in_kWh_per_sqm = ep_monthly_heating_in_kWh / A_use
     EnergyPlus_monthly_cooling_in_kWh_per_sqm = ep_monthly_cooling_in_kWh / A_use
 
-    return EnergyPlus_monthly_heating_in_kWh_per_sqm, EnergyPlus_monthly_cooling_in_kWh_per_sqm, ep_monthly_T_op, \
+    return EnergyPlus_monthly_heating_in_kWh_per_sqm, EnergyPlus_monthly_cooling_in_kWh_per_sqm, \
         EnergyPlus_annual_heating_in_kWh_per_sqm, EnergyPlus_annual_cooling_in_kWh_per_sqm
 
 # ========================================================================================================

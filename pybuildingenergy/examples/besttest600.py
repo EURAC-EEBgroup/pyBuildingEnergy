@@ -15,10 +15,11 @@ import pandas as pd
 demo_buis = get_buildings_demos()
 bt_600 = [bui for bui in demo_buis if bui['building_type'] == 'BestTest600'][0]
 
-def main(name_chart):
+#eplusout
+def main(name_chart,weather_type, path_weather_file_, eplus_file_name):
     # SIMULATE BUILDING
     BUI = Buildings_from_dictionary(bt_600)
-    hourly_results, annual_results_df = __ISO52016__().Temperature_and_Energy_needs_calculation(BUI) 
+    hourly_results, annual_results_df = __ISO52016__().Temperature_and_Energy_needs_calculation(BUI, weather_source=weather_type, path_weather_file=path_weather_file_) 
 
     # RESHAPE DATA
     # ISO 52016
@@ -30,13 +31,14 @@ def main(name_chart):
     index = ISO52016_monthly_heating_in_kWh_per_sqm.index
 
     # ENERGYPLUS
-    dir_energy_plus = main_directory_+"/data/energyPlus_data/eplusout.csv"
+    dir_energy_plus = main_directory_+f"/data/energyPlus_data/{eplus_file_name}.csv"
     eplus_data = ePlus_shape_data( pd.read_csv(dir_energy_plus), BUI.__getattribute__('a_use'))
     EnergyPlus_monthly_heating_in_kWh_per_sqm = eplus_data[0]
     EnergyPlus_monthly_cooling_in_kWh_per_sqm = eplus_data[1]
     ep_monthly_T_op = eplus_data[2]
     index = ISO52016_monthly_heating_in_kWh_per_sqm.index
-    df_ep_monthly = pd.DataFrame(index=index, data={'Q_H EnergyPlus' : EnergyPlus_monthly_heating_in_kWh_per_sqm, 'Q_C EnergyPlus' : EnergyPlus_monthly_cooling_in_kWh_per_sqm, 'T_op EnergyPlus' : ep_monthly_T_op})
+    # df_ep_monthly = pd.DataFrame(index=index, data={'Q_H EnergyPlus' : EnergyPlus_monthly_heating_in_kWh_per_sqm, 'Q_C EnergyPlus' : EnergyPlus_monthly_cooling_in_kWh_per_sqm, 'T_op EnergyPlus' : ep_monthly_T_op})
+    df_ep_monthly = pd.DataFrame(index=index, data={'Q_H EnergyPlus' : EnergyPlus_monthly_heating_in_kWh_per_sqm, 'Q_C EnergyPlus' : EnergyPlus_monthly_cooling_in_kWh_per_sqm})
     # 
 
     # ISO52016 and E_plus
@@ -49,9 +51,13 @@ def main(name_chart):
         y_data_plot=df_barplot.values.T.tolist(),
         theme_type=ThemeType.SHINE
     )
-    graph.render(os.getcwd()+f"/examples/{name_chart}.html")
+    graph.render(main_directory_+f"/examples/{name_chart}.html")
 
 
 
 if __name__ == "__main__":
-    main(name_chart = 'BESTEST600_iso_vs_energyplus')
+    main(name_chart = 'BESTEST600_iso_vs_energyplus_Athens',
+         weather_type ='epw', 
+        #  path_weather_file_=main_directory_+"/tests/weatherdata/tmy_39.783_-104.892_2005_2015.epw",
+         path_weather_file_=main_directory_+"/tests/weatherdata/2020_Athens.epw",
+         eplus_file_name = "Case600_V22.1.0out_Athens")

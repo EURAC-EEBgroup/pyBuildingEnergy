@@ -27,7 +27,7 @@ def main(archetype=False, best_test=False, folder_dir="", name_file_="", archety
                 
                 if is_float(latitude) and is_float(longitude):
                     BUI = Selected_bui_archetype(building_archetype,period_archetype,float(latitude), float(longitude)).get_archetype(archetype_db_path)
-                    hourly_sim, annual_results_df = __ISO52016__().Temperature_and_Energy_needs_calculation(BUI, weather_source ='pvgis') 
+                    hourly_sim, annual_results_df = __ISO52016__().Temperature_and_Energy_needs_calculation(BUI, weather_source ='pvgis',  path_weather_file=main_directory_ + "/data/examples/weatherdata/2020_Athens.epw") 
                     __Graphs__(hourly_sim,'heating_cooling').bui_analysis_page(folder_directory=folder_dir, name_file=name_file_)
                     print("Report created! check in the charts folder")
                 
@@ -41,7 +41,7 @@ def main(archetype=False, best_test=False, folder_dir="", name_file_="", archety
             # DEMO FILE
             
             BUI = Selected_bui_archetype('single_family_house','before 1900',45.071321703968124, 7.642963669564985).get_archetype(archetype_db_path)
-            hourly_sim, annual_results_df = __ISO52016__().Temperature_and_Energy_needs_calculation(BUI, weather_source ='pvgis') 
+            hourly_sim, annual_results_df = __ISO52016__().Temperature_and_Energy_needs_calculation(BUI, weather_source ='pvgis', path_weather_file=main_directory_ + "/data/examples/weatherdata/2020_Athens.epw") 
             __Graphs__(hourly_sim,'heating_cooling').bui_analysis_page(folder_directory=folder_dir, name_file=name_file_)
         
         else:
@@ -65,7 +65,7 @@ if __name__ == "__main__":
     parser.add_argument('--archetype', action='store_true', help='Run in test mode')
     parser.add_argument('--best_test', action='store_true', help='Run in test mode')
     args = parser.parse_args()
-    folder_dir="/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/pybuildingenergy/pybuildingenergy/charts"
+    folder_dir=path_weather_file=main_directory_ + "/charts"
     name_file="new_building_from_archetype"
     archetypes_path = file_path = "{}/{}".format(main_directory_, "archetypes.pickle")
     main(archetype=args.archetype, best_test=args.best_test, folder_dir=folder_dir, name_file_=name_file, archetype_db_path=archetypes_path)

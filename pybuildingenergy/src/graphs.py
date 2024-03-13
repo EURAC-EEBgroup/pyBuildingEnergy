@@ -60,7 +60,7 @@ class __Graphs__:
             ]
             y_name = ["Heating", "Cooling"]
             theme_type = ThemeType.ROMA
-        print(y_name, y_data)
+        
 
         Chart = bar_chart_single(y_name, y_data, theme_type)
 
@@ -240,8 +240,7 @@ class __Graphs__:
             raise ValueError("Value must be either True or False")
         # Equation of regeression 
         regress = Simple_regeression(df_HDD_Q['HDD'].to_list(), df_HDD_Q['Q_H'].to_list(), 'HDD')
-        # print(f"{regress[0]}, r2:{regress[1]}")
-        print(regress[0])
+
         # PLOT       
         Chart = Scatter_with_regression(
             chart_title = "Heating energy need vs HDD",
@@ -274,7 +273,7 @@ class __Graphs__:
         -------
         page: html file 
         '''
-        print(folder_directory)
+
         page = Page(layout=Page.SimplePageLayout)
         page.add(
             self.variables_plot(energy_var="heating", folder_directory=folder_directory, name_file="line_chart"),
@@ -283,22 +282,9 @@ class __Graphs__:
             self.energy_signature(folder_directory=folder_directory),
             self.annual_charts(folder_directory=folder_directory)
         )
-        # page.render(os.getcwd()+"/pybuildingenergy/charts/bui_data_analysis.html")
-        # MAIN 
-        # page.render(os.getcwd()+"/charts/bui_data_analysis.html")
-        # DEBUG
-        # page.render(os.getcwd()+"/charts/bui_data_analysis.html")
+
         file_path = "{}/{}.html".format(folder_directory, name_file)
         page.render(file_path)
         
         print("Report created!")
         
-
-# TEST
-# import pandas as pd
-# df1 = pd.read_csv("/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/test.csv", index_col=0)
-# df1.index = pd.DatetimeIndex(df1.index)
-# # __Graphs__(df1,'heating_cooling').single_plot_bar('test_chart')
-# # __Graphs__(df1,'heating_cooling').bar_line_graph(True, 12,'daily','heating')
-# __Graphs__(df1,'heating_cooling').bui_analysis_page()
-
