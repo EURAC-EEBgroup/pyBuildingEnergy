@@ -1,10 +1,10 @@
 """Main module."""
 
 
-from src.utils import __ISO52010__, __ISO52016__
+from source.utils import __ISO52010__, __ISO52016__
 from data.building_archetype import Selected_bui_archetype
-from src.graphs import __Graphs__
-from src.functions import is_float
+from source.graphs import __Graphs__
+from source.functions import is_float
 from global_inputs import bui_types, periods
 import argparse
 import subprocess

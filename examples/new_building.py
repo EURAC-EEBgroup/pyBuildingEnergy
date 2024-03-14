@@ -1,16 +1,7 @@
-import sys
-import os
-
-###
-sys.path.append('/opt/homebrew/lib/python3.11/site-packages')
-sys.path.append("/".join(os.path.realpath(__file__).split("/")[0:-2]))
-# sys.path.append("/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/pybuildingenergy/pybuildingenergy/data"))
-####
-
 import numpy as np
-from data.building_archetype import Buildings_from_dictionary
-from src.utils import __ISO52010__, __ISO52016__
-from src.graphs import __Graphs__
+from pybuildingenergy.data.building_archetype import Buildings_from_dictionary
+from pybuildingenergy.source.utils import __ISO52010__, __ISO52016__
+from pybuildingenergy.source.graphs import __Graphs__
 
 # ADD BEST-TESTs
 new_bui = {

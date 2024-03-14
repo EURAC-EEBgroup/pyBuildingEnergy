@@ -1,17 +1,8 @@
-import sys
-import os
-
-###
-sys.path.append('/opt/homebrew/lib/python3.11/site-packages')
-sys.path.append("/".join(os.path.realpath(__file__).split("/")[0:-2]))
-# sys.path.append("/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/pybuildingenergy/pybuildingenergy/data"))
-####
-
 import numpy as np
-from src.utils import __ISO52010__, __ISO52016__
-from src.graphs import __Graphs__
-from data.building_archetype import Selected_bui_archetype
-from global_inputs import main_directory_
+from pybuildingenergy.source.utils import __ISO52010__, __ISO52016__
+from pybuildingenergy.source.graphs import __Graphs__
+from pybuildingenergy.data.building_archetype import Selected_bui_archetype
+from pybuildingenergy.global_inputs import main_directory_
 
 #1 GET DATA FROM ARCHETYPE
 building_archetype = 'single_family_house'

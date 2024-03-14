@@ -4,7 +4,7 @@ from pyecharts.globals import ThemeType
 import pandas as pd
 
 
-from pybuildingenergy.src.functions import capitalize_first_letter, line_and_bar, bar_chart_single, energy_gauge_chart,season_type,\
+from pybuildingenergy.source.functions import capitalize_first_letter, line_and_bar, bar_chart_single, energy_gauge_chart,season_type,\
     Scatter_with_regression, Heating_Degree_days,Simple_regeression
 
 

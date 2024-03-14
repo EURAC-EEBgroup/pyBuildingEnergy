@@ -7,46 +7,10 @@
 # __license__ = "MIT"
 
 
-# import pytest
-
-
-# # try:
-# from pybuildingenergy import pybuildingenergy
-
-# # except ModuleNotFoundError:
-#     # import sys
-#     # sys.path.insert(1, '/home/osomova/Projects/vct/vctlib/src')
-#     # from vctlib.model import Building, ThermostaticalProperties, \
-#     #     BuildingCreateException
-#     # from vctlib.constant import VENT_RATES_MU
-
-
-# @pytest.fixture
-# def response(snapshot):
-#     """Sample .
-    
-#     """
-    
-#     result = {
-#         'ax':200
-#     }
-#     assert snapshot.assert_match(result, "test.json")
-#     # import requests
-#     # return requests.get('https://github.com/audreyr/cookiecutter-pypackage')
-
-
-# # def test_content(response):
-# #     """Sample pytest test function with the pytest fixture as an argument."""
-# #     # from bs4 import BeautifulSoup
-# #     # assert 'GitHub' in BeautifulSoup(response.content).title.string
-
-
-import json
-
 import numpy as np
-from pybuildingenergy.data.building_archetype import Buildings_from_dictionary
-from pybuildingenergy.src.utils import __ISO52010__, __ISO52016__
-from pybuildingenergy.src.graphs import __Graphs__
+from src.pybuildingenergy.data.building_archetype import Buildings_from_dictionary
+from src.pybuildingenergy.source.utils import __ISO52010__, __ISO52016__
+from src.pybuildingenergy.source.graphs import __Graphs__
 
 # ADD BEST-TESTs
 new_bui = {

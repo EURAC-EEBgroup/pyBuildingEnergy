@@ -1,14 +1,7 @@
-import sys
-import os
-
-###
-sys.path.append("/".join(os.path.realpath(__file__).split("/")[0:-2]))
-####
-
-from src.utils import __ISO52016__
-from data.building_archetype import Buildings_from_dictionary
-from global_inputs import main_directory_
-from src.functions import bar_chart_single, ePlus_shape_data, get_buildings_demos
+from pybuildingenergy.source.utils import __ISO52016__
+from pybuildingenergy.data.building_archetype import Buildings_from_dictionary
+from pybuildingenergy.global_inputs import main_directory_
+from pybuildingenergy.source.functions import bar_chart_single, ePlus_shape_data, get_buildings_demos
 from pyecharts.globals import ThemeType
 import pandas as pd
 

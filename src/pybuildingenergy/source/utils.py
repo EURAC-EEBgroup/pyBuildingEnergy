@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from tqdm import tqdm
 from pvlib.iotools import epw
 
-from pybuildingenergy.src.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
+from pybuildingenergy.source.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
 
 
 
