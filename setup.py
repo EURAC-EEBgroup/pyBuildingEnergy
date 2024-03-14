@@ -16,34 +16,36 @@ with open('HISTORY.rst') as history_file:
 
 if __name__ == "__main__":
     try:
-        setup(
-            author="Daniele Antonucci",
-            author_email='daniele.antonucci@eurac.edu',
-            python_requires='>=3.10',
-            classifiers=[
-                'Development Status :: 2 - Pre-Alpha',
-                'Intended Audience :: Developers',
-                'License :: OSI Approved :: MIT License',
-                'Natural Language :: English',
-                # 'Programming Language :: Python :: 3',
-                # 'Programming Language :: Python :: 3.6',
-                # 'Programming Language :: Python :: 3.7',
-                'Programming Language :: Python :: 3.11',
-            ],
-            description="Energy simulation of the building using ISO52000",
-            install_requires=requirements,
-            license="MIT license",
-            long_description=readme + '\n\n' + history,
-            include_package_data=True,
-            keywords='pybuildingenergy',
-            name='pybuildingenergy',
-            packages=find_packages(include=['pybuildingenergy', 'pybuildingenergy.*']),
-            test_suite='tests',
-            tests_require=test_requirements,
-            url='https://github.com/DanieleAntonucci20/pybuildingenergy',
-            version='0.1.0',
-            zip_safe=False,
-        )
+        setup(use_scm_version={"version_scheme": "no-guess-dev"})
+
+        # setup(
+        #     author="Daniele Antonucci",
+        #     author_email='daniele.antonucci@eurac.edu',
+        #     python_requires='>=3.10',
+        #     classifiers=[
+        #         'Development Status :: 2 - Pre-Alpha',
+        #         'Intended Audience :: Developers',
+        #         'License :: OSI Approved :: MIT License',
+        #         'Natural Language :: English',
+        #         # 'Programming Language :: Python :: 3',
+        #         # 'Programming Language :: Python :: 3.6',
+        #         # 'Programming Language :: Python :: 3.7',
+        #         'Programming Language :: Python :: 3.11',
+        #     ],
+        #     description="Energy simulation of the building using ISO52000",
+        #     # install_requires=requirements,
+        #     license="MIT license",
+        #     long_description=readme + '\n\n' + history,
+        #     include_package_data=True,
+        #     keywords='pybuildingenergy',
+        #     # name='pybuildingenergy',
+        #     # packages=find_packages(include=['pybuildingenergy', 'pybuildingenergy.*']),
+        #     test_suite='tests',
+        #     # tests_require=test_requirements,
+        #     url='https://github.com/DanieleAntonucci20/pybuildingenergy',
+        #     version='0.1.0',
+        #     zip_safe=False,
+        # )
     except:  # noqa
         print(
             "\n\nAn error occurred while building the project, "

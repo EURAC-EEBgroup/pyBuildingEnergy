@@ -15,12 +15,10 @@ Vedere test area edificio e area del solaio controterra differenti
 '''
 
 import numpy as np
-# from pybuildingenergy.data.profiles import profile_residential_1
-from data.profiles import profile_residential_1
-# from pybuildingenergy.src.functions import Perimeter_from_area, Area_roof, Internal_gains, Power_heating_system
-from src.functions import Perimeter_from_area, Area_roof, Internal_gains, Power_heating_system, filter_list_by_index, Check_area
+from pybuildingenergy.data.profiles import profile_residential_1
+from pybuildingenergy.src.functions import Perimeter_from_area, Area_roof, Internal_gains, Power_heating_system, filter_list_by_index, Check_area
 import pickle
-from global_inputs import main_directory_
+from pybuildingenergy.global_inputs import main_directory_
 # ================================================================================================
 #                           COMPONENTS ARCHETYPE            
 # ================================================================================================

@@ -5,7 +5,6 @@ __version__ = "0.1"
 __maintainer__ = "Daniele Antonucci"
 
 #%%
-import geopy.geocoders
 import requests
 import pandas as pd
 import datetime as dt
@@ -14,19 +13,9 @@ from pytz import timezone
 import numpy as np
 from dataclasses import dataclass
 from tqdm import tqdm
-import os
-import multiprocessing
-import sys
-import re
 from pvlib.iotools import epw
-from datetime import datetime
 
-from src.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
-# from pybuildingenergy.src.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
-
-# import examples.weatherdata
-from global_inputs import main_directory_
-# print(os.getcwd(examples.weatherdata))
+from pybuildingenergy.src.functions import Equation_of_time, Hour_angle_calc, Air_mass_calc,Get_positions,Filter_list_by_indices
 
 
 

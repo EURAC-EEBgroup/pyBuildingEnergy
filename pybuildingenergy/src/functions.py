@@ -14,7 +14,7 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 from datetime import datetime
-from global_inputs import main_directory_
+from pybuildingenergy.global_inputs import main_directory_
 import pickle
 
 
