@@ -1,18 +1,32 @@
 from pybuildingenergy.source.utils import __ISO52016__
 from pybuildingenergy.data.building_archetype import Buildings_from_dictionary
-from pybuildingenergy.global_inputs import main_directory_
 from pybuildingenergy.source.functions import bar_chart_single, ePlus_shape_data, get_buildings_demos
 from pyecharts.globals import ThemeType
 import pandas as pd
+import os
 
+main_directory_ = os.path.dirname(os.path.realpath(__file__))
 demo_buis = get_buildings_demos()
 bt_600 = [bui for bui in demo_buis if bui['building_type'] == 'BestTest600'][0]
 
 #eplusout
-def main(name_chart:str,weather_type:str, 
+def main(weather_type:str, 
          latitude_bui:float = None, longitude_bui:float = None, 
-         path_weather_file_:str= None, eplus_file_name:str=None):
-    
+         path_epls_file:float = None, 
+         path_weather_file_:str= None,
+         path_chart_name:str=None):
+    '''
+    SImualte besttest600 with different weather file and comparing data with the onew coming from energy plus
+    Param
+    ------
+    name_chart: name file to save the result of simulation
+    weather_type: Specify the data source for weather data. If using the PVGIS website, indicate 'pvgis'; if loading an EPW file from the path_weather_file_, indicate 'epw'.
+    latitude: mandatory if weather_type is 'pvgis'
+    longitude:  mandatory if weather_type is 'epw'
+    path_epls_file: specifc thte path of the energy plus simulation file 
+    path_weather_file_: if weather_type ='epw', specify the folder where the epw file is uploaded.
+    eplus_file_name: name of the epw file 
+    '''
     # SIMULATE BUILDING
     BUI = Buildings_from_dictionary(bt_600)
     BUI.__setattr__('weather_source', weather_type)
@@ -47,7 +61,7 @@ def main(name_chart:str,weather_type:str,
     index = ISO52016_monthly_heating_in_kWh_per_sqm.index
 
     # ENERGYPLUS
-    dir_energy_plus = main_directory_+f"/data/energyPlus_data/{eplus_file_name}.csv"
+    dir_energy_plus = path_epls_file
     eplus_data = ePlus_shape_data( pd.read_csv(dir_energy_plus), BUI.__getattribute__('a_use'))
     EnergyPlus_monthly_heating_in_kWh_per_sqm = eplus_data[0]
     EnergyPlus_monthly_cooling_in_kWh_per_sqm = eplus_data[1]
@@ -67,16 +81,16 @@ def main(name_chart:str,weather_type:str,
         y_data_plot=df_barplot.values.T.tolist(),
         theme_type=ThemeType.SHINE
     )
-    graph.render(main_directory_+f"/examples/{name_chart}.html")
+    graph.render(path_chart_name)
 
 
 
 if __name__ == "__main__":
     main(
-        name_chart = 'BESTEST600_iso_vs_energyplus_Athens',
         weather_type ='pvgis', 
         latitude_bui = 44.78,
         longitude_bui = 9.78,
-        eplus_file_name = "Case600_V22.1.0out_Athens",
-        path_weather_file_=main_directory_+"/examples/weatherdata/2020_Athens.epw"
+        path_epls_file = main_directory_ + '/energyPlus_data/Case600_V22.1.0out_Athens.csv',
+        path_weather_file_ = main_directory_+ '/weatherdata/2020_Athens.epw',
+        path_chart_name = main_directory_+ "/testbed600_ISO_vs_Eplus_Athens.html"
     )

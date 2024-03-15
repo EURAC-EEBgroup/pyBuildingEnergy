@@ -21,3 +21,6 @@ pyecharts == 2.0.4
 geopy==2.4.1
 pvlib==0.10.1
 pytest-snapshot
+timezonefinder ==6.2.0
+tqdm == 4.66.1
+pvlib ==0.10.1
