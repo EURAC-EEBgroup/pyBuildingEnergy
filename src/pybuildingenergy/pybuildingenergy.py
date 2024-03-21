@@ -1,9 +1,9 @@
 """Main module."""
 
 
-from source.utils import __ISO52010__, __ISO52016__
+from source.utils import ISO52010, ISO52016
 from data.building_archetype import Selected_bui_archetype
-from source.graphs import __Graphs__
+from source.graphs import Graphs_and_report
 from source.functions import is_float
 from global_inputs import bui_types, periods
 import argparse
@@ -19,7 +19,7 @@ def main(archetype=False, best_test=False, folder_dir="", name_file_="", archety
         if select_archetype == 1:
 
             building_archetype = input("select type of building archetype (e.g. 'single_family_house'):")
-            period_archetype = input("Year of building construction(e.g. 'before 1900', '1901-1920','1921-1945','1946-1960','1961-1875','1976-1990','1991-2005','2006-today'): ")
+            period_archetype = input("Period of building construction(e.g. 'before 1900', '1901-1920','1921-1945','1946-1960','1961-1875','1976-1990','1991-2005','2006-today'): ")
             latitude = input('latitude of the building location in decimal:')
             longitude = input('longitude fo the building location in decimal:')
         # check building archetype:
@@ -27,8 +27,8 @@ def main(archetype=False, best_test=False, folder_dir="", name_file_="", archety
                 
                 if is_float(latitude) and is_float(longitude):
                     BUI = Selected_bui_archetype(building_archetype,period_archetype,float(latitude), float(longitude)).get_archetype(archetype_db_path)
-                    hourly_sim, annual_results_df = __ISO52016__().Temperature_and_Energy_needs_calculation(BUI, weather_source ='pvgis',  path_weather_file=main_directory_ + "/data/examples/weatherdata/2020_Athens.epw") 
-                    __Graphs__(hourly_sim,'heating_cooling').bui_analysis_page(folder_directory=folder_dir, name_file=name_file_)
+                    hourly_sim, annual_results_df = ISO52016().Temperature_and_Energy_needs_calculation(BUI, weather_source ='pvgis',  path_weather_file=main_directory_ + "/data/examples/weatherdata/2020_Athens.epw") 
+                    Graphs_and_report(hourly_sim,'heating_cooling').bui_analysis_page(folder_directory=folder_dir, name_file=name_file_)
                 
                 else:
                     raise TypeError("Check if latitude and longitude are written in a proper way (as float)")
@@ -40,8 +40,8 @@ def main(archetype=False, best_test=False, folder_dir="", name_file_="", archety
             # DEMO FILE
             
             BUI = Selected_bui_archetype('single_family_house','before 1900',45.071321703968124, 7.642963669564985).get_archetype(archetype_db_path)
-            hourly_sim, annual_results_df = __ISO52016__().Temperature_and_Energy_needs_calculation(BUI, weather_source ='pvgis', path_weather_file=main_directory_ + "/data/examples/weatherdata/2020_Athens.epw") 
-            __Graphs__(hourly_sim,'heating_cooling').bui_analysis_page(folder_directory=folder_dir, name_file=name_file_)
+            hourly_sim, annual_results_df = ISO52016().Temperature_and_Energy_needs_calculation(BUI, weather_source ='pvgis', path_weather_file=main_directory_ + "/data/examples/weatherdata/2020_Athens.epw") 
+            Graphs_and_report(hourly_sim,'heating_cooling').bui_analysis_page(folder_directory=folder_dir, name_file=name_file_)
         
         else:
             raise TypeError ("Select one archetype( type: 1) or a demo (type:2)")

@@ -1,33 +1,19 @@
+# #!/usr/bin/env python
+
+# """Tests for `pybuildingenergy` package."""
+
+# __author__ = "Daniele Antonucci"
+# __copyright__ = "Daniele Antonucci"
+# __license__ = "MIT"
+
+
 import numpy as np
-from pybuildingenergy.source.utils import ISO52016
-from pybuildingenergy.source.graphs import Graphs_and_report
-from pybuildingenergy.data.building_archetype import Buildings_from_dictionary
-import os
+from src.pybuildingenergy.data.building_archetype import Buildings_from_dictionary
+from src.pybuildingenergy.source.utils import ISO52010, ISO52016
+from src.pybuildingenergy.source.graphs import Graphs_and_report
 
-# Inputs
-file_dir = os.path.dirname(os.path.realpath(__file__))
-'''
-Provide the directory data where to save the results and charts; if a new one is not provided, a directory named 'result' is created
-'''
-
-file_dir = os.path.dirname(os.path.realpath(__file__))
-# Check directory if it is not available create it
-def ensure_directory_exists(directory):
-    """
-    Ensure that the specified directory exists.
-    If it doesn't exist, create it.
-    """
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-        print(f"Directory '{directory}' created.")
-    else:
-        print(f"Directory '{directory}' already exists.")
-
-ensure_directory_exists(file_dir+"/Result")
-
-
-# Building
-user_bui = {
+# ADD BEST-TESTs
+new_bui = {
     # BUILDING FEATURE
     'building_type': 'BestTest600', # building type
     'periods': 2024, # year of construction 
@@ -89,50 +75,10 @@ user_bui = {
     'baseline_hce': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object),
 }
 
+def test_create_bui_obj(snapshot):
 
+    # Create building object
+    BUI = Buildings_from_dictionary(new_bui)
 
+    snapshot.assert_match(str(BUI.__dict__), "properties_inputs.yml")
 
-def main(bui_new:dict, weather_type:str, path_weather_file_:str, 
-         path_hourly_sim_result: str, path_annual_sim_result:str, 
-         dir_chart_folder:str, name_report: str):
-    '''
-    Param
-    ------
-    building_archetype: type of building. Possible choice 'single_family_house'
-    period_archetype: Period of building construction. Possible choised: 'before 1900', '1901-1920','1921-1945','1946-1960','1961-1875','1976-1990','1991-2005','2006-today').
-    bui_new: dictionary with inputs of own building to be changed in the archetype building inputs 
-    weather_type: Specify the data source for weather data. If using the PVGIS website, indicate 'pvgis'; if loading an EPW file from the path_weather_file_, indicate 'epw'.
-    latitude: mandatory if weather_type is 'pvgis'
-    longitude:  mandatory if weather_type is 'epw'
-    path_weather_file_: if weather_type ='epw', specify the folder where the epw file is uploaded.
-    archetype_file_path: pickel file in whcihe tere are all available building archetypes
-    dir_chart_folder: directory where charts files are created. Some pre-set charts are saved within the folder.
-    name_report: name of the main report to be saved in the dir_chart_folder 
-    '''
-
-    # Create Building object
-    BUI = Buildings_from_dictionary(bui_new)
-
-    # Run Simulation 
-    hourly_sim, annual_results_df = ISO52016().Temperature_and_Energy_needs_calculation(BUI, weather_source=weather_type, path_weather_file=path_weather_file_) 
-    hourly_sim.to_csv(path_hourly_sim_result)
-    annual_results_df.to_csv(path_annual_sim_result)
-    
-    # Generate Graphs
-    Graphs_and_report(df = hourly_sim,season ='heating_cooling').bui_analysis_page(
-        folder_directory=dir_chart_folder,
-        name_file=name_report)
-    
-    return print(f"Simulation eneded!check results in {path_hourly_sim_result} and {path_annual_sim_result}")
-
-
-if __name__ == "__main__":
-    main(
-        bui_new = user_bui,
-        weather_type = 'pvgis',
-        path_weather_file_ = None,   
-        path_hourly_sim_result = file_dir + "/Result/hourly_sim__arch.csv",
-        path_annual_sim_result = file_dir + "/Result/annual_sim__arch.csv",
-        dir_chart_folder = file_dir+ "/Result",
-        name_report = "main_report_2"
-    )

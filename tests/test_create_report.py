@@ -9,8 +9,8 @@
 
 import numpy as np
 from src.pybuildingenergy.data.building_archetype import Buildings_from_dictionary
-from src.pybuildingenergy.source.utils import __ISO52010__, __ISO52016__
-from src.pybuildingenergy.source.graphs import __Graphs__
+from src.pybuildingenergy.source.utils import ISO52010, ISO52016
+from src.pybuildingenergy.source.graphs import Graphs_and_report
 
 # ADD BEST-TESTs
 new_bui = {
@@ -75,30 +75,17 @@ new_bui = {
     'baseline_hce': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object),
 }
 
-def test_create_bui_obj(snapshot):
-
+def test_plotting_report(snapshot):
     # Create building object
     BUI = Buildings_from_dictionary(new_bui)
-
-    snapshot.assert_match(str(BUI.__dict__), "properties_inputs.yml")
-
-
-
-
-def test_simulation(snapshot):
-    BUI = Buildings_from_dictionary(new_bui)
-
-
-    # Run Simulation and generate graphs 
-    hourly_sim, annual_results_df = __ISO52016__().Temperature_and_Energy_needs_calculation(BUI, weather_source ='pvgis', path_weather_file=None) 
+    # Run Simulation
+    hourly_sim, annual_results_df = ISO52016().Temperature_and_Energy_needs_calculation(BUI, weather_source ='pvgis', path_weather_file=None) 
+    # Generate graphs
+    report = Graphs_and_report(df = hourly_sim,season ='heating_cooling').bui_analysis_page(
+        folder_directory="/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/pybuildingenergy/src/pybuildingenergy/charts",
+        name_file="new_building_")
     
-    snapshot.assert_match(hourly_sim.to_json(), "hourly_sim.json")
-    snapshot.assert_match(annual_results_df.to_json(), "annual_results_df.json")
-    
-
-
+    return snapshot.assert_match(report, "report_generated.yml")
 # # Provide directory to save data and name of chart file
-#     __Graphs__(df = hourly_sim,season ='heating_cooling').bui_analysis_page(folder_directory="/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/pybuildingenergy/pybuildingenergy/charts",
-#                                                                         name_file="new_building_")
 
 

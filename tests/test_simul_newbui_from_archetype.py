@@ -1,30 +1,12 @@
 import numpy as np
-from pybuildingenergy.source.utils import ISO52016
-from pybuildingenergy.source.graphs import Graphs_and_report
-from pybuildingenergy.data.building_archetype import Selected_bui_archetype
-from pybuildingenergy.global_inputs import main_directory_
+from src.pybuildingenergy.source.utils import ISO52016
+from src.pybuildingenergy.source.graphs import Graphs_and_report
+from src.pybuildingenergy.data.building_archetype import Selected_bui_archetype
+from src.pybuildingenergy.global_inputs import main_directory_
 import os
 
-'''
-Provide the directory data where to save the results and charts; if a new one is not provided, a directory named 'result' is created
-'''
-
+# Inputs
 file_dir = os.path.dirname(os.path.realpath(__file__))
-# Check directory if it is not available create it
-def ensure_directory_exists(directory):
-    """
-    Ensure that the specified directory exists.
-    If it doesn't exist, create it.
-    """
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-        print(f"Directory '{directory}' created.")
-    else:
-        print(f"Directory '{directory}' already exists.")
-
-ensure_directory_exists(file_dir+"/Result")
-
-
 # Building inputs to be uses in the archetype
 user_bui = {
     # BUILDING FEATURE
@@ -64,16 +46,21 @@ user_bui = {
     "tmy_filename": None,
     "location": None
 }
+building_archetype = 'single_family_house'
+period_archetype = 'before 1900'
+bui_new = user_bui
+weather_type = 'pvgis'
+path_weather_file_ = None
+latitude = 44.78
+longitude = 9.78
+path_hourly_sim_result = "/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/Result_test" + "/hourly_sim__arch.csv"
+path_annual_sim_result = "/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/Result_test" + "/annual_sim__arch.csv"
+dir_chart_folder = "/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/Result_test"
+name_report = "main_report"
+archetype_file_path =main_directory_ + "/archetypes.pickle"
 
-
-
-def main(building_archetype:str, period_archetype: str, bui_new:dict, weather_type:str, path_weather_file_:str, latitude:float, longitude:float, 
-         path_hourly_sim_result: str, path_annual_sim_result:str, 
-         dir_chart_folder:str, name_report: str, 
-         archetype_file_path:str=main_directory_ + "/archetypes.pickle"):
+def test_new_bui_from_archetype(snapshot):
     '''
-    Param
-    ------
     building_archetype: type of building. Possible choice 'single_family_house'
     period_archetype: Period of building construction. Possible choised: 'before 1900', '1901-1920','1921-1945','1946-1960','1961-1875','1976-1990','1991-2005','2006-today').
     bui_new: dictionary with inputs of own building to be changed in the archetype building inputs 
@@ -85,36 +72,21 @@ def main(building_archetype:str, period_archetype: str, bui_new:dict, weather_ty
     dir_chart_folder: directory where charts files are created. Some pre-set charts are saved within the folder.
     name_report: name of the main report to be saved in the dir_chart_folder 
     '''
-
     # Get Archetype
     BUI = Selected_bui_archetype(building_archetype,period_archetype,float(latitude), float(longitude)).get_archetype(archetype_file_path)
     # Update values of won building
     BUI.update_values(bui_new)
 
-    # Run Simulation 
+    # return snapshot.assert_match(str(BUI.__dict__), "archetype_updated.yml")
+        # Run Simulation 
     hourly_sim, annual_results_df = ISO52016().Temperature_and_Energy_needs_calculation(BUI, weather_source=weather_type, path_weather_file=path_weather_file_) 
     hourly_sim.to_csv(path_hourly_sim_result)
     annual_results_df.to_csv(path_annual_sim_result)
     
     # Generate Graphs
-    Graphs_and_report(df = hourly_sim,season ='heating_cooling').bui_analysis_page(
+    report = Graphs_and_report(df = hourly_sim,season ='heating_cooling').bui_analysis_page(
         folder_directory=dir_chart_folder,
         name_file=name_report)
     
-    return print(f"Simulation eneded!check results in {path_hourly_sim_result} and {path_annual_sim_result}")
-
-
-if __name__ == "__main__":
-    main(
-        building_archetype = 'single_family_house',
-        period_archetype = 'before 1900',
-        bui_new = user_bui,
-        weather_type = 'pvgis',
-        path_weather_file_ = None,
-        latitude = 44.78,
-        longitude = 9.78,
-        path_hourly_sim_result = file_dir + "/Result/hourly_sim__arch.csv",
-        path_annual_sim_result = file_dir + "/Result/annual_sim__arch.csv",
-        dir_chart_folder = file_dir+ "/Result",
-        name_report = "main_report"
-    )
+    print(f"Simulation eneded!check results in {path_hourly_sim_result} and {path_annual_sim_result}")
+    return snapshot.assert_match(report, "report_new_bui_from_archetype_generated.yml")

@@ -1,7 +1,7 @@
-from pybuildingenergy.source.utils import ISO52016
-from pybuildingenergy.data.building_archetype import Buildings_from_dictionary
-from pybuildingenergy.source.functions import  ePlus_shape_data, get_buildings_demos
-from pybuildingenergy.source.graphs import bar_chart_single
+from src.pybuildingenergy.source.utils import ISO52016
+from src.pybuildingenergy.data.building_archetype import Buildings_from_dictionary
+from src.pybuildingenergy.source.functions import ePlus_shape_data, get_buildings_demos
+from src.pybuildingenergy.source.graphs import bar_chart_single
 from pyecharts.globals import ThemeType
 import pandas as pd
 import os
@@ -9,15 +9,18 @@ import os
 main_directory_ = os.path.dirname(os.path.realpath(__file__))
 demo_buis = get_buildings_demos()
 bt_600 = [bui for bui in demo_buis if bui['building_type'] == 'BestTest600'][0]
+weather_type ='pvgis'
+latitude_bui = 44.78
+longitude_bui = 9.78
+path_epls_file = '/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/examples/energyPlus_data/Case600_V22.1.0out_Athens.csv'
+path_weather_file_ = '/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/examples/weatherdata/2020_Athens.epw'
+path_chart_name = '/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/Result_test' + "/testbed600_ISO_vs_Eplus_Athens.html"
+
 
 #eplusout
-def main(weather_type:str, 
-         latitude_bui:float = None, longitude_bui:float = None, 
-         path_epls_file:float = None, 
-         path_weather_file_:str= None,
-         path_chart_name:str=None):
+def test_best600(snapshot):
     '''
-    SImualte besttest600 with different weather file and comparing data with the onew coming from energy plus
+    Simualte besttest600 with different weather file and comparing data with the onew coming from energy plus
     Param
     ------
     name_chart: name file to save the result of simulation
@@ -84,14 +87,4 @@ def main(weather_type:str,
     )
     graph.render(path_chart_name)
 
-
-
-if __name__ == "__main__":
-    main(
-        weather_type ='pvgis', 
-        latitude_bui = 44.78,
-        longitude_bui = 9.78,
-        path_epls_file = main_directory_ + '/energyPlus_data/Case600_V22.1.0out_Athens.csv',
-        path_weather_file_ = main_directory_+ '/weatherdata/2020_Athens.epw',
-        path_chart_name = main_directory_+ "/testbed600_ISO_vs_Eplus_Athens.html"
-    )
+    return snapshot.assert_match(df_barplot.to_json(), "data_best600_athens.json")
