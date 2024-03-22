@@ -5,7 +5,6 @@ To use pyBuildingEnergy in a project::
 
     import pybuildingenergy
 
-
 The tool allows you to evaluate the performance of buildings in different ways: 
 
 * by running simulations of buildings (archetypes) already preloaded in the archetypes.pickle file for different nations according to Tabula dataset (currently only Italian buildings are available, but buildings from different nations will be loaded), 

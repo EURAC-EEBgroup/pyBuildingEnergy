@@ -31,4 +31,10 @@ Welcome to pybuildingenergy's documentation!
 
    pybuildingenergy
 
+.. toctree::
+   :maxdepth: 2
+   :hidden: 
+
+   building
+
 

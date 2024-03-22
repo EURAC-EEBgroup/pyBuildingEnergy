@@ -59,7 +59,7 @@ class conduttance_elements:
 
 
 @dataclass
-class solar_abs_elements:
+class solar_absorption_elements:
     a_sol_pli_eli: np.array
 
 
@@ -678,7 +678,7 @@ class ISO52016:
         return conduttance_elements(h_pli_eli=h_pli_eli)
 
     @classmethod
-    def Solar_absorption_of_element(cls, building_object) -> solar_abs_elements:
+    def Solar_absorption_of_element(cls, building_object) -> solar_absorption_elements:
         """
         Calculation of solar absorption for each single elements
 
@@ -709,13 +709,13 @@ class ISO52016:
         # Number of envelop building elements
         el_list = len(building_object.__getattribute__("typology_elements"))
         # Coefficient list of elements
-        solar_area_elements = building_object.__getattribute__("solar_area_elements")
+        solar_abs_elements = building_object.__getattribute__("solar_abs_elements")
 
         # Initialization of solar_abs_coeff
         a_sol_pli_eli = np.zeros((5, el_list))
-        a_sol_pli_eli[0, :] = solar_area_elements
+        a_sol_pli_eli[0, :] = solar_abs_elements
 
-        return solar_abs_elements(a_sol_pli_eli=a_sol_pli_eli)
+        return solar_absorption_elements(a_sol_pli_eli=a_sol_pli_eli)
 
     @classmethod
     def Areal_heat_capacity_of_element(cls, building_object) -> aeral_heat_capacity:

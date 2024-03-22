@@ -154,7 +154,7 @@ typology_elements = np.array(
 orientation_elements = np.array(
     ["NV", "SV", "EV", "WV", "HOR", "HOR", "NV", "SV", "EV", "WV"], dtype=object
 )
-solar_area_elements = np.array(
+solar_abs_elements = np.array(
     [1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.6, 0.6, 0.6, 0.6], dtype=object
 )
 heat_convective_elements_internal = np.array(
@@ -393,7 +393,7 @@ class Buildings(object):
         self.thermal_resistance_floor = thermal_resistance_floor
         self.typology_elements = typology_elements
         self.orientation_elements = orientation_elements
-        self.solar_area_elements = solar_area_elements
+        self.solar_abs_elements = solar_abs_elements
         self.area_elements = area_elements
         self.transmittance_U_elments = transmittance_U_elments
         self.thermal_resistance_R_elements = thermal_resistance_R_elements

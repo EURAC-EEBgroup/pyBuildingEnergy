@@ -7,6 +7,21 @@ import pandas as pd
 import os
 
 main_directory_ = os.path.dirname(os.path.realpath(__file__))
+# Check directory if it is not available create it
+def ensure_directory_exists(directory):
+    """
+    Ensure that the specified directory exists.
+    If it doesn't exist, create it.
+    """
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+        print(f"Directory '{directory}' created.")
+    else:
+        print(f"Directory '{directory}' already exists.")
+
+ensure_directory_exists(main_directory_+"/Result")
+
+
 demo_buis = get_buildings_demos()
 bt_600 = [bui for bui in demo_buis if bui['building_type'] == 'BestTest600'][0]
 

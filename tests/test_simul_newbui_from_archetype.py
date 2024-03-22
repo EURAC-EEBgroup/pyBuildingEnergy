@@ -22,12 +22,11 @@ user_bui = {
     'heating_setpoint': 20, # in °c
     'heating_setback':15, # in °c
     'power_heating_max':27000, # in W
-    # 'power_heating_max':30000, # in W
     # INTERNAL GAINS and VENTILATION LOSSES
     # "Wall North", "Wall South", "Wall East", "Wall West", "Floor slab on gorund", "Roof", "Window North", "Window South", "Window East", "Window West"
     'typology_elements': np.array(["OP", "OP", "OP", "OP", "GR", "OP", "W", "W", "W", "W"],dtype=object), 
     'orientation_elements': np.array(['NV', 'SV', 'EV', 'WV', 'HOR', 'HOR', 'NV', 'SV', 'EV', 'WV'],dtype=object),
-    'solar_area_elements': np.array([1.0,1.0,1.0,1.0,0.0,1.0,0.6,0.6,0.6,0.6], dtype=object),
+    'solar_abs_elements': np.array([1.0,1.0,1.0,1.0,0.0,1.0,0.6,0.6,0.6,0.6], dtype=object),
     'area_elements': [21.6, 9.6, 16.2,16.2, 48, 48,0, 12,0, 0],
     'transmittance_U_elements' : [0.514, 0.514, 0.514, 0.514, 0.04, 0.318, 1, 1, 1, 1],    
     'thermal_capacity_elements' : [175000, 175000,175000,175000,110000, 50000, 0, 0, 0, 0],
