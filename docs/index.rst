@@ -29,7 +29,7 @@ Welcome to pybuildingenergy's documentation!
    :maxdepth: 2
    :hidden: 
 
-   pybuildingenergy
+   modules
 
 .. toctree::
    :maxdepth: 2

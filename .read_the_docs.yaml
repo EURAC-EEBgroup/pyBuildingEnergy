@@ -1,0 +1,30 @@
+version: 3
+
+# Build configuration for Python documentation
+python:
+  version: 3.11
+  install:
+    - method: pip
+      path: .
+      extra_requirements:
+        - docs
+
+# Documentation build configuration
+build:
+  image: latest
+
+# Dependencies to be installed
+dependencies:
+  python:
+    - sphinx
+    - sphinx-rtd-theme
+
+# Specify the Python interpreter version
+python:
+  version: 3.11
+
+# Documentation configuration
+documentation:
+  - path: docs
+    environment:
+      PIP_EXTRA_INDEX_URL: https://pypi.org/simple
