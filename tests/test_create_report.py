@@ -28,6 +28,7 @@ new_bui = {
     'surface_envelope_model': 48+48+21.6+9.6+12+16.2+16.2,
     'annual_mean_internal_temperature': 39.76,
     'annual_mean_external_temperature': 7,
+    'side':4,
     # SYSTEMS 
     "heating_mode": True,
     "cooling_mode": True,
@@ -66,11 +67,6 @@ new_bui = {
     "construction_class": "class_i",
     # WEATHER FILE
     "weather_source": 'pvgis',
-    "tmy_filename": "/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/pybuildingenergy/pybuildingenergy/tests/weatherdata/2020_Madrid.epw",
-    "location": None,
-    # OPTIMIZATION
-    'baseline_hci': np.array([2.50, 2.50, 2.50, 2.50, 0.70, 5.00, 2.50], dtype=object),
-    'baseline_hce': np.array([20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],dtype=object),
 }
 
 def test_plotting_report(snapshot):

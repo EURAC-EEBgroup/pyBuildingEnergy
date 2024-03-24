@@ -120,7 +120,6 @@ class ISO52010:
         """
         Get Wetaher data from epw file
 
-        :param building_object: Building object create according to the method ``Building`` or ``Buildings_from_dictionary``.
         :param path_weather_file: path of the .epw weather file. (e.g (../User/documents/epw/athens.epw))
 
         :return:

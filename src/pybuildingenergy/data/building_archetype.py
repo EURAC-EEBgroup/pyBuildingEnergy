@@ -412,8 +412,8 @@ class Buildings(object):
         self.baseline_hce = baseline_hce
         self.construction_class = construction_class
         self.weather_source = kwargs.get("weather_source")
-        self.tmy_filename = kwargs.get("tmy_filename")
-        self.location = kwargs.get("location")
+        # self.tmy_filename = kwargs.get("tmy_filename")
+        # self.location = kwargs.get("location")
 
     @property
     def slab_on_ground(self):

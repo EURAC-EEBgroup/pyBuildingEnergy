@@ -1,9 +1,27 @@
 [build-system]
-# AVOID CHANGING REQUIRES: IT WILL BE UPDATED BY PYSCAFFOLD!
-requires = ["setuptools>=46.1.0", "setuptools_scm[toml]>=5"]
+# Minimum requirements for the build system to execute.
+requires = ["setuptools", "wheel"]  # PEP 508 specifications.
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools_scm]
-# For smarter version schemes and other configuration options,
-# check out https://github.com/pypa/setuptools_scm
-version_scheme = "no-guess-dev"
+# Ignore flat-layout.
+[tool.setuptools]
+py-modules = []
+
+[project]
+name = "pybuildingenergy"
+version = "1.0.0"
+description = "Energy Simulation of building usin ISO52016 and more"
+license = {file = "LICENSE.md"}
+readme = "README.md"
+requires-python = ">=3.11.0"
+authors = [{name = "Daniele Antonucci", email = "daniele.antonucci@eurac.edu"}]
+maintainers = [{name = "Daniele Antonucci", email = "daniele.antonucci@eurac.edu"}]
+keywords = [
+    "energy",
+    "building",
+    "heating and cooling",
+    "52016",
+    "EPBD",
+]
+
+

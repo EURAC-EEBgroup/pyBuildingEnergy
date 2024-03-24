@@ -1,7 +1,7 @@
 """Main module."""
 
 
-from source.utils import ISO52010, ISO52016
+from source.utils import ISO52016
 from data.building_archetype import Selected_bui_archetype
 from source.graphs import Graphs_and_report
 from source.functions import is_float

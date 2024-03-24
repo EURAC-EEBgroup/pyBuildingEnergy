@@ -15,6 +15,7 @@ from src.pybuildingenergy.source.utils import ISO52016
 new_bui = {
     # BUILDING FEATURE
     'building_type': 'BestTest600', # building type
+    'period': 1984,
     'latitude': 39.76,
     'longitude': -104.86, 
     'volume' : 129.6, # in m3

@@ -15,7 +15,8 @@ from src.pybuildingenergy.source.graphs import Graphs_and_report
 # ADD BEST-TESTs
 new_bui = {
     # BUILDING FEATURE
-    'building_type': 'BestTest600', # building type
+    'building_type': 'myBui', # building type
+    'periods': 2024, # year of construction 
     'latitude': 39.76,
     'longitude': -104.86, 
     'volume' : 129.6, # in m3
@@ -67,7 +68,6 @@ new_bui = {
     # WEATHER FILE
     "weather_source": 'pvgis'
 }
-
 def test_create_bui_obj(snapshot):
 
     # Create building object

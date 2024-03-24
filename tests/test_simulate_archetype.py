@@ -19,6 +19,7 @@ path_annual_sim_result = "/Users/dantonucci/Library/CloudStorage/OneDrive-Scient
 dir_chart_folder = "/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/Result_test"
 name_report = "main_report"
 archetype_file_path =main_directory_ + "/archetypes.pickle"
+archetype_file_path ="/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/pybuildingenergy/src/pybuildingenergy/archetypes.pickle"
 
 def test_simulate_archetype(snapshot):
     '''
