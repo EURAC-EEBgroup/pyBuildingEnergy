@@ -25,4 +25,5 @@ timezonefinder==6.2.0
 tqdm==4.66.1
 pvlib==0.10.1
 scikit-learn==1.4.1.post1
-urllib3<2
+urllib3==1.26.18
+requests>=2.0
