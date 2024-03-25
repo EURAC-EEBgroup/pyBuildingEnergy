@@ -10,7 +10,7 @@ ISO 52016
 General functions
 ===============================
 
-.. automodule:: src.pybuildingenergy.source.functions
+.. automodule:: pybuildingenergy.source.functions
    :members:
    :undoc-members:
    :show-inheritance:
@@ -19,13 +19,13 @@ General functions
 Graph functions
 ===============================
 
-.. automodule:: src.pybuildingenergy.source.graphs
+.. automodule:: pybuildingenergy.source.graphs
    :members:
    :undoc-members:
    :show-inheritance:
 
 
-.. automodule:: src.pybuildingenergy.source
+.. automodule:: pybuildingenergy.source
    :members:
    :undoc-members:
    :show-inheritance:
