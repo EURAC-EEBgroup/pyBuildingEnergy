@@ -1,3 +1,4 @@
 
 Sphinx==7.2.6
 sphinx-rtd-theme==2.0.0
+pybuildingenergy==1.0.4
