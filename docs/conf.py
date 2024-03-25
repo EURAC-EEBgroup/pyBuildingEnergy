@@ -12,7 +12,7 @@ import src
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'Test_pybuildingenergy' 
+project = 'pybuildingenergy' 
 copyright = '2024, Daniele Antonucci - Eurac research'
 author = 'Daniele Antonucci'
 release = '0.0.1'

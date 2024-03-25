@@ -2,16 +2,15 @@ import numpy as np
 from pybuildingenergy.source.utils import ISO52016
 from pybuildingenergy.source.graphs import Graphs_and_report
 from pybuildingenergy.data.building_archetype import Selected_bui_archetype
-from pybuildingenergy.global_inputs import main_directory_
 import os
 from src import ensure_directory_exists
 '''
 Provide the directory data where to save the results and charts; if a new one is not provided, a directory named 'result' is created
 '''
 
-file_dir = os.path.dirname(os.path.realpath(__file__))
+main_directory_ = os.path.dirname(os.path.realpath(__file__))
 # Check directory if it is not available create it
-ensure_directory_exists(file_dir+"/Result")
+ensure_directory_exists(main_directory_+"/Result")
 
 
 # Building inputs to be uses in the archetype
@@ -102,8 +101,8 @@ if __name__ == "__main__":
         path_weather_file_ = None,
         latitude = 44.78,
         longitude = 9.78,
-        path_hourly_sim_result = file_dir + "/Result/hourly_sim__arch.csv",
-        path_annual_sim_result = file_dir + "/Result/annual_sim__arch.csv",
-        dir_chart_folder = file_dir+ "/Result",
+        path_hourly_sim_result = main_directory_ + "/Result/hourly_sim__arch.csv",
+        path_annual_sim_result = main_directory_ + "/Result/annual_sim__arch.csv",
+        dir_chart_folder = main_directory_+ "/Result",
         name_report = "main_report"
     )
