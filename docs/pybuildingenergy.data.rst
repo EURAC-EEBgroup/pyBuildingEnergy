@@ -1,12 +1,12 @@
 New and Archetype Building 
 ===============================
 
-.. automodule:: pybuildingenergy.data.building_archetype
+.. automodule:: src.pybuildingenergy.data.building_archetype
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. automodule:: pybuildingenergy.data
+.. automodule:: src.pybuildingenergy.data
    :members:
    :undoc-members:
    :show-inheritance:
