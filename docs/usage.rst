@@ -5,13 +5,17 @@ To use pyBuildingEnergy in a project::
 
     import pybuildingenergy
 
-The tool allows you to evaluate the performance of buildings in different ways: 
+The tool allows you to evaluate the performance of buildings in different ways. In the example folder select the file ``pybuilding_start.py``.
+
+..caution::
+  To make the script work, it is necessary to use the various files inside the examples folder. Inside, there are files useful for the simulation such as building archetypes, saved within the archetype file, 
+  as well as various data derived from EnergyPlus simulations present in CSV format. 
 
 * by running simulations of buildings (archetypes) already preloaded in the archetypes.pickle file for different nations according to Tabula dataset (currently only Italian buildings are available, but buildings from different nations will be loaded), 
 
   ::
 
-      python3 pybuildingenergy --archetype
+      python3 pybuilding_start --archetype
 
 
 Here it is possible, to select two options:
@@ -36,7 +40,7 @@ Here it is possible, to select two options:
 
   ::
 
-      python3 pybuildingenergy --best_test
+      python3 pybuilding_start --best_test
 
 
 * your own building.  For the latter, you can either upload the information from scratch or preload the information from a building archetype and then edit only the information you know.
