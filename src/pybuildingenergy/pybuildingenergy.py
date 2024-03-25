@@ -1,14 +1,13 @@
 """Main module."""
 
 
-from source.utils import ISO52016
-from data.building_archetype import Selected_bui_archetype
-from source.graphs import Graphs_and_report
-from source.functions import is_float
-from global_inputs import bui_types, periods
+from pybuildingenergy.source.utils import ISO52016
+from pybuildingenergy.data.building_archetype import Selected_bui_archetype
+from pybuildingenergy.source.graphs import Graphs_and_report
+from pybuildingenergy.source.functions import is_float
+from pybuildingenergy.global_inputs import bui_types, periods, main_directory_
 import argparse
 import subprocess
-from global_inputs import main_directory_
 
 
 

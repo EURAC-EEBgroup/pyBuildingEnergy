@@ -1,28 +1,18 @@
 from pybuildingenergy.source.utils import ISO52016
 from pybuildingenergy.data.building_archetype import Buildings_from_dictionary
-from pybuildingenergy.source.functions import  ePlus_shape_data, get_buildings_demos
+from pybuildingenergy.source.functions import  ePlus_shape_data
 from pybuildingenergy.source.graphs import bar_chart_single
 from pyecharts.globals import ThemeType
 import pandas as pd
 import os
+import pickle
+from src import ensure_directory_exists, get_buildings_demos
 
 main_directory_ = os.path.dirname(os.path.realpath(__file__))
 # Check directory if it is not available create it
-def ensure_directory_exists(directory):
-    """
-    Ensure that the specified directory exists.
-    If it doesn't exist, create it.
-    """
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-        print(f"Directory '{directory}' created.")
-    else:
-        print(f"Directory '{directory}' already exists.")
-
 ensure_directory_exists(main_directory_+"/Result")
-
-
-demo_buis = get_buildings_demos()
+# Upload archetypes
+demo_buis = get_buildings_demos(main_directory_)
 bt_600 = [bui for bui in demo_buis if bui['building_type'] == 'BestTest600'][0]
 
 #eplusout

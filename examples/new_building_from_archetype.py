@@ -4,24 +4,13 @@ from pybuildingenergy.source.graphs import Graphs_and_report
 from pybuildingenergy.data.building_archetype import Selected_bui_archetype
 from pybuildingenergy.global_inputs import main_directory_
 import os
-
+from src import ensure_directory_exists
 '''
 Provide the directory data where to save the results and charts; if a new one is not provided, a directory named 'result' is created
 '''
 
 file_dir = os.path.dirname(os.path.realpath(__file__))
 # Check directory if it is not available create it
-def ensure_directory_exists(directory):
-    """
-    Ensure that the specified directory exists.
-    If it doesn't exist, create it.
-    """
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-        print(f"Directory '{directory}' created.")
-    else:
-        print(f"Directory '{directory}' already exists.")
-
 ensure_directory_exists(file_dir+"/Result")
 
 
