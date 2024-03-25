@@ -1,6 +1,6 @@
 
 Sphinx==7.2.6
-sphinx-rtd-theme==2.0.0#
+sphinx-rtd-theme==2.0.0
 pybuildingenergy==1.0.4
 bump2version==0.5.11
 wheel==0.33.6
