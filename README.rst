@@ -6,68 +6,6 @@ pyBuildingEnergy
 .. image:: https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/src/pybuildingenergy/assets/Logo_pyBuild.png
    :width: 800
    :height: 250
-
-
-.. start-badges
-
-.. list-table::
-    :stub-columns: 1
-
-    * - docs
-      - |docs|
-    * - license
-      - |license|
-    * - downloads
-      - |downloads|
-    * - tests
-      - | |appveyor| |codecov|
-    * - package
-      - | |version| |wheel|
-        | |supported-ver|
-        | |package-health|
-
-
-.. |package-health| image:: https://snyk.io/advisor/python/pythermalcomfort/badge.svg
-    :target: https://snyk.io/advisor/python/pythermalcomfort
-    :alt: pythermalcomfort
-
-.. |license| image:: https://img.shields.io/pypi/l/pythermalcomfort?color=brightgreen
-    :target: https://github.com/CenterForTheBuiltEnvironment/pythermalcomfort/blob/master/LICENSE
-    :alt: pythermalcomfort license
-
-.. |docs| image:: https://readthedocs.org/projects/pythermalcomfort/badge/?style=flat
-    :target: https://readthedocs.org/projects/pythermalcomfort
-    :alt: Documentation Status
-
-.. |downloads| image:: https://img.shields.io/pypi/dm/pythermalcomfort?color=brightgreen
-    :alt: PyPI - Downloads
-
-.. |appveyor| image:: https://ci.appveyor.com/api/projects/status/github/CenterForTheBuiltEnvironment/pythermalcomfort?branch=master&svg=true
-    :alt: AppVeyor Build Status
-    :target: https://ci.appveyor.com/project/CenterForTheBuiltEnvironment/pythermalcomfort
-
-.. |codecov| image:: https://codecov.io/github/CenterForTheBuiltEnvironment/pythermalcomfort/coverage.svg?branch=master
-    :alt: Coverage Status
-    :target: https://codecov.io/github/CenterForTheBuiltEnvironment/pythermalcomfort
-
-.. |version| image:: https://img.shields.io/pypi/v/pythermalcomfort.svg
-    :alt: PyPI Package latest release
-    :target: https://pypi.org/project/pythermalcomfort
-
-.. |wheel| image:: https://img.shields.io/pypi/wheel/pythermalcomfort.svg
-    :alt: PyPI Wheel
-    :target: https://pypi.org/project/pythermalcomfort
-
-.. |supported-ver| image:: https://img.shields.io/pypi/pyversions/pythermalcomfort.svg
-    :alt: Supported versions
-    :target: https://pypi.org/project/pythermalcomfort
-
-.. |supported-implementations| image:: https://img.shields.io/pypi/implementation/pythermalcomfort.svg
-    :alt: Supported implementations
-    :target: https://pypi.org/project/pythermalcomfort
-
-.. end-badges
-
 |
 
 Features

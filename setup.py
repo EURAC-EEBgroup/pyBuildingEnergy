@@ -16,34 +16,19 @@ with open('HISTORY.rst') as history_file:
 
 if __name__ == "__main__":
     try:
-        setup(use_scm_version={"version_scheme": "no-guess-dev"})
+        # setup(use_scm_version={"version_scheme": "no-guess-dev"})
 
-        # setup(
-        #     author="Daniele Antonucci",
-        #     author_email='daniele.antonucci@eurac.edu',
-        #     classifiers=[
-        #         'Development Status :: 2 - Pre-Alpha',
-        #         'Intended Audience :: Developers',
-        #         'License :: OSI Approved :: MIT License',
-        #         'Natural Language :: English',
-        #         # 'Programming Language :: Python :: 3',
-        #         # 'Programming Language :: Python :: 3.6',
-        #         # 'Programming Language :: Python :: 3.7',
-        #         'Programming Language :: Python :: 3.11',
-        #     ],
-        #     description="Energy simulation of the building using ISO52000",
-        #     install_requires=requirements,
-        #     license="MIT license",
-        #     long_description=readme + '\n\n' + history,
-        #     include_package_data=True,
-        #     keywords='pybuildingenergy',
-        #     # packages=find_packages
-        #     # name='pybuildingenergy',
-        #     # packages=find_packages(include=['pybuildingenergy', 'pybuildingenergy.*']),
-        #     # tests_require=test_requirements,
-        #     url='https://github.com/DanieleAntonucci20/pybuildingenergy',
-        #     version='1.0.0',
-        # )
+        setup(
+            author="Daniele Antonucci",
+            author_email='daniele.antonucci@eurac.edu',
+            description="Energy simulation of the building using ISO52000",
+            license="MIT license",
+            long_description=readme + '\n\n' + history,
+            include_package_data=True,
+            keywords='pybuildingenergy',
+            url='https://github.com/EURAC-EEBgroup/pyBuildingEnergy',
+            version='1.0.0',
+        )
     except:  # noqa
         print(
             "\n\nAn error occurred while building the project, "

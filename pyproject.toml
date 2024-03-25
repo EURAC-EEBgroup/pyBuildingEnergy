@@ -12,7 +12,7 @@ name = "pybuildingenergy"
 version = "1.0.5"
 description = "Energy Simulation of building usin ISO52016 and more"
 license = {file = "LICENSE.md"}
-readme = "README.md"
+readme = "README.rst"
 requires-python = ">=3.8.0"
 authors = [{name = "Daniele Antonucci", email = "daniele.antonucci@eurac.edu"}]
 maintainers = [{name = "Daniele Antonucci", email = "daniele.antonucci@eurac.edu"}]
@@ -23,6 +23,33 @@ keywords = [
     "52016",
     "EPBD",
 ]
+
+classifiers = [
+  # How mature is this project? Common values are
+  #   3 - Alpha
+  #   4 - Beta
+  #   5 - Production/Stable
+  
+  "Development Status :: 4 - Beta",
+  # Indicate who your project is intended for
+  "Intended Audience :: Developers",
+  "Intended Audience :: Engineering",
+  "Intended Audience :: Education",
+  "Intended Audience :: Science/Research",
+  "Operating System :: Unix",
+  "Operating System :: POSIX",
+  "Operating System :: Microsoft :: Windows",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Scientific/Engineering",
+  "Topic :: BuildingEnergy Design",
+  "Topic :: Software Development :: Build Tools"
+]
+
 dependencies = [
     "bump2version==0.5.11",
     "coverage==4.5.4", 
@@ -41,5 +68,18 @@ dependencies = [
     "urllib3==1.26.18",
     "requests>=2.0"
 ]
+
+
+[project.urls]
+Homepage = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy"
+Documentation = "https://pybuildingenergy.readthedocs.io/en/latest/Overview/overview.html"
+Repository = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy"
+Issues = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy/issues"
+Changelog = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy/CHANGELOG.md"
+
+[project.optional-dependencies]
+gui = []
+cli = []
+
 
 
