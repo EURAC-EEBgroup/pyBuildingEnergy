@@ -11,7 +11,7 @@ import numpy as np
 from src.pybuildingenergy.data.building_archetype import Buildings_from_dictionary
 from src.pybuildingenergy.source.utils import ISO52016
 from src.pybuildingenergy.source.graphs import Graphs_and_report
-
+from .input_data.src import main_directory_
 # ADD BEST-TESTs
 new_bui = {
     # BUILDING FEATURE
@@ -76,7 +76,7 @@ def test_plotting_report(snapshot):
     hourly_sim, annual_results_df = ISO52016().Temperature_and_Energy_needs_calculation(BUI, weather_source ='pvgis', path_weather_file=None) 
     # Generate graphs
     report = Graphs_and_report(df = hourly_sim,season ='heating_cooling').bui_analysis_page(
-        folder_directory="/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/pybuildingenergy/src/pybuildingenergy/charts",
+        folder_directory=main_directory_+"/Result",
         name_file="new_building_")
     
     return snapshot.assert_match(report, "report_generated.yml")

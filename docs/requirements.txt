@@ -14,7 +14,6 @@ black==21.7b0
 pandas==2.2.1  
 numpy==1.23.2 
 DateTime==5.1  
-timezonefinder==6.2.0
 requests==2.31.0
 tqdm==4.66.1
 Pyarrow==13.0.0

@@ -21,7 +21,6 @@ if __name__ == "__main__":
         # setup(
         #     author="Daniele Antonucci",
         #     author_email='daniele.antonucci@eurac.edu',
-        #     python_requires='>=3.10',
         #     classifiers=[
         #         'Development Status :: 2 - Pre-Alpha',
         #         'Intended Audience :: Developers',
@@ -33,18 +32,17 @@ if __name__ == "__main__":
         #         'Programming Language :: Python :: 3.11',
         #     ],
         #     description="Energy simulation of the building using ISO52000",
-        #     # install_requires=requirements,
+        #     install_requires=requirements,
         #     license="MIT license",
         #     long_description=readme + '\n\n' + history,
         #     include_package_data=True,
         #     keywords='pybuildingenergy',
+        #     # packages=find_packages
         #     # name='pybuildingenergy',
         #     # packages=find_packages(include=['pybuildingenergy', 'pybuildingenergy.*']),
-        #     test_suite='tests',
         #     # tests_require=test_requirements,
         #     url='https://github.com/DanieleAntonucci20/pybuildingenergy',
         #     version='1.0.0',
-        #     zip_safe=False,
         # )
     except:  # noqa
         print(

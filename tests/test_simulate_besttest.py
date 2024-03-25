@@ -1,20 +1,22 @@
 from src.pybuildingenergy.source.utils import ISO52016
 from src.pybuildingenergy.data.building_archetype import Buildings_from_dictionary
-from src.pybuildingenergy.source.functions import ePlus_shape_data, get_buildings_demos
+from src.pybuildingenergy.source.functions import ePlus_shape_data
 from src.pybuildingenergy.source.graphs import bar_chart_single
 from pyecharts.globals import ThemeType
 import pandas as pd
 import os
+import pickle
+from .input_data.src import main_directory_, get_buildings_demos
 
-main_directory_ = os.path.dirname(os.path.realpath(__file__))
-demo_buis = get_buildings_demos()
+demo_buis = get_buildings_demos(main_directory_)
+
 bt_600 = [bui for bui in demo_buis if bui['building_type'] == 'BestTest600'][0]
 weather_type ='pvgis'
 latitude_bui = 44.78
 longitude_bui = 9.78
-path_epls_file = '/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/examples/energyPlus_data/Case600_V22.1.0out_Athens.csv'
-path_weather_file_ = '/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/examples/weatherdata/2020_Athens.epw'
-path_chart_name = '/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/Result_test' + "/testbed600_ISO_vs_Eplus_Athens.html"
+path_epls_file = main_directory_ + '/energyPlus_data/Case600_V22.1.0out_Athens.csv'
+path_weather_file_ = main_directory_ + '/weatherdata/2020_Athens.epw'
+path_chart_name = main_directory_ + "/Result/testbed600_ISO_vs_Eplus_Athens.html"
 
 
 #eplusout

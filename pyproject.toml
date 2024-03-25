@@ -9,7 +9,7 @@ py-modules = []
 
 [project]
 name = "pybuildingenergy"
-version = "1.0.4"
+version = "1.0.5"
 description = "Energy Simulation of building usin ISO52016 and more"
 license = {file = "LICENSE.md"}
 readme = "README.md"
@@ -22,6 +22,24 @@ keywords = [
     "heating and cooling",
     "52016",
     "EPBD",
+]
+dependencies = [
+    "bump2version==0.5.11",
+    "coverage==4.5.4", 
+    "pandas>=2.0.3",
+    "numpy==1.23.2",
+    "DateTime==5.1", 
+    "timezonefinder==6.2.0",
+    "requests==2.31.0",
+    "tqdm==4.66.1",
+    "Pyarrow==13.0.0",
+    "pyecharts == 2.0.4",
+    "geopy==2.4.1",
+    "tqdm==4.66.1",
+    "pvlib==0.10.1",
+    "scikit-learn==1.4.1.post1",
+    "urllib3==1.26.18",
+    "requests>=2.0"
 ]
 
 

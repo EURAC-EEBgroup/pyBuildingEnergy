@@ -4,15 +4,15 @@
     <meta charset="UTF-8">
     <title>Awesome-pyecharts</title>
                 <script type="text/javascript" src="https://assets.pyecharts.org/assets/v5/echarts.min.js"></script>
-            <script type="text/javascript" src="https://assets.pyecharts.org/assets/v5/themes/roma.js"></script>
+            <script type="text/javascript" src="https://assets.pyecharts.org/assets/v5/themes/shine.js"></script>
 
 </head>
 <body >
-    <div id="8eda915a009143edbe19b6f6f4be0b20" class="chart-container" style="width:1400px; height:600px; "></div>
+    <div id="f9a9f1c303874a0483e34d28ec99ddae" class="chart-container" style="width:1200px; height:600px; "></div>
     <script>
-        var chart_8eda915a009143edbe19b6f6f4be0b20 = echarts.init(
-            document.getElementById('8eda915a009143edbe19b6f6f4be0b20'), 'roma', {renderer: 'canvas'});
-        var option_8eda915a009143edbe19b6f6f4be0b20 = {
+        var chart_f9a9f1c303874a0483e34d28ec99ddae = echarts.init(
+            document.getElementById('f9a9f1c303874a0483e34d28ec99ddae'), 'shine', {renderer: 'canvas'});
+        var option_f9a9f1c303874a0483e34d28ec99ddae = {
     "animation": true,
     "animationThreshold": 2000,
     "animationDuration": 1000,
@@ -30,18 +30,18 @@
             "name": "Q_H",
             "legendHoverLink": true,
             "data": [
-                1102428,
-                898629,
-                731548,
-                466899,
-                218911,
-                54783,
-                9958,
-                7347,
-                171151,
-                669675,
-                726163,
-                1343635
+                20.43,
+                16.04,
+                8.1,
+                4.07,
+                0.79,
+                0.06,
+                0.0,
+                0.0,
+                0.48,
+                4.07,
+                12.53,
+                20.1
             ],
             "realtimeSort": false,
             "showBackground": false,
@@ -58,179 +58,129 @@
             "zlevel": 0,
             "z": 2,
             "label": {
-                "show": false,
+                "show": true,
                 "margin": 8
             }
         },
         {
-            "type": "line",
-            "name": "T_op",
-            "connectNulls": false,
-            "xAxisIndex": 0,
-            "yAxisIndex": 1,
-            "symbolSize": 4,
-            "showSymbol": true,
-            "smooth": false,
-            "clip": true,
-            "step": false,
+            "type": "bar",
+            "name": "Q_H EnergyPlus",
+            "legendHoverLink": true,
             "data": [
-                [
-                    "2009-01-31 00-00",
-                    21.746002642329277
-                ],
-                [
-                    "2009-02-28 00-00",
-                    22.145663009974196
-                ],
-                [
-                    "2009-03-31 00-00",
-                    22.251040240339655
-                ],
-                [
-                    "2009-04-30 00-00",
-                    22.68669211446289
-                ],
-                [
-                    "2009-05-31 00-00",
-                    23.50719150669483
-                ],
-                [
-                    "2009-06-30 00-00",
-                    24.377624717316216
-                ],
-                [
-                    "2009-07-31 00-00",
-                    25.845559822270154
-                ],
-                [
-                    "2009-08-31 00-00",
-                    25.16502049191161
-                ],
-                [
-                    "2009-09-30 00-00",
-                    23.58439108685519
-                ],
-                [
-                    "2009-10-31 00-00",
-                    22.204345294751008
-                ],
-                [
-                    "2009-11-30 00-00",
-                    22.495063143755548
-                ],
-                [
-                    "2009-12-31 00-00",
-                    21.28675947842311
-                ]
+                16.28,
+                13.03,
+                6.24,
+                3.5,
+                0.93,
+                0.11,
+                0.0,
+                0.01,
+                0.68,
+                3.32,
+                10.62,
+                15.18
             ],
-            "hoverAnimation": true,
-            "label": {
-                "show": false,
-                "margin": 8
-            },
-            "logBase": 10,
+            "realtimeSort": false,
+            "showBackground": false,
+            "stackStrategy": "samesign",
+            "cursor": "pointer",
+            "barMinHeight": 0,
+            "barCategoryGap": "20%",
+            "barGap": "30%",
+            "large": false,
+            "largeThreshold": 400,
             "seriesLayoutBy": "column",
-            "lineStyle": {
-                "show": true,
-                "width": 1,
-                "opacity": 1,
-                "curveness": 0,
-                "type": "solid"
-            },
-            "areaStyle": {
-                "opacity": 0
-            },
+            "datasetIndex": 0,
+            "clip": true,
             "zlevel": 0,
-            "z": 0
+            "z": 2,
+            "label": {
+                "show": true,
+                "margin": 8
+            }
         },
         {
-            "type": "line",
-            "name": "T_ext",
-            "connectNulls": false,
-            "xAxisIndex": 0,
-            "yAxisIndex": 1,
-            "symbolSize": 4,
-            "showSymbol": true,
-            "smooth": false,
-            "clip": true,
-            "step": false,
+            "type": "bar",
+            "name": "Q_C",
+            "legendHoverLink": true,
             "data": [
-                [
-                    "2009-01-31 00-00",
-                    -1.5028629032258063
-                ],
-                [
-                    "2009-02-28 00-00",
-                    -0.6639880952380952
-                ],
-                [
-                    "2009-03-31 00-00",
-                    3.9728897849462363
-                ],
-                [
-                    "2009-04-30 00-00",
-                    9.104194444444445
-                ],
-                [
-                    "2009-05-31 00-00",
-                    15.160040322580645
-                ],
-                [
-                    "2009-06-30 00-00",
-                    20.61190277777778
-                ],
-                [
-                    "2009-07-31 00-00",
-                    25.345094086021504
-                ],
-                [
-                    "2009-08-31 00-00",
-                    22.713629032258062
-                ],
-                [
-                    "2009-09-30 00-00",
-                    15.642736111111113
-                ],
-                [
-                    "2009-10-31 00-00",
-                    6.446102150537634
-                ],
-                [
-                    "2009-11-30 00-00",
-                    2.8691805555555554
-                ],
-                [
-                    "2009-12-31 00-00",
-                    -4.91377688172043
-                ]
+                3.09,
+                2.53,
+                5.99,
+                7.55,
+                10.01,
+                14.52,
+                19.58,
+                19.25,
+                12.52,
+                7.25,
+                2.6,
+                1.47
             ],
-            "hoverAnimation": true,
-            "label": {
-                "show": false,
-                "margin": 8
-            },
-            "logBase": 10,
+            "realtimeSort": false,
+            "showBackground": false,
+            "stackStrategy": "samesign",
+            "cursor": "pointer",
+            "barMinHeight": 0,
+            "barCategoryGap": "20%",
+            "barGap": "30%",
+            "large": false,
+            "largeThreshold": 400,
             "seriesLayoutBy": "column",
-            "lineStyle": {
-                "show": true,
-                "width": 1,
-                "opacity": 1,
-                "curveness": 0,
-                "type": "solid"
-            },
-            "areaStyle": {
-                "opacity": 0
-            },
+            "datasetIndex": 0,
+            "clip": true,
             "zlevel": 0,
-            "z": 0
+            "z": 2,
+            "label": {
+                "show": true,
+                "margin": 8
+            }
+        },
+        {
+            "type": "bar",
+            "name": "Q_C EnergyPlus",
+            "legendHoverLink": true,
+            "data": [
+                4.27,
+                3.12,
+                6.62,
+                7.94,
+                8.41,
+                12.65,
+                14.79,
+                16.03,
+                12.37,
+                7.19,
+                3.44,
+                2.02
+            ],
+            "realtimeSort": false,
+            "showBackground": false,
+            "stackStrategy": "samesign",
+            "cursor": "pointer",
+            "barMinHeight": 0,
+            "barCategoryGap": "20%",
+            "barGap": "30%",
+            "large": false,
+            "largeThreshold": 400,
+            "seriesLayoutBy": "column",
+            "datasetIndex": 0,
+            "clip": true,
+            "zlevel": 0,
+            "z": 2,
+            "label": {
+                "show": true,
+                "margin": 8
+            }
         }
     ],
     "legend": [
         {
             "data": [
                 "Q_H",
-                "T_op",
-                "T_ext"
+                "Q_H EnergyPlus",
+                "Q_C",
+                "Q_C EnergyPlus"
             ],
             "selected": {},
             "show": true,
@@ -299,68 +249,31 @@
                 }
             },
             "data": [
-                "2009-01-31 00-00",
-                "2009-02-28 00-00",
-                "2009-03-31 00-00",
-                "2009-04-30 00-00",
-                "2009-05-31 00-00",
-                "2009-06-30 00-00",
-                "2009-07-31 00-00",
-                "2009-08-31 00-00",
-                "2009-09-30 00-00",
-                "2009-10-31 00-00",
-                "2009-11-30 00-00",
-                "2009-12-31 00-00"
+                "Jan",
+                "Feb",
+                "Mar",
+                "Apr",
+                "May",
+                "Jun",
+                "Jul",
+                "Aug",
+                "Sep",
+                "Oct",
+                "Nov",
+                "Dec"
             ]
         }
     ],
     "yAxis": [
         {
-            "name": "Energy",
             "show": true,
             "scale": false,
             "nameLocation": "end",
             "nameGap": 15,
             "gridIndex": 0,
-            "axisLabel": {
-                "show": true,
-                "margin": 8,
-                "formatter": "{value} W"
-            },
             "inverse": false,
             "offset": 0,
             "splitNumber": 5,
-            "minInterval": 0,
-            "splitLine": {
-                "show": true,
-                "lineStyle": {
-                    "show": true,
-                    "width": 1,
-                    "opacity": 1,
-                    "curveness": 0,
-                    "type": "solid"
-                }
-            }
-        },
-        {
-            "type": "value",
-            "name": "Temperature",
-            "show": true,
-            "scale": false,
-            "nameLocation": "end",
-            "nameGap": 15,
-            "interval": 5,
-            "gridIndex": 0,
-            "axisLabel": {
-                "show": true,
-                "margin": 8,
-                "formatter": "{value} \u00b0C"
-            },
-            "inverse": false,
-            "offset": 0,
-            "splitNumber": 5,
-            "min": 0,
-            "max": 45,
             "minInterval": 0,
             "splitLine": {
                 "show": true,
@@ -377,7 +290,7 @@
     "title": [
         {
             "show": true,
-            "text": "Monthly energy need",
+            "text": "Monthly consumption",
             "target": "blank",
             "subtarget": "blank",
             "padding": 5,
@@ -476,7 +389,7 @@
         }
     ]
 };
-        chart_8eda915a009143edbe19b6f6f4be0b20.setOption(option_8eda915a009143edbe19b6f6f4be0b20);
+        chart_f9a9f1c303874a0483e34d28ec99ddae.setOption(option_f9a9f1c303874a0483e34d28ec99ddae);
     </script>
 </body>
 </html>
