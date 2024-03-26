@@ -2,7 +2,7 @@ import numpy as np
 from src.pybuildingenergy.source.utils import ISO52016
 from src.pybuildingenergy.source.graphs import Graphs_and_report
 from src.pybuildingenergy.data.building_archetype import Selected_bui_archetype
-from src.pybuildingenergy.global_inputs import main_directory_
+from .input_data.src import main_directory_
 import os
 
 # Inputs
@@ -14,12 +14,12 @@ weather_type = 'pvgis'
 path_weather_file_ = None
 latitude = 44.78
 longitude = 9.78
-path_hourly_sim_result = "/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/Result_test" + "/hourly_sim__arch.csv"
-path_annual_sim_result = "/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/Result_test" + "/annual_sim__arch.csv"
-dir_chart_folder = "/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/Result_test"
+path_hourly_sim_result = main_directory_ + "/Result/hourly_sim__arch.csv"
+path_annual_sim_result = main_directory_ + "/Result/annual_sim__arch.csv"
+dir_chart_folder = main_directory_ + "/Result/"
 name_report = "main_report"
 archetype_file_path =main_directory_ + "/archetypes.pickle"
-archetype_file_path ="/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/pybuildingenergy/src/pybuildingenergy/archetypes.pickle"
+# archetype_file_path ="/Users/dantonucci/Library/CloudStorage/OneDrive-ScientificNetworkSouthTyrol/MODERATE/pyBuildingEnergy/pybuildingenergy/src/pybuildingenergy/archetypes.pickle"
 
 def test_simulate_archetype(snapshot):
     '''

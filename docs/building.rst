@@ -172,7 +172,7 @@ The building inputs should be a dictionary having the following mandatory keys:
      - YES
    * - **Area of facade elements**
      - area_elements
-     - Area of each facade element (e.g. Wall, Window, etc.)
+     - Area of each facade element (e.g. Wall, Window, etc.). In the wall, the area also includes the windows. However, the latter are excluded during the calculation.
      - [m2] 
      - YES
    * - **Transmittance - U**
