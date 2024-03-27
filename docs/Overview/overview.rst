@@ -25,6 +25,7 @@ Citation
 --------------
 
 Please cite us if you use the package: 
+
 .. image:: https://zenodo.org/badge/761715706.svg
   :target: https://zenodo.org/doi/10.5281/zenodo.10887919
 
