@@ -26,11 +26,7 @@ Citation
 
 Please cite us if you use the package: 
 
-https://zenodo.org/badge/761715706.svg
 https://zenodo.org/doi/10.5281/zenodo.10887919
-<a href="https://zenodo.org/doi/10.5281/zenodo.10887919"><img src="https://zenodo.org/badge/761715706.svg" alt="DOI"></a>
-[![DOI](https://zenodo.org/badge/761715706.svg)](https://zenodo.org/doi/10.5281/zenodo.10887919)
-10.5281/zenodo.10887920
 
 Installation 
 ------------
