@@ -898,9 +898,15 @@ class ISO52016:
         path_weather_file_ = kwargs.get("path_weather_file")
         sim_df = Calculation_ISO_52010(building_object, path_weather_file_).sim_df
 
-        external_temperature_monthly_averages = sim_df["T2m"].resample("ME").mean()
-        external_temperature_monthly_minima = sim_df["T2m"].resample("ME").min()
-        external_temperature_monthly_maxima = sim_df["T2m"].resample("ME").max()
+        try: 
+            external_temperature_monthly_averages = sim_df["T2m"].resample("ME").mean()
+            external_temperature_monthly_minima = sim_df["T2m"].resample("ME").min()
+            external_temperature_monthly_maxima = sim_df["T2m"].resample("ME").max()
+        except:
+            external_temperature_monthly_averages = sim_df["T2m"].resample("M").mean()
+            external_temperature_monthly_minima = sim_df["T2m"].resample("M").min()
+            external_temperature_monthly_maxima = sim_df["T2m"].resample("M").max()
+
         # amplitude of external temperature variations
         amplitude_of_external_temperature_variations = (
             external_temperature_monthly_maxima - external_temperature_monthly_minima

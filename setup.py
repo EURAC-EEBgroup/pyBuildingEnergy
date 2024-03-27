@@ -22,12 +22,12 @@ if __name__ == "__main__":
             author="Daniele Antonucci",
             author_email='daniele.antonucci@eurac.edu',
             description="Energy simulation of the building using ISO52000",
-            license="MIT license",
-            long_description=readme + '\n\n' + history,
+            long_description=open('README.rst').read(),
+            long_description_content_type='text/markdown',
             include_package_data=True,
             keywords='pybuildingenergy',
             url='https://github.com/EURAC-EEBgroup/pyBuildingEnergy',
-            version='1.0.0',
+            version='1.0.5',
         )
     except:  # noqa
         print(

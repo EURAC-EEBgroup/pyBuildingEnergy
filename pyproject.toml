@@ -24,32 +24,6 @@ keywords = [
     "EPBD",
 ]
 
-classifiers = [
-  # How mature is this project? Common values are
-  #   3 - Alpha
-  #   4 - Beta
-  #   5 - Production/Stable
-  
-  "Development Status :: 4 - Beta",
-  # Indicate who your project is intended for
-  "Intended Audience :: Developers",
-  "Intended Audience :: Engineering",
-  "Intended Audience :: Education",
-  "Intended Audience :: Science/Research",
-  "Operating System :: Unix",
-  "Operating System :: POSIX",
-  "Operating System :: Microsoft :: Windows",
-  "License :: OSI Approved :: MIT License",
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.8",
-  "Programming Language :: Python :: 3.9",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Topic :: Scientific/Engineering",
-  "Topic :: BuildingEnergy Design",
-  "Topic :: Software Development :: Build Tools"
-]
-
 dependencies = [
     "bump2version==0.5.11",
     "coverage==4.5.4", 
@@ -65,6 +39,31 @@ dependencies = [
     "pvlib==0.10.1",
     "scikit-learn>=1.3.2",
     "urllib3==1.26.18",
+    "pyswarms==1.3.0",
+]
+
+classifiers = [
+  # How mature is this project? Common values are
+  #   3 - Alpha
+  #   4 - Beta
+  #   5 - Production/Stable
+  
+  "Development Status :: 4 - Beta",
+  # Indicate who your project is intended for
+  "Intended Audience :: Developers",
+  "Intended Audience :: Education",
+  "Intended Audience :: Science/Research",
+  "Operating System :: Unix",
+  "Operating System :: POSIX",
+  "Operating System :: Microsoft :: Windows",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Software Development :: Build Tools"
 ]
 
 
@@ -78,6 +77,3 @@ Changelog = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy/CHANGELOG.md"
 [project.optional-dependencies]
 gui = []
 cli = []
-
-
-

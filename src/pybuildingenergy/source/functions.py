@@ -393,3 +393,130 @@ def Simple_regeression(x_data: list, y_data: list, x_data_name: str):
     equation = f"y ={round(intercept,2)} + {x_data_name}*{round(slope,2)}"
 
     return (round(r2, 2), equation)
+
+# ============================================================================================================
+#                           CALIBRATION PROCESS
+# ============================================================================================================
+
+
+
+# def ISO52016_calibration_objective_function_monthly_heating_PSO(x, building_object, real_months_values, tmy_data):
+#     '''
+#     Objective function:
+#     adjusted root mean sqaure deviation
+#     '''
+#     inputs_for_simulation = building_object.copy()
+#     new_input_hci = (x.T[0].reshape(-1,1)* inputs_for_simulation['heat_convective_elements_internal'])[0]
+#     new_input_hce = (x.T[1].reshape(-1,1)* inputs_for_simulation['heat_convective_elements_external'])[0]
+
+#     inputs_for_simulation['h_ci_eli'] = new_input_hci
+#     inputs_for_simulation['h_ce_eli'] = new_input_hce
+#     print(inputs_for_simulation['h_ci_eli'], inputs_for_simulation['h_ce_eli'])
+
+#     # GET HOURLY RESULT OF ISO 52016 SIMULATION FOR HEATING
+#     hourly_results, annual_results_df = bep_calc(inputs_for_simulation,tmy_data)
+#     # print(hourly_results)
+#     ISO52016_monthly_heating_in_kWh_per_sqm = hourly_results['Q_H'].resample('M').sum() / (1e3 * inputs_for_simulation['A_use'])
+#     print(ISO52016_monthly_heating_in_kWh_per_sqm)
+#     # ISO52016_monthly_heating_in_kWh_per_sqm = hourly_results['Q_H'].resample('M').sum() / 1000/ inputs_for_simulation['A_use']
+   
+#     # ENERGY PLUS
+#     n = 12 # number of real_months_values
+#     obj_funct = math.sqrt(sum((real_months_values - ISO52016_monthly_heating_in_kWh_per_sqm.to_numpy())**2)/(n-1))
+#     print(obj_funct)
+
+#     return obj_funct
+
+# def PSO_optimizer(inputs, tmy_data, monitored_monthly_data, number_iter, ftol_PSO, ftol_iter, bounds):
+#     options = {'c1': 0.5, 'c2': 0.3, 'w':0.9}    
+    
+#     optimizer = GlobalBestPSO(n_particles=10, dimensions=2, options=options, bounds=bounds, 
+#                           ftol=ftol_PSO, ftol_iter=ftol_iter)
+
+#     cost, pos = optimizer.optimize(ISO52016_calibration_objective_function_monthly_heating_PSO, 
+#                                 iters= number_iter,
+#                                 inputs= inputs, 
+#                                 real_months_values= monitored_monthly_data,
+#                                 tmy_data= tmy_data)
+#     return cost, pos 
+
+# def RMSE_calculation(actual, calibrated_monthly_data, not_calibrated_monthly_data):
+#     '''
+#     Calcualte the improvement of the calibration in %, considering the RMSE of the calibrated and not calibrated data
+#     Parameters:
+#     -----------
+#     actual: monitored monthly real data of the building in kWh/m2
+#     calibrated_monthly_data: data calibrated by the PSO optimizartion using the calculation of the enrgy consumption according to ISO 52016 in kWh/m2
+#     not_calibrated_monthy_data: calculation of monthly data according to the ISO 52016
+    
+#     Returns:
+#     --------
+#     1. RMSE of calibrated [0] and not calibrated model [1]
+#     2. Percentage of improvement [2]
+#     '''
+    
+#     #define Actual and Predicted Array
+#     pred_not_calibrated = np.array(not_calibrated_monthly_data)
+#     pred_calibrated = np.array(calibrated_monthly_data)
+
+#     #Calculate RMSE
+#     result_calibrated = sqrt(mean_squared_error(actual,pred_calibrated))
+#     result_not_calibrated = sqrt(mean_squared_error(actual,pred_not_calibrated))
+#     improvement = round((result_not_calibrated - result_calibrated)/result_not_calibrated * 100,2)   
+    
+#     # PRINT 
+#     print("RMSE - not calibrated:",  result_not_calibrated,  "RMSE - calibrated:", result_calibrated)
+#     print("Improvement %: ",improvement)
+    
+#     return (round(result_calibrated,2), round(result_not_calibrated,2), improvement)
+
+
+
+# def runCalib(inputs:dict,monthly_real_data:list, bounds, number_iter, ftol_PSO, ftol_iter):
+
+    
+#     # DATA from ISO 
+#     tmy_data = get_tmy_data(inputs['latitude'], inputs['longitude'])
+#     hourly_data, yearly_data = bep_calc(inputs_data=inputs, year_weather=2015, tmy_data=tmy_data)
+#     not_calibrated_monthly_data = hourly_data['Q_H'].resample('M').sum() / (1e3 * inputs['A_use'])
+    
+#     # CALIBRATION USING PSO
+#     # Real data
+#     monitored_monthly_data = np.array(monthly_real_data, dtype=object)
+    
+#     # PSO CALIBRATION
+#     bounds = (np.array([0.4,0.4]), np.array([2,2]))
+#     ftol_PSO = 0.3
+#     ftol_iter = 100
+#     options = {'c1': 0.7, 'c2': 0.5, 'w':1}
+#     number_iter = 50
+
+#     optimizer = GlobalBestPSO(n_particles=10, dimensions=2, options=options, bounds=bounds, 
+#                         ftol=ftol_PSO, ftol_iter=ftol_iter)
+
+#     cost, options = optimizer.optimize(ISO52016_calibration_objective_function_monthly_heating_PSO, 
+#                                 iters = number_iter,
+#                                 inputs= inputs, 
+#                                 real_months_values= monitored_monthly_data,
+#                                 tmy_data= tmy_data)
+#     # cost, options = PSO_optimizer(inputs, tmy_data, monitored_monthly_data,
+#     #                               number_iter, ftol_PSO, ftol_iter, bounds=bounds)
+
+#     # CALIBRATION MODEL
+#     inputs_calibrated = inputs.copy()
+#     inputs_calibrated['h_ci_eli'] = options[0]*inputs['h_ci_eli']
+#     inputs_calibrated['h_ce_eli'] = options[1]*inputs['h_ce_eli']
+#     calibrated_hourly_result, calibrated_yearly_result = bep_calc(inputs_data = inputs_calibrated, year_weather=2015, tmy_data=tmy_data)
+#     calibrated_monthly_data = calibrated_hourly_result['Q_H'].resample('M').sum() / (1e3 * inputs['A_use'])
+
+#     # ASSESSING result
+#     RMSE_value= RMSE_calculation(monthly_real_data,not_calibrated_monthly_data, calibrated_monthly_data )
+    
+#     # PLOT 
+#     df_energy = pd.DataFrame({
+#         'calibrated_data': calibrated_monthly_data.reset_index(drop=True).to_list(),
+#         'real_data': monitored_monthly_data,
+#         'not_calibrated_data': not_calibrated_monthly_data
+#     })
+
+#     return df_energy, RMSE_value, inputs_calibrated

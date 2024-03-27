@@ -61,9 +61,15 @@ def test_best600(snapshot):
     # ISO 52016
     ISO52016_annual_heating = annual_results_df['Q_H_annual_per_sqm'].squeeze() / 1000
     ISO52016_annual_cooling = annual_results_df['Q_C_annual_per_sqm'].squeeze() / 1000
-    ISO52016_monthly_heating_in_kWh_per_sqm = hourly_results['Q_H'].resample('ME').sum() / (1e3 * BUI.__getattribute__('a_use'))
-    ISO52016_monthly_cooling_in_kWh_per_sqm = hourly_results['Q_C'].resample('ME').sum() / (1e3 * BUI.__getattribute__('a_use'))
-    ISO52016_monthly_T_op = hourly_results['T_op'].resample('ME').mean()
+    try: 
+        ISO52016_monthly_heating_in_kWh_per_sqm = hourly_results['Q_H'].resample("ME").sum() / (1e3 * BUI.__getattribute__('a_use'))
+        ISO52016_monthly_cooling_in_kWh_per_sqm = hourly_results['Q_C'].resample("ME").sum() / (1e3 * BUI.__getattribute__('a_use'))
+        ISO52016_monthly_T_op = hourly_results['T_op'].resample("ME").mean()
+    except:
+        ISO52016_monthly_heating_in_kWh_per_sqm = hourly_results['Q_H'].resample('M').sum() / (1e3 * BUI.__getattribute__('a_use'))
+        ISO52016_monthly_cooling_in_kWh_per_sqm = hourly_results['Q_C'].resample('M').sum() / (1e3 * BUI.__getattribute__('a_use'))
+        ISO52016_monthly_T_op = hourly_results['T_op'].resample('M').mean()
+
     index = ISO52016_monthly_heating_in_kWh_per_sqm.index
 
     # ENERGYPLUS

@@ -6,7 +6,9 @@ pyBuildingEnergy
 .. image:: https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/src/pybuildingenergy/assets/Logo_pyBuild.png
    :width: 800
    :height: 250
-|
+
+.. image:: https://zenodo.org/badge/761715706.svg
+  :target: https://zenodo.org/doi/10.5281/zenodo.10887919
 
 Features
 --------
@@ -218,12 +220,12 @@ Building Inputs
      - max power of cooling generator
      - [W]
      - YES. If `cooling_mode` is True
-   * - **Air change rate **
+   * - **Air change rate**
      - air_change_rate_base_value
      - value of air chnage rate
      - [m3/h*m2]
      - Yes
-   * - **Air change rate extra **
+   * - **Air change rate extra**
      - air_change_rate_extra
      - extra value of air change rate, in specific period according to the occupancy profile
      - [m3/h*m2]

@@ -369,7 +369,10 @@ class Graphs_and_report:
         # filtering dataset only for heating and cooling
         df_HC = self.df.loc[:, ["Q_H", "Q_HC", "Q_C"]]
         # Monthly resample
-        dfHC_monthly = df_HC.resample("ME").sum()
+        try: 
+            dfHC_monthly = df_HC.resample("ME").sum()
+        except:
+            dfHC_monthly = df_HC.resample("M").sum()
         if self.season == "heating":
             y_data = [[value / 1000 for value in dfHC_monthly.loc[:, "Q_H"].tolist()]]
             y_name = "Heating consumption"
@@ -438,15 +441,25 @@ class Graphs_and_report:
         # Filtering by frequency
         df_HC_energy = df_HC.loc[:, ["Q_H", "Q_HC", "Q_C"]]
         df_HC_temp = df_HC.loc[:, ["T_op", "T_ext"]]
-        frequency_mapping = {
-            "yearly": "YE",
-            "monthly": "ME",
-            "daily": "D",
-            "hourly": "h",
-        }
-
-        # Get the resampling frequency code
-        freq = frequency_mapping.get(_frequency, None)
+        
+        try: 
+            frequency_mapping = {
+                "yearly": "YE",
+                "monthly": "ME",
+                "daily": "D",
+                "hourly": "h",
+            }
+            # Get the resampling frequency code
+            freq = frequency_mapping.get(_frequency, None)
+        except:
+            frequency_mapping = {
+                "yearly": "Y",
+                "monthly": "M",
+                "daily": "D",
+                "hourly": "h",
+            }
+            # Get the resampling frequency code
+            freq = frequency_mapping.get(_frequency, None)
 
         if freq:
             # Resample energy and temperature data
@@ -555,9 +568,14 @@ class Graphs_and_report:
         df_HC_energy = df_HC.loc[:, ["Q_H", "Q_HC", "Q_C"]]
         df_HC_temp = df_HC.loc[:, ["T_op", "T_ext"]]
         # FREQUENCY MAPPING
-        frequency_mapping = {"monthly": "ME", "daily": "D"}
-        # Get the resampling frequency code
-        freq = frequency_mapping.get(_frequency, None)
+        try: 
+            frequency_mapping = {"monthly": "ME", "daily": "D"}
+            # Get the resampling frequency code
+            freq = frequency_mapping.get(_frequency, None)
+        except: 
+            frequency_mapping = {"monthly": "M", "daily": "D"}
+            # Get the resampling frequency code
+            freq = frequency_mapping.get(_frequency, None)
 
         if freq:
             # Resample energy and temperature data
