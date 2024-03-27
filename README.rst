@@ -7,6 +7,10 @@ pyBuildingEnergy
    :width: 800
    :height: 250
 
+Citation
+----------
+Please cite us if you use the library
+
 .. image:: https://zenodo.org/badge/761715706.svg
   :target: https://zenodo.org/doi/10.5281/zenodo.10887919
 
