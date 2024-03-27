@@ -8,7 +8,7 @@ This section showcases a selection of results and simulations achieved through t
 
 The geometry of the bestest600 is: 
 
-.. image:: https://github.com/DanieleAntonucci20/pyBuildingEnergy/blob/master/pybuildingenergy/assets/BESTEST600.png
+.. image:: https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/src/pybuildingenergy/assets/BESTEST600.png
    :width: 800
    :height: 400
 
