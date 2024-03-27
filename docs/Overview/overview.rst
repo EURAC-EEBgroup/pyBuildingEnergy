@@ -21,6 +21,14 @@ The actual calcaulation methods implemented are:
 
 - [ ] the conditions of the supply air to provide the necessary humidification and dehumidification.
 
+Citation
+--------------
+
+Please cite us if you use the package: 
+.. image:: https://zenodo.org/badge/761715706.svg
+  :target: https://zenodo.org/doi/10.5281/zenodo.10887919
+
+
 Installation 
 ------------
 
@@ -37,6 +45,8 @@ The code is available here:
 ::
 
     https://github.com/EURAC-EEBgroup/pyBuildingEnergy/tree/master
+
+
 
 
 License
