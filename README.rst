@@ -44,6 +44,8 @@ The calculation methods can be used for residential or non-residential buildings
 ISO 52016-1:2017 also contains specifications for the assessment of thermal zones in the building or in the part of a building. The calculations are performed per thermal zone. In the calculations, the thermal zones can be assumed to be thermally coupled or not.
 ISO 52016-1:2017 is applicable to buildings at the design stage, to new buildings after construction and to existing buildings in the use phase
 
+
+
 Weather Data
 ------------
 The tool can use wather data coming from 2 main sources:
@@ -53,8 +55,14 @@ The tool can use wather data coming from 2 main sources:
 
 More details in the example folder
 
+
 Limitations
 ------------
+The library is developed with the intent of demonstrating specific elements of calculation procedures in the relevant standards. It is not intended to replace the regulations but to complement them, as the latter are essential for understanding the calculation. 
+This library is meant to be used for demonstration and testing purposes and is therefore provided as open source, without protection against misuse or inappropriate use.
+
+The information and views set out in this document are those of the authors and do not necessarily reflect the official opinion of the European Union. Neither the European Union institutions and bodies nor any person acting on their behalf may be held responsible for the use that may be made of the information contained herein.
+
 The calculation is currently aimed at single-zone buildings with ground floor. The evaluation of multi-zone buildings is under evaluation.
 
 Getting Started
@@ -389,5 +397,13 @@ License
 --------
 * Free software: MIT license
 * Documentation: https://pybuildingenergy.readthedocs.io.
+
+Acknowledgment
+--------
+This work was carried out within European projects: 
+Infinite - This project has received funding from the European Union’s Horizon 2020 research and innovation programme under grant agreement No 958397, 
+Moderate - Horizon Europe research and innovation programme under grant agreement No 101069834, 
+with the aim of contributing to the development of open products useful for defining plausible scenarios for the decarbonization of the built environment
+
 
 
