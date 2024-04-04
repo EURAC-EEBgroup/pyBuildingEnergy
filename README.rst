@@ -399,7 +399,7 @@ License
 * Documentation: https://pybuildingenergy.readthedocs.io.
 
 Acknowledgment
---------
+---------------
 This work was carried out within European projects: 
 Infinite - This project has received funding from the European Union’s Horizon 2020 research and innovation programme under grant agreement No 958397, 
 Moderate - Horizon Europe research and innovation programme under grant agreement No 101069834, 
