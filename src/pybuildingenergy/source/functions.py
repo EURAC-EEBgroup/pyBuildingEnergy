@@ -1,5 +1,5 @@
-__author__ = "Daniele Antonucci, Ulrich Filippi Oberagger, Olga Somova"
-__credits__ = ["Daniele Antonucci", "Ulrich FIlippi Oberagger", "Olga Somova"]
+__author__ = "Daniele Antonucci, Ulrich Filippi Oberegger, Olga Somova"
+__credits__ = ["Daniele Antonucci", "Ulrich FIlippi Oberegger", "Olga Somova"]
 __license__ = "MIT"
 __version__ = "0.1"
 __maintainer__ = "Daniele Antonucci"
