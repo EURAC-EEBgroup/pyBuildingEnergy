@@ -21,6 +21,11 @@ The actual calcaulation methods implemented are:
 
 - [ ] the conditions of the supply air to provide the necessary humidification and dehumidification.
 
+Domestic Hot Water - DHW
+------------------------
+- [x] Calculation of volume and energy need for domestic hot water according to ISO 12831-3. 
+- [] Assessment of thermal load based on the type of DHW system
+
 Citation
 --------------
 

@@ -14,14 +14,13 @@ Authour: Daniele Antonucci
 
 import pandas as pd
 import calendar
-from workalendar.europe import Italy
 from datetime import date
-import plotly.express as px
 import pandas as pd
 
-from functions import  table_B_3, table_B_4, table_B_5_modified
-
-
+from pybuildingenergy.source.functions import  table_B_3, table_B_4, table_B_5_modified
+from pybuildingenergy.global_inputs import WATER_DENSITY, WATER_SPECIFIC_HEAT_CAPACITY
+# WATER_DENSITY = 1000 #[kg/m3]
+# WATER_SPECIFIC_HEAT_CAPACITY = 0.00116 # kWh/kgK 
 # ================================================================================
 #                           GENERATE CALENDAR
 # ================================================================================
@@ -153,6 +152,7 @@ def Volume_and_energy_DHW_calculation(
         residential_typology:str, # table B_4
         calculation_method:str,
         year:int, 
+        country_calendar:str
         ):
     '''
     Calculate the daily, monthly, and yearly energy and volume needs for Domestic Hot Water (DHW)
@@ -281,7 +281,7 @@ def Volume_and_energy_DHW_calculation(
     # check day category (workday, weekend and holidays): 
     daily_cons_volume = [] 
     daily_cons_energy = []
-    for i, day_type in Italy_calendar.iterrows():
+    for i, day_type in country_calendar.iterrows():
         if day_type['values'] == 'Working':
             col = 'Workday'
         elif day_type['values'] == 'Non-Working':
@@ -299,67 +299,66 @@ def Volume_and_energy_DHW_calculation(
 # ================================================================================================================
 #                                   DHW NEEDS
 # ================================================================================================================
+# if __name__ == '__main__':
+#     # Water temperature of the mixed (cold and hot) water drawn at the tap
+#     teta_W_draw = 42 
+#     # Cold water temperature
+#     teta_W_cold = 11.2 
+#     # hot water delivery_temeprature 60°C
+#     teta_w_h_ref = 60
+#     # cold water supply temperature 13.5°X´C
+#     teta_w_c_ref = 13.5
+#     # Physical constant
+#     # Building inputs
+#     building_area = 1000
+#     building_type = 'Dwellings'
+#     # Use Profiles
+#     hourly_fractions_examples = pd.DataFrame({
+#         "Workday" : [0,0,0,0,0,0,0,0,5,10,10,10,20,10,10,10,10,5,0,0,0,0,0,0],
+#         "Weekend" : [0,0,0,0,0,0,0,0,5,10,10,5,0,0,0,0,0,0,0,0,0,0,0,0],
+#         "Holiday" : [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+#         }
+#     )
+#     sum_fractions = pd.DataFrame(hourly_fractions_examples.sum())
+#     sum_fractions.columns= ["fractions"]
+#     # National calendar
+#     hourly_fractions = hourly_fractions_examples
+#     calendar_nation= Italy()
+#     Italy_calendar = generate_calendar(Italy, 2023)
+#     n_workdays = sum(Italy_calendar['values'] == 'Working')
+#     n_weekends = sum(Italy_calendar['values'] == 'Non-Working')
+#     n_holidays = sum(Italy_calendar['values'] == 'Holiday')
+#     Italy_calendar['values'].unique()
+#     total_days = Italy_calendar.count().values[0]
 
-if __name__ == '__main__':
-    # Water temperature of the mixed (cold and hot) water drawn at the tap
-    teta_W_draw = 42 
-    # Cold water temperature
-    teta_W_cold = 11.2 
-    # hot water delivery_temeprature 60°C
-    teta_w_h_ref = 60
-    # cold water supply temperature 13.5°X´C
-    teta_w_c_ref = 13.5
-    # Physical constant
-    WATER_DENSITY = 1000 #[kg/m3]
-    WATER_SPECIFIC_HEAT_CAPACITY = 0.00116 # kWh/kgK 
-    # Building inputs
-    building_area = 1000
-    building_type = 'Dwellings'
-    # Use Profiles
-    hourly_fractions_examples = pd.DataFrame({
-        "Workday" : [0,0,0,0,0,0,0,0,5,10,10,10,20,10,10,10,10,5,0,0,0,0,0,0],
-        "Weekend" : [0,0,0,0,0,0,0,0,5,10,10,5,0,0,0,0,0,0,0,0,0,0,0,0],
-        "Holiday" : [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-        }
-    )
-    sum_fractions = pd.DataFrame(hourly_fractions_examples.sum())
-    sum_fractions.columns= ["fractions"]
-    # National calendar
-    hourly_fractions = hourly_fractions_examples
-    calendar_nation= Italy()
-    Italy_calendar = generate_calendar(Italy, 2023)
-    n_workdays = sum(Italy_calendar['values'] == 'Working')
-    n_weekends = sum(Italy_calendar['values'] == 'Non-Working')
-    n_holidays = sum(Italy_calendar['values'] == 'Holiday')
-    Italy_calendar['values'].unique()
-    total_days = Italy_calendar.count().values[0]
+#     # DHW needs
+#     DHW_calc = Volume_and_energy_DHW_calculation(
+#         n_workdays, n_weekends, n_holidays,sum_fractions, total_days, hourly_fractions,
+#         teta_W_draw, 
+#         teta_w_c_ref,
+#         teta_w_h_ref,
+#         teta_W_cold,
+#         mode_calc= 'number_of_units', 
+#         building_type_B3= 'Residential', 
+#         building_area= 142, 
+#         unit_count= 10, 
+#         building_type_B5= 'Dwelling',
+#         residential_typology= 'residential_building - simple housing - AVG', # table B_4
+#         calculation_method= 'table',
+#         year= 2015,
+#         country_calendar=Italy_calendar
+#         )
 
-    # DHW needs
-    DHW_calc = Volume_and_energy_DHW_calculation(
-        n_workdays, n_weekends, n_holidays,sum_fractions, total_days, hourly_fractions,
-        teta_W_draw, 
-        teta_w_c_ref,
-        teta_w_h_ref,
-        teta_W_cold,
-        mode_calc= 'number_of_units', 
-        building_type_B3= 'Residential', 
-        building_area= 142, 
-        unit_count= 10, 
-        building_type_B5= 'Dwelling',
-        residential_typology= 'residential_building - simple housing - AVG', # table B_4
-        calculation_method= 'table',
-        year= 2015)
+#     # Plot data
+#     t_start=24
+#     t_end = 48
+#     df = pd.DataFrame(dict(
+#         x = list(range(0,len(DHW_calc[6])))[t_start:t_end],
+#         y = DHW_calc[6][t_start:t_end],
+#     ))
+#     fig = px.line(df, x="x", y="y", title="Unsorted Input") 
+#     fig.show()
 
-    # Plot data
-    t_start=24
-    t_end = 48
-    df = pd.DataFrame(dict(
-        x = list(range(0,len(DHW_calc[6])))[t_start:t_end],
-        y = DHW_calc[6][t_start:t_end],
-    ))
-    fig = px.line(df, x="x", y="y", title="Unsorted Input") 
-    fig.show()
-
-    df['z'] = df['y'].cumsum()
-    fig_1 = px.line(df, x="x", y="z", title="Unsorted Input") 
-    fig_1.show()
+#     df['z'] = df['y'].cumsum()
+#     fig_1 = px.line(df, x="x", y="z", title="Unsorted Input") 
+#     fig_1.show()

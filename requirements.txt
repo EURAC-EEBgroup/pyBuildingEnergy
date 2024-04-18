@@ -26,3 +26,5 @@ scikit-learn>=1.3.2
 urllib3==1.26.18
 requests>=2.0
 pyswarms==1.3.0
+workalendar==17.0.0
+plotly==5.21.0

@@ -23,7 +23,7 @@ The methodology should represent the actual operating conditions, allow for the 
 The energy performance of a building shall be expressed by a numeric indicator of primary energy use per unit of reference floor area per year, in kWh/(m2.y) for the purpose of both energy performance certification and compliance with minimum energy performance requirements. Numeric indicators of final energy use per unit of reference floor area per year, in kWh/(m2.y) and of energy needs according to ISO 52000 in kWh/(m².y) shall be used. The methodology applied for the determination of the energy performance of a building shall be transparent and open to innovation and reflect best practices, in particular from additional indicators.
 Member States shall describe their national calculation methodology based on Annex A of the key European standards on energy performance of buildings, namely EN ISO 52000-1, EN ISO 52003-1, EN ISO 52010-1,EN ISO 52016-1, EN ISO 52018-1,EN 16798-1, EN 52120-1 and EN 17423 or superseding documents. This provision shall not constitute a legal codification of those standards.
 
-**pyBuildingEnergy** aims to provide an assessment of building performance both in terms of energy and comfort. In this initial release, it is possible to assess the energy performance of the building using ISO 52106-1:2017. Additional modules will be added for a more comprehensive evaluation of performance, assessing ventilation, renewable energies, systems, etc.
+**pyBuildingEnergy** aims to provide an assessment of building performance both in terms of energy and comfort. In this initial release, it is possible to assess the energy performance of the building using ISO 52106-1:2018. Additional modules will be added for a more comprehensive evaluation of performance, assessing ventilation, renewable energies, systems, etc.
 The actual calculation methods for the assessment of building performance are the following:
 
 - [x] the (sensible) energy need for heating and cooling, based on hourly or monthly calculations;
@@ -41,9 +41,8 @@ The actual calculation methods for the assessment of building performance are th
 - [ ] the conditions of the supply air to provide the necessary humidification and dehumidification.
 
 The calculation methods can be used for residential or non-residential buildings, or a part of it, referred to as "the building" or the "assessed object".
-ISO 52016-1:2017 also contains specifications for the assessment of thermal zones in the building or in the part of a building. The calculations are performed per thermal zone. In the calculations, the thermal zones can be assumed to be thermally coupled or not.
-ISO 52016-1:2017 is applicable to buildings at the design stage, to new buildings after construction and to existing buildings in the use phase
-
+ISO 52016-1:2018 also contains specifications for the assessment of thermal zones in the building or in the part of a building. The calculations are performed per thermal zone. In the calculations, the thermal zones can be assumed to be thermally coupled or not.
+ISO 52016-1:2018 is applicable to buildings at the design stage, to new buildings after construction and to existing buildings in the use phase
 
 
 Weather Data
@@ -54,6 +53,12 @@ The tool can use wather data coming from 2 main sources:
 - .epw file from https://www.ladybug.tools/epwmap/
 
 More details in the example folder
+
+
+Domestic Hot Water - DHW
+------------------------
+- [x] Calculation of volume and energy need for domestic hot water according to ISO 12831-3. 
+- [] Assessment of thermal load based on the type of DHW system
 
 
 Limitations
@@ -371,7 +376,7 @@ More information about coefficients are available `here <https://github.com/EURA
 
 Documentation
 --------------
-
+Check our doc `here <https://pybuildingenergy.readthedocs.io/en/latest/>`
 
 Example
 -------
@@ -404,6 +409,16 @@ This work was carried out within European projects:
 Infinite - This project has received funding from the European Union’s Horizon 2020 research and innovation programme under grant agreement No 958397, 
 Moderate - Horizon Europe research and innovation programme under grant agreement No 101069834, 
 with the aim of contributing to the development of open products useful for defining plausible scenarios for the decarbonization of the built environment
+
+Reagrding the DHW Calculation: 
+The work was developed using the regulations and results obtained from the spreadsheet created by the EPBCenter.
+
+Reference
+----------
+- EN ISO 52010-1:2018 Energy performance of buildings - External climatic conditions - Part 1: Conversion of climatic data for energy calculations
+- EN ISO 52016-1:2018 Energy performance of buildings - Energy needs for heating and cooling, internal temperatures and sensible and latent heat loads 
+- EN ISO 12831-3:2018 Energy performance of buildings - Method for calculation of the design heat load - Part 3: Domestic hot water systems heat load and characterisation of needs, Module M8-2, M8-3
+
 
 
 
