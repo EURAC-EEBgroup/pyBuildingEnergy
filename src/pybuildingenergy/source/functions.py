@@ -394,129 +394,105 @@ def Simple_regeression(x_data: list, y_data: list, x_data_name: str):
 
     return (round(r2, 2), equation)
 
-# ============================================================================================================
-#                           CALIBRATION PROCESS
-# ============================================================================================================
+# ====================================================================================================
+#                                       DHW Table of ISO 12831
+# ====================================================================================================
 
+# Hourly breakdown of relative demand for hot water by volume. Table B.1
+table_B_1 = pd.DataFrame(
+    {
+        "XXS" : [0, 0, 0,0, 0, 0, 0, 10, 5, 5, 0, 10, 15, 0, 0, 0, 0, 0, 15, 10, 10, 20, 0, 0],
+        "XS" : [0, 0, 0, 0, 0, 0, 0, 25, 0, 0, 0, 0, 25, 0, 0, 0, 0, 0, 0, 0, 50, 0, 0, 0],
+        "S" : [0, 0, 0, 0, 0, 0, 0, 10, 5, 5, 0, 10, 15, 0, 0, 0, 0, 0, 10, 0, 20, 25, 0, 0],
+        "M": [0, 0, 0, 0, 0, 0, 0, 27.5, 7.2, 3.6, 1.8, 3.6, 5.4, 0, 1.8, 1.8, 1.8, 0, 5.4, 1.8, 12.6, 25.7, 0, 0],
+        "L": [0, 0, 0, 0, 0, 0, 0, 14.7, 33.6, 1.8, 0.9, 1.8, 2.7, 0, 0.9, 0.9, 0.9, 0, 2.7, 0.9, 6.3, 31.8, 0, 0],
+        "XL": [0, 0, 0, 0, 0, 0, 0, 33.8, 2.2, 1.1, 1.1, 1.7, 3.9, 0, 0.6, 1.1, 1.1, 0.6, 1.7, 0.6, 27, 23.7, 0, 0 ],
+        "XXL": [0, 0, 0, 0, 0, 0, 0, 33.7, 1.7, 0.9, 0.9, 1.3, 3, 0, 0.4, 0.9, 0.9, 0.4, 1.3, 0.4, 28.4, 25.9, 0, 0]
+     },
+     index = [list(range(1,25))]
+)
 
+#Hourly distribution of relative volume-based hot water demand across various building categories. Table B.2
+table_B_2 = pd.DataFrame(
+    {
+        "single_family_dwelling" : [1.8, 1, 0.6, 0.3, 0.4, 0.6, 2.4, 4.7, 6.8, 5.7, 6.1, 6.1, 6.3, 6.4, 5.1, 4.4, 4.3, 4.7, 5.7, 6.5, 6.6, 5.8, 4.5, 3.1],
+        "appartment dwelling" : [1, 1, 1, 0, 0, 1, 3, 6, 8, 6, 5, 5, 6, 6, 5, 4, 4, 5, 6, 7, 7, 6, 5, 2],
+        "residential_home_for_the_elderly" : [0.3, 0.3, 0.4, 0.7, 1.0, 1.8, 9.3, 15.7, 8.1, 7.5, 7.0, 6.6, 7.1, 5.1, 3.8, 3.3, 4.1, 2.9, 6.1, 4.1, 1.4, 1.8, 0.9, 0.4],
+        "student_residence": [1.4, 1.0, 0.5, 0.6, 1.3, 3.4, 5.8, 5.8, 6.2, 5.4, 5.1, 4.7, 4.2, 4.5, 4.1, 4.3, 5.3, 6.0, 6.6, 6.0, 5.6, 5.4, 3.9, 2.8],
+        "Hospital": [0.4, 0.4, 0.5, 0.8, 1.2, 2.8, 7.5, 10.5, 8.0, 7.5, 7.5, 7.0, 7.5, 5.5, 4.3, 3.7, 4.5, 3.2, 7.0, 4.5, 2.0, 2.0, 1.2, 0.5]
+     },
+     index = [list(range(1,25))]
+)
 
-# def ISO52016_calibration_objective_function_monthly_heating_PSO(x, building_object, real_months_values, tmy_data):
-#     '''
-#     Objective function:
-#     adjusted root mean sqaure deviation
-#     '''
-#     inputs_for_simulation = building_object.copy()
-#     new_input_hci = (x.T[0].reshape(-1,1)* inputs_for_simulation['heat_convective_elements_internal'])[0]
-#     new_input_hce = (x.T[1].reshape(-1,1)* inputs_for_simulation['heat_convective_elements_external'])[0]
+#  Net energy demand for water heating per day. Table B.3  
+table_B_3 = pd.DataFrame({
+    'type_of_usage' : ['Office_buildings', "Hospital ward or patient's room", 
+                       'School_without_showers', 'School_with_shower',
+                       'Retail shop/department store', 'Workshop, industrial facility (for washing snd showering)',
+                       'Modest hotel', 'Medium-class hotel',
+                       'Luxury-class hotel', 'Restaurant, inn/pub',
+                       'Home(for the aged, orphanage, etc.)', 'Barracks',
+                       'Sport faciltiy with showers', 'Commercial catering kitchen',
+                       'Bakery', 'Hairdresser/barber',
+                       'Butcher with production',
+                       'Laundry', 'Brewery', 'Dairy'],
+    'Usage' : ['person', 'bed', 'person', 'person', 'employee', 'employee', 
+               'bed', 'bed', 'bed', 'seat', 'person', 'person', 'person', 'meal',
+               'employee', 'employee', 'employee', '100 Kg laundry', '100 liters beer', 
+               '100 liters of milk'],
+    'Usage dependent' : [0.4, 8, 0.5, 1.5, 1, 1.5, 1.5, 4.5, 7, 1.5, 3.5, 1.5, 1.5, 0.4, 5, 8, 18, 20, 15, 10],
+    'Area specific - Wh/m2d': [30, 530, 170, 500, 10, 75, 190, 450, 580, 1250, 230, 150, None, None, None, None, None, None, None, None],
+    'Reference Area': ['office floor area', 'wards and room', 'classrooms', 'classrooms',
+                       'sales areas', 'area of workshop/works', 'hotel bedrooms',
+                       'hotel bedrooms', 'hotel bedrooms', 'public rooms', 'rooms', 'rooms', 
+                       None, None, None, None, None, None, None, None], 
 
-#     inputs_for_simulation['h_ci_eli'] = new_input_hci
-#     inputs_for_simulation['h_ce_eli'] = new_input_hce
-#     print(inputs_for_simulation['h_ci_eli'], inputs_for_simulation['h_ce_eli'])
+})
 
-#     # GET HOURLY RESULT OF ISO 52016 SIMULATION FOR HEATING
-#     hourly_results, annual_results_df = bep_calc(inputs_for_simulation,tmy_data)
-#     # print(hourly_results)
-#     ISO52016_monthly_heating_in_kWh_per_sqm = hourly_results['Q_H'].resample('M').sum() / (1e3 * inputs_for_simulation['A_use'])
-#     print(ISO52016_monthly_heating_in_kWh_per_sqm)
-#     # ISO52016_monthly_heating_in_kWh_per_sqm = hourly_results['Q_H'].resample('M').sum() / 1000/ inputs_for_simulation['A_use']
-   
-#     # ENERGY PLUS
-#     n = 12 # number of real_months_values
-#     obj_funct = math.sqrt(sum((real_months_values - ISO52016_monthly_heating_in_kWh_per_sqm.to_numpy())**2)/(n-1))
-#     print(obj_funct)
+# Values for the calculation of domestic hot watrer requirements per day
+table_B_4 = pd.DataFrame(
+    {
+    'type_of_activity'  : [
+        'Accomodation', 'Health establishment wihtout accomodation', 
+        'Health establishment without accomodation',
+        'Health establishment without accomodation - without laundry',
+        'Catering, 2 meals per day. Traditional cusine',
+        'Catering, 2 meals per day. Self service', 
+        'Catering, 1 meals per day. Tradional cusine', 
+        'Catering, 1 meals per day. Self service',
+        'Hotel, 1-star without laundry', 'Hotel, 1-star withlaundry', 
+        'Hotel, 2-star without laundry', 'Hotel, 2-star withlaundry', 
+        'Hotel, 3-star without laundry', 'Hotel, 3-star withlaundry', 
+        'Hotel, 4-star and GC without laundry', 'Hotel, 4-star and GC withlaundry', 
+        'Sport_establishment'
+        ],
+    'V_W_f_day' : [28, 10, 56, 88, 21, 8, 10, 4, 56, 70, 76, 90, 97, 111, 118, 132, 101 ], # [l/d]
+    'f' : ['number of beds'] * 4 + ['number of guest per meal'] * 4 + ['number of beds'] * 8 + ['number_of_showers_installed']
+    }
+)
 
-#     return obj_funct
+# values for calculation of domestic hot water requirements per day
+table_B_5_Standard = pd.DataFrame({
+    'type_pf_building': ['residential_buildings (simple_housing)', 'residential_buildings (luxury_building)',
+                         'single_family_dwellings', 'apartment_dwellings'],
+    'V_W_p_day':['25-60','60-100', '40-70', '25-30']
+})
 
-# def PSO_optimizer(inputs, tmy_data, monitored_monthly_data, number_iter, ftol_PSO, ftol_iter, bounds):
-#     options = {'c1': 0.5, 'c2': 0.3, 'w':0.9}    
-    
-#     optimizer = GlobalBestPSO(n_particles=10, dimensions=2, options=options, bounds=bounds, 
-#                           ftol=ftol_PSO, ftol_iter=ftol_iter)
-
-#     cost, pos = optimizer.optimize(ISO52016_calibration_objective_function_monthly_heating_PSO, 
-#                                 iters= number_iter,
-#                                 inputs= inputs, 
-#                                 real_months_values= monitored_monthly_data,
-#                                 tmy_data= tmy_data)
-#     return cost, pos 
-
-# def RMSE_calculation(actual, calibrated_monthly_data, not_calibrated_monthly_data):
-#     '''
-#     Calcualte the improvement of the calibration in %, considering the RMSE of the calibrated and not calibrated data
-#     Parameters:
-#     -----------
-#     actual: monitored monthly real data of the building in kWh/m2
-#     calibrated_monthly_data: data calibrated by the PSO optimizartion using the calculation of the enrgy consumption according to ISO 52016 in kWh/m2
-#     not_calibrated_monthy_data: calculation of monthly data according to the ISO 52016
-    
-#     Returns:
-#     --------
-#     1. RMSE of calibrated [0] and not calibrated model [1]
-#     2. Percentage of improvement [2]
-#     '''
-    
-#     #define Actual and Predicted Array
-#     pred_not_calibrated = np.array(not_calibrated_monthly_data)
-#     pred_calibrated = np.array(calibrated_monthly_data)
-
-#     #Calculate RMSE
-#     result_calibrated = sqrt(mean_squared_error(actual,pred_calibrated))
-#     result_not_calibrated = sqrt(mean_squared_error(actual,pred_not_calibrated))
-#     improvement = round((result_not_calibrated - result_calibrated)/result_not_calibrated * 100,2)   
-    
-#     # PRINT 
-#     print("RMSE - not calibrated:",  result_not_calibrated,  "RMSE - calibrated:", result_calibrated)
-#     print("Improvement %: ",improvement)
-    
-#     return (round(result_calibrated,2), round(result_not_calibrated,2), improvement)
-
-
-
-# def runCalib(inputs:dict,monthly_real_data:list, bounds, number_iter, ftol_PSO, ftol_iter):
-
-    
-#     # DATA from ISO 
-#     tmy_data = get_tmy_data(inputs['latitude'], inputs['longitude'])
-#     hourly_data, yearly_data = bep_calc(inputs_data=inputs, year_weather=2015, tmy_data=tmy_data)
-#     not_calibrated_monthly_data = hourly_data['Q_H'].resample('M').sum() / (1e3 * inputs['A_use'])
-    
-#     # CALIBRATION USING PSO
-#     # Real data
-#     monitored_monthly_data = np.array(monthly_real_data, dtype=object)
-    
-#     # PSO CALIBRATION
-#     bounds = (np.array([0.4,0.4]), np.array([2,2]))
-#     ftol_PSO = 0.3
-#     ftol_iter = 100
-#     options = {'c1': 0.7, 'c2': 0.5, 'w':1}
-#     number_iter = 50
-
-#     optimizer = GlobalBestPSO(n_particles=10, dimensions=2, options=options, bounds=bounds, 
-#                         ftol=ftol_PSO, ftol_iter=ftol_iter)
-
-#     cost, options = optimizer.optimize(ISO52016_calibration_objective_function_monthly_heating_PSO, 
-#                                 iters = number_iter,
-#                                 inputs= inputs, 
-#                                 real_months_values= monitored_monthly_data,
-#                                 tmy_data= tmy_data)
-#     # cost, options = PSO_optimizer(inputs, tmy_data, monitored_monthly_data,
-#     #                               number_iter, ftol_PSO, ftol_iter, bounds=bounds)
-
-#     # CALIBRATION MODEL
-#     inputs_calibrated = inputs.copy()
-#     inputs_calibrated['h_ci_eli'] = options[0]*inputs['h_ci_eli']
-#     inputs_calibrated['h_ce_eli'] = options[1]*inputs['h_ce_eli']
-#     calibrated_hourly_result, calibrated_yearly_result = bep_calc(inputs_data = inputs_calibrated, year_weather=2015, tmy_data=tmy_data)
-#     calibrated_monthly_data = calibrated_hourly_result['Q_H'].resample('M').sum() / (1e3 * inputs['A_use'])
-
-#     # ASSESSING result
-#     RMSE_value= RMSE_calculation(monthly_real_data,not_calibrated_monthly_data, calibrated_monthly_data )
-    
-#     # PLOT 
-#     df_energy = pd.DataFrame({
-#         'calibrated_data': calibrated_monthly_data.reset_index(drop=True).to_list(),
-#         'real_data': monitored_monthly_data,
-#         'not_calibrated_data': not_calibrated_monthly_data
-#     })
-
-#     return df_energy, RMSE_value, inputs_calibrated
+# values for calculation of domestic hot water requirements per day as avergae of the values from table_B_5_standard
+table_B_5_modified = pd.DataFrame({
+    'type_of_building': [
+        'residential_building - simple housing - MIN', 
+        'residential_building - simple housing - AVG', 
+        'residential_building - simple housing - MAX', 
+        'residential_building - luxury housing - MIN', 
+        'residential_building - luxury housing - AVG', 
+        'residential_building - luxury housing - MAX', 
+        'single_family_dwellings - MIN', 
+        'single_family_dwellings - AVG', 
+        'single_family_dwellings - MAX', 
+        'apartments_dwellings - MIN', 
+        'apartments_dwellings - AVG', 
+        'apartments_dwellings - MAX', 
+        ],
+    'liters/person_per_day':[25, 45, 60, 60, 80, 100, 40, 55, 70, 25, 27.5, 30]
+})
