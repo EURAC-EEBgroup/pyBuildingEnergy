@@ -15,7 +15,6 @@ Authour: Daniele Antonucci
 import pandas as pd
 import calendar
 from datetime import date
-import pandas as pd
 
 from pybuildingenergy.source.functions import  table_B_3, table_B_4, table_B_5_modified
 from pybuildingenergy.constants import WATER_DENSITY, WATER_SPECIFIC_HEAT_CAPACITY
