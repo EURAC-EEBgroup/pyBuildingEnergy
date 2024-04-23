@@ -18,7 +18,7 @@ from datetime import date
 import pandas as pd
 
 from pybuildingenergy.source.functions import  table_B_3, table_B_4, table_B_5_modified
-from pybuildingenergy.global_inputs import WATER_DENSITY, WATER_SPECIFIC_HEAT_CAPACITY
+from pybuildingenergy.constants import WATER_DENSITY, WATER_SPECIFIC_HEAT_CAPACITY
 # WATER_DENSITY = 1000 #[kg/m3]
 # WATER_SPECIFIC_HEAT_CAPACITY = 0.00116 # kWh/kgK 
 # ================================================================================
