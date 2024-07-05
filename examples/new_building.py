@@ -101,9 +101,9 @@ def main(bui_new:dict, weather_type:str, path_weather_file_:str,
     annual_results_df.to_csv(path_annual_sim_result)
     
     # Generate Graphs
-    Graphs_and_report(df = hourly_sim,season ='heating_cooling').bui_analysis_page(
-        folder_directory=dir_chart_folder,
-        name_file=name_report)
+    # Graphs_and_report(df = hourly_sim,season ='heating_cooling').bui_analysis_page(
+    #     folder_directory=dir_chart_folder,
+    #     name_file=name_report)
     
     return print(f"Simulation eneded!check results in {path_hourly_sim_result} and {path_annual_sim_result}")
 
