@@ -462,12 +462,12 @@ def Calculation_ISO_52010(building_object, path_weather_file) -> simdf_52010:
     timezoneW = weatherData.utc_offset
 
     # Change time index
-    if len(sim_df) > 8760:  # In the case of a leap year, (ITA: anno bisestile)
+    if False:  # In the case of a leap year, (ITA: anno bisestile)
         pass
     else:
         sim_df.index = pd.to_datetime(
             {
-                "year": 2009,
+                "year": sim_df.index.year,
                 "month": sim_df.index.month,
                 "day": sim_df.index.day,
                 "hour": sim_df.index.hour,
@@ -1010,10 +1010,10 @@ class ISO52016:
         If the value is nor provided by the user 
         """
         sog_area = building_object.__getattribute__("slab_on_ground")
-        if sog_area == -999:
+        if sog_area == None:
             sog_area = sum(
                 Filter_list_by_indices(
-                    building_object.__getattribute__("area"),
+                    building_object.__getattribute__("area_elements"),
                     Get_positions(
                         building_object.__getattribute__("typology_elements"), "GR"
                     ),
@@ -1031,7 +1031,7 @@ class ISO52016:
             # SOUTH FACADE
             south_facade_area = sum(
                 Filter_list_by_indices(
-                    building_object.__getattribute__("area"),
+                    building_object.__getattribute__("area_elements"),
                     Get_positions(
                         building_object.__getattribute__("orientation_elements"), "SV"
                     ),
@@ -1040,7 +1040,7 @@ class ISO52016:
             # EAST FACADE
             east_facade_area = sum(
                 Filter_list_by_indices(
-                    building_object.__getattribute__("area"),
+                    building_object.__getattribute__("area_elements"),
                     Get_positions(
                         building_object.__getattribute__("orientation_elements"), "EV"
                     ),
