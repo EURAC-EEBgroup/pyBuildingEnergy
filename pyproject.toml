@@ -1,9 +1,81 @@
 [build-system]
-# AVOID CHANGING REQUIRES: IT WILL BE UPDATED BY PYSCAFFOLD!
-requires = ["setuptools>=46.1.0", "setuptools_scm[toml]>=5"]
+# Minimum requirements for the build system to execute.
+requires = ["setuptools", "wheel"]  # PEP 508 specifications.
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools_scm]
-# For smarter version schemes and other configuration options,
-# check out https://github.com/pypa/setuptools_scm
-version_scheme = "no-guess-dev"
+# Ignore flat-layout.
+[tool.setuptools]
+py-modules = []
+
+[project]
+name = "pybuildingenergy"
+version = "1.0.7"
+description = "Energy Simulation of building usin ISO52016 and more"
+license = {file = "LICENSE.md"}
+readme = "README.rst"
+requires-python = ">=3.8.0"
+authors = [{name = "Daniele Antonucci", email = "daniele.antonucci@eurac.edu"}]
+maintainers = [{name = "Daniele Antonucci", email = "daniele.antonucci@eurac.edu"}]
+keywords = [
+    "energy",
+    "building",
+    "heating and cooling",
+    "52016",
+    "EPBD",
+]
+
+dependencies = [
+    "bump2version==0.5.11",
+    "coverage==4.5.4", 
+    "pandas>=2.0.3",
+    "numpy==1.23.2",
+    "DateTime==5.1", 
+    "timezonefinder==6.2.0",
+    "requests==2.31.0",
+    "tqdm==4.66.1",
+    "Pyarrow==13.0.0",
+    "pyecharts==2.0.4",
+    "geopy==2.4.1",
+    "pvlib==0.10.1",
+    "scikit-learn>=1.3.2",
+    "urllib3==1.26.18",
+    "pyswarms==1.3.0",
+    "workalendar==17.0.0",
+    "plotly==5.21.0"
+]
+
+classifiers = [
+  # How mature is this project? Common values are
+  #   3 - Alpha
+  #   4 - Beta
+  #   5 - Production/Stable
+  
+  "Development Status :: 4 - Beta",
+  # Indicate who your project is intended for
+  "Intended Audience :: Developers",
+  "Intended Audience :: Education",
+  "Intended Audience :: Science/Research",
+  "Operating System :: Unix",
+  "Operating System :: POSIX",
+  "Operating System :: Microsoft :: Windows",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Software Development :: Build Tools"
+]
+
+
+[project.urls]
+Homepage = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy"
+Documentation = "https://pybuildingenergy.readthedocs.io/en/latest/Overview/overview.html"
+Repository = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy"
+Issues = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy/issues"
+Changelog = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy/CHANGELOG.md"
+
+[project.optional-dependencies]
+gui = []
+cli = []
