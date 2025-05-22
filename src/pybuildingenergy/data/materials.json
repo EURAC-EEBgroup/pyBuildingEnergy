@@ -10,6 +10,17 @@
         "thermal_absorptance": 0.9,
         "solar_absorptance": 0.7,
         "visible_absorptance": 0.7
+      },    
+      {
+        "name": "Hollow clay brick 25",
+        "roughness": "MediumRough",
+        "thickness": 0.2521054,
+        "conductivity": 0.45,
+        "density": 1500,
+        "specific_heat": 1000,
+        "thermal_absorptance": null,
+        "solar_absorptance": null,
+        "visible_absorptance": null
       },
       {
         "name": "Clay brick35",

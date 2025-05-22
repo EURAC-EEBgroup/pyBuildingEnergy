@@ -15,7 +15,11 @@ Vedere test area edificio e area del solaio controterra differenti
 """
 
 import numpy as np
-from pybuildingenergy.source.functions import Perimeter_from_area, Area_roof, Check_area
+from src.pybuildingenergy.source.functions import (
+    Perimeter_from_area,
+    Area_roof,
+    Check_area,
+)
 import pickle
 
 # ================================================================================================
@@ -307,8 +311,6 @@ cooling_installed = [False] * len(periods)
 class Buildings(object):
     def __init__(
         self,
-        building_type: str,
-        periods: str,
         latitude: float,
         longitude: float,
         exposed_perimeter: float,
@@ -337,7 +339,7 @@ class Buildings(object):
         thermal_bridge_heat=float,  # value of thermal bridges
         thermal_resistance_floor=float,
         area_elements=list,  # Area of each facade elements
-        transmittance_U_elments=list,
+        transmittance_U_elements=list,
         thermal_resistance_R_elements=list,
         thermal_capacity_elements=list,
         g_factor_windows=list,
@@ -346,6 +348,8 @@ class Buildings(object):
         comf_level_wd=np.array,
         comf_level_we=np.array,
         construction_class="class_i",
+        building_type="",
+        periods="",
         **kwargs,
     ):
 
@@ -395,7 +399,7 @@ class Buildings(object):
         self.orientation_elements = orientation_elements
         self.solar_abs_elements = solar_abs_elements
         self.area_elements = area_elements
-        self.transmittance_U_elments = transmittance_U_elments
+        self.transmittance_U_elements = transmittance_U_elements
         self.thermal_resistance_R_elements = thermal_resistance_R_elements
         self.thermal_capacity_elements = thermal_capacity_elements
         self.g_factor_windows = g_factor_windows
@@ -525,7 +529,7 @@ class Buildings(object):
                 )
 
         # 2. Check value of envelope transmittance
-        for i, u_value in enumerate(self.transmittance_U_elments):
+        for i, u_value in enumerate(self.transmittance_U_elements):
             element = self.typology_elements[i]
             if element == "OP":
                 nameElement = "Opaque Element"
@@ -573,7 +577,7 @@ class Buildings_from_dictionary(object):
             new_inputs = {
                 'latitude':46.66345144066082,
                 'longitude':9.71636944229362,
-                'Eln':10, 
+                'Eln':10,
                 'a_use': 100,
                 "slab_on_ground":100,
                 'heating_setpoint':22,
@@ -638,7 +642,7 @@ class Buildings_from_dictionary(object):
                 )
 
         # 2. Check value of envelope transmittance
-        for i, u_value in enumerate(self.transmittance_U_elments):
+        for i, u_value in enumerate(self.transmittance_U_elements):
             element = self.typology_elements[i]
             if element == "OP":
                 nameElement = "Opaque Element"

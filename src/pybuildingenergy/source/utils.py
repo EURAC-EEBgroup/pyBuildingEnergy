@@ -13,7 +13,7 @@ import numpy as np
 from dataclasses import dataclass
 from tqdm import tqdm
 from pvlib.iotools import epw
-from pybuildingenergy.source.functions import (
+from src.pybuildingenergy.source.functions import (
     Equation_of_time,
     Hour_angle_calc,
     Air_mass_calc,
@@ -118,13 +118,13 @@ class ISO52010:
     @classmethod
     def get_tmy_data_epw(cls, path_weather_file):
         """
-        Get Wetaher data from epw file
+        Get Weather data from epw file
 
         :param path_weather_file: path of the .epw weather file. (e.g (../User/documents/epw/athens.epw))
 
         :return:
             * *elevation*: altitude of specifici location (type: **float**)
-            * *weather_data*: dataframe with wetaher parameters (e.g. outdoor temperature, outdoor relative humidity, etc.) (type: **pd.DataFrame**)
+            * *weather_data*: dataframe with weather parameters (e.g. outdoor temperature, outdoor relative humidity, etc.) (type: **pd.DataFrame**)
             * *utc_offset*: refers to the difference in time between Coordinated Universal Time (UTC) and the local time of a specific location (type: **int**)
             * *latitude*: latitude of the building place (type: **float**)
             * *longitude*: longitude of the building place (type: **float**)
@@ -189,12 +189,12 @@ class ISO52010:
 
     # GET DATA FROM PVGIS
     @classmethod
-    def get_tmy_data_pvigs(cls, building_object) -> WeatherDataResult:
+    def get_tmy_data_pvgis(cls, building_object) -> WeatherDataResult:
         """
-        Get Wetaher data from pvgis API
+        Get Weather data from pvgis API
 
         :param building_object: Building object create according to the method ``Building``or ``Buildings_from_dictionary``.
-        
+
         :return:
             * *elevation*: altitude of specifici location (type: **float**)
             * *weather_data*: dataframe with wetaher parameters (e.g. outdoor temperature, outdoor relative humidity, etc.) (type: **pd.DataFrame**)
@@ -219,6 +219,12 @@ class ISO52010:
         df_weather["time(UTC)"] = [
             dt.datetime.strptime(x, "%Y%m%d:%H%M") for x in df_weather["time(UTC)"]
         ]
+
+        # Change year to 2019 before sorting by date, because the months in the tmy file are stitched together from different years
+        df_weather["time(UTC)"] = df_weather["time(UTC)"].apply(
+            lambda x: x.replace(year=2019)
+        )
+
         # Order data in date ascending order
         df_weather = df_weather.sort_values(by="time(UTC)")
         df_weather.index = df_weather["time(UTC)"]
@@ -438,7 +444,9 @@ class ISO52010:
         return Solar_irradiance(solar_irradiance=I_tot)
 
 
-def Calculation_ISO_52010(building_object, path_weather_file) -> simdf_52010:
+def Calculation_ISO_52010(
+    building_object, path_weather_file, weather_source="pvgis"
+) -> simdf_52010:
     """
     Calculation procedure for the conversion of climatic data for energy calculation.
     The main element in ISO 52010-1:2017 is the calculation of solar irradiance on a surface with arbitrary orientation and tilt
@@ -451,9 +459,9 @@ def Calculation_ISO_52010(building_object, path_weather_file) -> simdf_52010:
     """
 
     # Get weather dataframe
-    if building_object.__getattribute__("weather_source") == "pvgis":
-        weatherData = ISO52010.get_tmy_data_pvigs(building_object)
-    elif building_object.__getattribute__("weather_source") == "epw":
+    if weather_source == "pvgis":
+        weatherData = ISO52010.get_tmy_data_pvgis(building_object)
+    elif weather_source == "epw":
         weatherData = ISO52010.get_tmy_data_epw(path_weather_file)
     else:
         raise ValueError("select the right weather source: 'epw' or 'pvgis'")
@@ -686,9 +694,9 @@ class ISO52016:
 
         :return: a_sol_pli_eli: solar absorption of each single nodes (type: *np.array*)
 
-        .. note:: 
+        .. note::
             EXAMPLE:
-            
+
             inputs = {
                 "type": ["GR", "OP", "OP", "OP", "OP", "OP", "W", "W", "W", "W"],
                 "a_sol": [0, 0.6, 0.6, 0.6, 0.6, 0.6, 0, 0, 0, 0],
@@ -865,11 +873,11 @@ class ISO52016:
             * **thermal_bridge_heat**: Heat transfer coefficient of overall thermal briges
             * **Theta_gr_ve**: Internal Temperature of the ground
 
-        .. caution:: 
+        .. caution::
             The calculation is only for buildings with a ground floor slab. That is, in direct contact with the ground and not for unheated rooms.
             To be integrated: code related to different types of contacts based on the presence of an unheated room or other.
 
-        .. note:: 
+        .. note::
             Calculation of annual_mean_internal_temperature and its amplitude variations
             if heating and colling are selected:
 
@@ -878,11 +886,11 @@ class ISO52016:
 
             if not heating and cooling the value should be provided by the user:
 
-                * if the user doesn't provide any value, the following values are used: 
+                * if the user doesn't provide any value, the following values are used:
                     * annual_mean_internal_temperature = 23 <- ((26 (standard C set point) + 20 (standard H setpoint))/2)
                     * amplitude_of_internal_temperature_variations = 3 <- (26-20)/2
 
-        .. note:: 
+        .. note::
             Defintion of the coldest month accoriding to the position.
             If the user doesn't provide a value between 1 (January) and 12 (Decemebr)
             the default values: 1 for northern hemisphere or 7 in southern hemisphere are used
@@ -898,7 +906,7 @@ class ISO52016:
         path_weather_file_ = kwargs.get("path_weather_file")
         sim_df = Calculation_ISO_52010(building_object, path_weather_file_).sim_df
 
-        try: 
+        try:
             external_temperature_monthly_averages = sim_df["T2m"].resample("ME").mean()
             external_temperature_monthly_minima = sim_df["T2m"].resample("ME").min()
             external_temperature_monthly_maxima = sim_df["T2m"].resample("ME").max()
@@ -1200,7 +1208,9 @@ class ISO52016:
         )
 
     @classmethod
-    def Occupancy_profile(cls, building_object, path_weather_file) -> simulation_df:
+    def Occupancy_profile(
+        cls, building_object, path_weather_file, weather_source="pvgis"
+    ) -> simulation_df:
         """
         Definition of occupancy profile for:
 
@@ -1226,16 +1236,23 @@ class ISO52016:
         :retrun: sim_df: dataframe with inputs for simulation having information of weather, occupancy, heating and cooling setpoint and setback
         """
         # WEATHER DATA
-        sim_df = pd.DataFrame(
-            Calculation_ISO_52010(building_object, path_weather_file).sim_df
-        )
+        if weather_source == "pvgis":
+            sim_df = pd.DataFrame(
+                Calculation_ISO_52010(
+                    building_object, path_weather_file, weather_source=weather_source
+                ).sim_df
+            )
+        elif weather_source == "epw":
+            sim_df = pd.DataFrame(
+                Calculation_ISO_52010(
+                    building_object, path_weather_file, weather_source=weather_source
+                ).sim_df
+            )
         sim_df.index = pd.DatetimeIndex(sim_df.index)
         # number of days of simulation (13 months)
         number_of_days_with_warmup_period = len(sim_df) // 24
         # Inizailization occupancy for Internal Gain
-        sim_df[
-            "occupancy level"
-        ] = (
+        sim_df["occupancy level"] = (
             np.nan
         )  # 9504 are the numbers of hours in one year + December month for warmup period
         # Inizialization occupancy for Indoor Temperature and Ventilation control
@@ -1254,10 +1271,10 @@ class ISO52016:
         number_of_weekdays_with_warmup_period = sum(wd_mask) // 24
         # Associate the occupancy profile to simulation hourly time of workdays
         sim_df.loc[wd_mask, "occupancy level"] = np.tile(
-            occ_level_wd.astype(float), number_of_weekdays_with_warmup_period
+            occ_level_wd, number_of_weekdays_with_warmup_period
         )
         sim_df.loc[wd_mask, "comfort level"] = np.tile(
-            comf_level_wd.astype(float), number_of_weekdays_with_warmup_period
+            comf_level_wd, number_of_weekdays_with_warmup_period
         )
 
         """ WEEKEND """
@@ -1269,15 +1286,15 @@ class ISO52016:
         we_mask = sim_df.index.weekday >= 5
         # Associate the occupancy profile to simulation hourly time of weekends
         sim_df.loc[we_mask, "occupancy level"] = np.tile(
-            occ_level_we.astype(float), number_of_weekend_days_with_warmup_period
+            occ_level_we, number_of_weekend_days_with_warmup_period
         )
         sim_df.loc[we_mask, "comfort level"] = np.tile(
-            comf_level_we.astype(float), number_of_weekend_days_with_warmup_period
+            comf_level_we, number_of_weekend_days_with_warmup_period
         )
 
         """ HEATING AND COOLING """
-        # periods where occupancy is =1 and comfort is required and occupancy=0 comfort is not required
-        comfort_hi_mask = sim_df["comfort level"] == 1
+        # "Heating and cooling setpoint when comfort level is > 0, otherwise heating and cooling setback
+        comfort_hi_mask = sim_df["comfort level"] > 0
         comfort_lo_mask = sim_df["comfort level"] == 0
 
         """ HEATING """
@@ -1304,7 +1321,12 @@ class ISO52016:
 
     @classmethod
     def Vent_heat_transf_coef_and_Int_gains(
-        cls, building_object, path_weather_file, c_air=1006, rho_air=1.204
+        cls,
+        building_object,
+        path_weather_file,
+        c_air=1006,
+        rho_air=1.204,
+        weather_source="pvgis",
     ) -> h_vent_and_int_gains:
         """
         Calculation of heat transfer coefficient (section 8 - ISO 13789:2017 and 6.6.6 ISO 52016:2017 ) and internal gains
@@ -1319,8 +1341,8 @@ class ISO52016:
             * air_change_rate_base_value: ventilation air change rate [m3/h]
             * air_change_rate_extra: extra iar change in case of comfort values [m3/h]
             * a_use: useful area of the building [m2]
-            * internal_gains_base_value: value fo internal gains [W/m2]
-            * internal_gains_extra: eventual extra gains during [W]
+            * internal_gains_base_value: value for internal gains [W/m2]
+            * internal_gains_extra: eventual extra internal gains during occupied hours [W/m2]
 
         :return:
             * H_ve: heat transfer coefficient for ventilation [W/K]
@@ -1330,7 +1352,9 @@ class ISO52016:
         # VENTILATION (CONDUTTANCE)
         sim_df = (
             ISO52016()
-            .Occupancy_profile(building_object, path_weather_file)
+            .Occupancy_profile(
+                building_object, path_weather_file, weather_source=weather_source
+            )
             .simulation_df
         )
         comfort_hi_mask = sim_df["comfort level"] == 1
@@ -1350,7 +1374,7 @@ class ISO52016:
         H_ve = c_air * rho_air / 3600 * air_flow_rate  # [W/K]
 
         # INTERNAL GAINS
-        occ_hi_mask = sim_df["occupancy level"] == 1
+        occ_hi_mask = sim_df["occupancy level"] > 0
         sim_df["internal gains"] = building_object.__getattribute__(
             "internal_gains_base_value"
         ) * building_object.__getattribute__(
@@ -1396,7 +1420,7 @@ class ISO52016:
         :param f_C_c: convective fraction of the cooling system per thermally conditioned zone (if system specific). Default: 1
         :param delta_Theta_er: Average difference between external air temperature and sky temperature. Default: 11
 
-        .. note:: 
+        .. note::
             INPUT:
             **sim_df*: dataframe with:
 
@@ -1451,9 +1475,18 @@ class ISO52016:
             pbar.set_postfix({"Info": f"Inizailization {i}"})
 
             # INIZIALIZATION
-            path_weather_file_ = kwargs["path_weather_file"]
+            if kwargs["weather_source"] == "pvgis":
+                path_weather_file_ = None
+            elif kwargs["weather_source"] == "epw":
+                path_weather_file_ = (
+                    kwargs["path_weather_file"]
+                    if "path_weather_file" in kwargs
+                    else None
+                )
             int_gains_vent = ISO52016().Vent_heat_transf_coef_and_Int_gains(
-                building_object, path_weather_file=path_weather_file_
+                building_object,
+                path_weather_file=path_weather_file_,
+                weather_source=kwargs["weather_source"],
             )
             sim_df = int_gains_vent.sim_df_update
             Tstepn = len(sim_df)  # number of hours to perform the simulation
@@ -1602,9 +1635,9 @@ class ISO52016:
                         "power_cooling_max"
                     )
 
-                Phi_HC_nd_calc[
-                    0
-                ] = 0  # the load has three values:  0 no heating e no cooling, 1  heating, 2 cooling
+                Phi_HC_nd_calc[0] = (
+                    0  # the load has three values:  0 no heating e no cooling, 1  heating, 2 cooling
+                )
                 if power_heating_max_act == 0 and power_cooling_max_act == 0:  #
                     nrHCmodes = 1
                 elif power_cooling_max_act == 0:
@@ -1806,10 +1839,10 @@ class ISO52016:
                             if Phi_HC_nd_act[Tstepi] > building_object.__getattribute__(
                                 "power_heating_max"
                             ):
-                                Phi_HC_nd_act[
-                                    Tstepi
-                                ] = building_object.__getattribute__(
-                                    "power_heating_max"
+                                Phi_HC_nd_act[Tstepi] = (
+                                    building_object.__getattribute__(
+                                        "power_heating_max"
+                                    )
                                 )
                                 Theta_op_act[Tstepi] = Theta_int_op[Tstepi, colB_H]
                                 colB_act = colB_H
@@ -1832,10 +1865,10 @@ class ISO52016:
                             if Phi_HC_nd_act[Tstepi] < building_object.__getattribute__(
                                 "power_cooling_max"
                             ):
-                                Phi_HC_nd_act[
-                                    Tstepi
-                                ] = building_object.__getattribute__(
-                                    "power_cooling_max"
+                                Phi_HC_nd_act[Tstepi] = (
+                                    building_object.__getattribute__(
+                                        "power_cooling_max"
+                                    )
                                 )
                                 Theta_op_act[Tstepi] = Theta_int_op[Tstepi, colB_C]
                                 colB_act = colB_C

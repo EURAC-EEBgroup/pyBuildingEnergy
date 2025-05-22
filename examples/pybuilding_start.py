@@ -1,23 +1,31 @@
 """Main module."""
+# Quick solution for debugging only
+import sys
+from pathlib import Path
 
+# Add the project root to Python path (absolute path)
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))  # Prioritize this path
 
-from pybuildingenergy.source.utils import ISO52016
-from pybuildingenergy.data.building_archetype import Selected_bui_archetype
-from pybuildingenergy.source.graphs import Graphs_and_report
-from pybuildingenergy.source.functions import is_float
-from pybuildingenergy.global_inputs import bui_types, periods
+from src.pybuildingenergy.source.utils import ISO52016
+# --- end of quick solution
+
+from src.pybuildingenergy.source.utils import ISO52016
+from src.pybuildingenergy.data.building_archetype import Selected_bui_archetype
+from src.pybuildingenergy.source.graphs import Graphs_and_report
+from src.pybuildingenergy.source.functions import is_float
+from src.pybuildingenergy.global_inputs import bui_types, periods
 import os
 import argparse
 import subprocess
-from src import ensure_directory_exists
 
 main_directory_ = os.path.dirname(os.path.realpath(__file__))
-ensure_directory_exists(main_directory_+"/charts")
 
-def main(archetype=False, best_test=False, folder_dir="", name_file_="", archetype_db_path=""):
+def main(archetype=True, best_test=False, folder_dir="", name_file_="", archetype_db_path=""):
     
     if archetype:
-        select_archetype = int(input("to select archetype type 1; for demo, type 2:"))
+        # select_archetyp = int(input("to select archetype type 1; for demo, type 2:"))
+        select_archetype = 2
         if select_archetype == 1:
 
             building_archetype = input("select type of building archetype (e.g. 'single_family_house'):")
@@ -69,4 +77,4 @@ if __name__ == "__main__":
     folder_dir=main_directory_ + "/charts"
     name_file="new_building_from_archetype"
     archetypes_path = "{}/{}".format(main_directory_, "archetypes.pickle")
-    main(archetype=args.archetype, best_test=args.best_test, folder_dir=folder_dir, name_file_=name_file, archetype_db_path=archetypes_path)
+    main(archetype=True, best_test=False, folder_dir=folder_dir, name_file_=name_file, archetype_db_path=archetypes_path)
