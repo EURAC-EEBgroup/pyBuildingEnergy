@@ -340,24 +340,50 @@ def process_building(building_archetype, output_dir="results"):
         }
 
 
-def worker_init(collection):
-    global building_collection
-    building_collection = collection
+def worker_init(db_name, collection_name):
+    global db, collection
+    client = MongoClient("localhost", 27017)
+    db = client[db_name]
+    collection = db[collection_name]
 
 
-def worker_task():
+def worker_task(_):
+    results = []
     while True:
-        building_archetype = building_collection.find_one_and_delete({})
+        # Find and update the document to mark it as processing
+        building_archetype = collection.find_one_and_update(
+            {"status": "unprocessed"}, {"$set": {"status": "processing"}}
+        )
         if building_archetype is None:
             break
-        yield process_building(building_archetype)
+        result = process_building(building_archetype)
+        results.append(result)
+        # Mark the document as processed
+        collection.update_one(
+            {"_id": building_archetype["_id"]}, {"$set": {"status": "processed"}}
+        )
+    return results
 
 
 def main():
-    # Connect to MongoDB
+    # Database and collection names
+    db_name = "buildings_db"
+    collection_name = "buildings"
+
+    # Connect to MongoDB to initialize the status field
     client = MongoClient("localhost", 27017)
-    db = client.buildings_db
-    collection = db.buildings
+    db = client[db_name]
+    collection = db[collection_name]
+
+    # Reset the status field for all documents to "unprocessed"
+    # collection.update_many(
+    #     {"status": {"$exists": True}}, {"$set": {"status": "unprocessed"}}
+    # )
+
+    # Initialize the status field for documents that don't have it
+    collection.update_many(
+        {"status": {"$exists": False}}, {"$set": {"status": "unprocessed"}}
+    )
 
     # Determine number of processes to use (leave one core free)
     num_processes = max(1, cpu_count() - 1)
@@ -368,15 +394,12 @@ def main():
 
     # Initialize the worker pool
     with Pool(
-        processes=num_processes, initializer=worker_init, initargs=(collection,)
+        processes=num_processes,
+        initializer=worker_init,
+        initargs=(db_name, collection_name),
     ) as pool:
         # Use tqdm for progress bar
-        results = list(
-            tqdm(
-                pool.imap(worker_task, range(num_processes)),
-                total=collection.count_documents({}),
-            )
-        )
+        results = list(pool.imap(worker_task, range(num_processes)))
 
     # Flatten the results list
     results = [result for sublist in results for result in sublist]
@@ -385,6 +408,12 @@ def main():
     summary_df = pd.DataFrame(results)
     summary_file = os.path.join(output_dir, "simulation_summary.csv")
     summary_df.to_csv(summary_file, index=False)
+
+    # Remove the "status" field from each document after processing
+    # for result in results:
+    #     collection.update_one(
+    #         {"_id": result["building_id"]}, {"$unset": {"status": ""}}
+    #     )
 
     # Print summary
     success_count = (summary_df["status"] == "success").sum()
