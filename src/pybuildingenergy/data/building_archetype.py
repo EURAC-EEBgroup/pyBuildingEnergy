@@ -347,6 +347,7 @@ class Buildings(object):
         occ_level_we=np.array,
         comf_level_wd=np.array,
         comf_level_we=np.array,
+        azimuth_relative_to_true_north=float,  # Azimuth angle between true north and the main building surface (long side or entrance), measured clockwise in degrees. N = 0, E = 90, S = 180, W = 270
         construction_class="class_i",
         building_type="",
         periods="",
@@ -412,6 +413,7 @@ class Buildings(object):
         self.occ_level_we = occ_level_we
         self.comf_level_wd = comf_level_wd
         self.comf_level_we = comf_level_we
+        self.azimuth_relative_to_true_north = azimuth_relative_to_true_north
         self.baseline_hci = baseline_hci
         self.baseline_hce = baseline_hce
         self.construction_class = construction_class

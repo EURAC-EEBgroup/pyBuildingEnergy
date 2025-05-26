@@ -293,6 +293,9 @@ for building_archetype in building_archetypes:
         comf_level_we=building_archetype["building_parameters"]["occupancy_profiles"][
             "weekend"
         ],
+        azimuth_relative_to_true_north=building_archetype["building"][
+            "azimuth_relative_to_true_north"
+        ],
     )
 
     hourly_sim, annual_results_df = ISO52016().Temperature_and_Energy_needs_calculation(
@@ -309,5 +312,8 @@ for building_archetype in building_archetypes:
     heating_kWh_per_sqm = heating_kWh / treated_floor_area
     cooling_kWh_per_sqm = cooling_kWh / treated_floor_area
 
+    print(f"Building {building_archetype['building']['name']}")
     print(f"heating_kWh: {heating_kWh}")
     print(f"cooling_kWh: {cooling_kWh}")
+    print(f"heating_kWh_per_sqm: {heating_kWh_per_sqm}")
+    print(f"cooling_kWh_per_sqm: {cooling_kWh_per_sqm}")

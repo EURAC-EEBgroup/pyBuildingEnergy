@@ -504,6 +504,11 @@ def Calculation_ISO_52010(
     # Convert the NumPy array to a tuple
     for orientation in set(building_object.__getattribute__("orientation_elements")):
 
+        gamma_ic_deg = (  # Transformation from azimuth relative to true north (convention for building orientation) to angle for solar irradiance calculation (convention for ISO 52010)
+            or_tilt_azim_dic[orientation][1]
+            - building_object.azimuth_relative_to_true_north
+        )
+
         sim_df[orientation] = ISO52010.Solar_irradiance_calculation(
             n_timesteps=n_tsteps,
             n_days=n_days_year,
@@ -511,7 +516,7 @@ def Calculation_ISO_52010(
             longitude_deg=weatherData.longitude,
             timezone=timezoneW,
             beta_ic_deg=or_tilt_azim_dic[orientation][0],
-            gamma_ic_deg=or_tilt_azim_dic[orientation][1],
+            gamma_ic_deg=gamma_ic_deg,
             DHI=sim_df["Gd(h)"],
             DNI=sim_df["Gb(n)"],
             ground_solar_reflectivity=0.2,
