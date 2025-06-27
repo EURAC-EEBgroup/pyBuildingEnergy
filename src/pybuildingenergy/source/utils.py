@@ -732,8 +732,8 @@ class ISO52016:
     @classmethod
     def Areal_heat_capacity_of_element(cls, building_object) -> aeral_heat_capacity:
         """
-        Calculation of the aeral heat capacity of the node "pli" and node "pli-1" as
-        determined per type of construction element [W/m2K] - 6.5.7 ISO 52016
+        Calculation of the areal heat capacity of the node "pli" and node "pli-1" as
+        determined per type of construction element [J/m2K] - 6.5.7 ISO 52016
 
         :param building_object: Building object create according to the method ``Building``or ``Buildings_from_dictionary``.
 
@@ -1263,23 +1263,40 @@ class ISO52016:
         # Inizialization occupancy for Indoor Temperature and Ventilation control
         sim_df["comfort level"] = np.nan
 
-        # Occupation (both for gain and ventilation) workday and weekend according to schedule
-        occ_level_wd = building_object.__getattribute__("occ_level_wd")
-        occ_level_we = building_object.__getattribute__("occ_level_we")
-        comf_level_wd = building_object.__getattribute__("comf_level_wd")
-        comf_level_we = building_object.__getattribute__("comf_level_we")
+        # Internal gains
+        internal_gains_wd = building_object.__getattribute__("internal_gains_wd")
+        internal_gains_we = building_object.__getattribute__("internal_gains_we")
+        # Heating control
+        heating_profile_wd = building_object.__getattribute__("heating_profile_wd")
+        heating_profile_we = building_object.__getattribute__("heating_profile_we")
+        # Cooling control
+        cooling_profile_wd = building_object.__getattribute__("cooling_profile_wd")
+        cooling_profile_we = building_object.__getattribute__("cooling_profile_we")
+        # Ventilation control
+        ventilation_profile_wd = building_object.__getattribute__(
+            "ventilation_profile_wd"
+        )
+        ventilation_profile_we = building_object.__getattribute__(
+            "ventilation_profile_we"
+        )
 
         """ WORKDAY """
-        # Nnumber of workdays during the entire simulation period
+        # Number of workdays during the entire simulation period
         wd_mask = sim_df.index.weekday < 5
         # number of workdays for the entire period of simulation (year + warmup: 13 months)
         number_of_weekdays_with_warmup_period = sum(wd_mask) // 24
         # Associate the occupancy profile to simulation hourly time of workdays
-        sim_df.loc[wd_mask, "occupancy level"] = np.tile(
-            occ_level_wd, number_of_weekdays_with_warmup_period
+        sim_df.loc[wd_mask, "internal gains"] = np.tile(
+            internal_gains_wd, number_of_weekdays_with_warmup_period
         )
-        sim_df.loc[wd_mask, "comfort level"] = np.tile(
-            comf_level_wd, number_of_weekdays_with_warmup_period
+        sim_df.loc[wd_mask, "heating control"] = np.tile(
+            heating_profile_wd, number_of_weekdays_with_warmup_period
+        )
+        sim_df.loc[wd_mask, "cooling control"] = np.tile(
+            cooling_profile_wd, number_of_weekdays_with_warmup_period
+        )
+        sim_df.loc[wd_mask, "ventilation control"] = np.tile(
+            ventilation_profile_wd, number_of_weekdays_with_warmup_period
         )
 
         """ WEEKEND """
@@ -1290,36 +1307,32 @@ class ISO52016:
         # Number of workdays during the entire simulation period
         we_mask = sim_df.index.weekday >= 5
         # Associate the occupancy profile to simulation hourly time of weekends
-        sim_df.loc[we_mask, "occupancy level"] = np.tile(
-            occ_level_we, number_of_weekend_days_with_warmup_period
+        sim_df.loc[we_mask, "internal gains"] = np.tile(
+            internal_gains_we, number_of_weekend_days_with_warmup_period
         )
-        sim_df.loc[we_mask, "comfort level"] = np.tile(
-            comf_level_we, number_of_weekend_days_with_warmup_period
+        sim_df.loc[we_mask, "heating control"] = np.tile(
+            heating_profile_we, number_of_weekend_days_with_warmup_period
+        )
+        sim_df.loc[we_mask, "cooling control"] = np.tile(
+            cooling_profile_we, number_of_weekend_days_with_warmup_period
+        )
+        sim_df.loc[we_mask, "ventilation control"] = np.tile(
+            ventilation_profile_we, number_of_weekend_days_with_warmup_period
         )
 
         """ HEATING AND COOLING """
-        # "Heating and cooling setpoint when comfort level is > 0, otherwise heating and cooling setback
-        comfort_hi_mask = sim_df["comfort level"] > 0
-        comfort_lo_mask = sim_df["comfort level"] == 0
-
         """ HEATING """
         # Associate setback and setpoint of heating to occupancy profile for comfort
-        sim_df["Heating"] = np.nan
-        sim_df.loc[comfort_hi_mask, "Heating"] = building_object.__getattribute__(
-            "heating_setpoint"
-        )
-        sim_df.loc[comfort_lo_mask, "Heating"] = building_object.__getattribute__(
-            "heating_setback"
+        sim_df["Heating"] = building_object.__getattribute__("heating_setback")
+        sim_df.loc[sim_df["heating control"] > 0, "Heating"] = (
+            building_object.__getattribute__("heating_setpoint")
         )
 
         """ COOLING """
         # Associate setback and setpoint of cooling to occupancy profile for comfort
-        sim_df["Cooling"] = np.nan
-        sim_df.loc[comfort_hi_mask, "Cooling"] = building_object.__getattribute__(
-            "cooling_setpoint"
-        )
-        sim_df.loc[comfort_lo_mask, "Cooling"] = building_object.__getattribute__(
-            "cooling_setback"
+        sim_df["Cooling"] = building_object.__getattribute__("cooling_setback")
+        sim_df.loc[sim_df["cooling control"] > 0, "Cooling"] = (
+            building_object.__getattribute__("cooling_setpoint")
         )
 
         return simulation_df(simulation_df=sim_df)
@@ -1362,14 +1375,13 @@ class ISO52016:
             )
             .simulation_df
         )
-        comfort_hi_mask = sim_df["comfort level"] == 1
         sim_df["air flow rate"] = building_object.__getattribute__(
             "air_change_rate_base_value"
         ) * building_object.__getattribute__(
             "a_use"
         )  # [m3/h]
         sim_df.loc[
-            comfort_hi_mask, "air flow rate"
+            sim_df["ventilation control"] > 0, "air flow rate"
         ] += building_object.__getattribute__(
             "air_change_rate_extra"
         ) * building_object.__getattribute__(
@@ -1379,17 +1391,7 @@ class ISO52016:
         H_ve = c_air * rho_air / 3600 * air_flow_rate  # [W/K]
 
         # INTERNAL GAINS
-        occ_hi_mask = sim_df["occupancy level"] > 0
-        sim_df["internal gains"] = building_object.__getattribute__(
-            "internal_gains_base_value"
-        ) * building_object.__getattribute__(
-            "a_use"
-        )  # [W]
-        sim_df.loc[occ_hi_mask, "internal gains"] += building_object.__getattribute__(
-            "internal_gains_extra"
-        ) * building_object.__getattribute__(
-            "a_use"
-        )  # [W]
+        sim_df["internal gains"] *= building_object.__getattribute__("a_use")  # [W]
         Phi_int = sim_df["internal gains"]
 
         return h_vent_and_int_gains(H_ve=H_ve, Phi_int=Phi_int, sim_df_update=sim_df)

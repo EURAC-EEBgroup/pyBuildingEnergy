@@ -202,6 +202,16 @@ for building_archetype in building_archetypes:
         ventilation_rate_extra_in_ach * volume / treated_floor_area
     )
 
+    # Initialize profiles with zeros
+    internal_gains_weekday_profile = [0] * 24
+    internal_gains_weekend_profile = [0] * 24
+
+    # Calculate combined profiles
+    for gain in building_archetype["building_parameters"]["internal_gains"]:
+        for i in range(24):
+            internal_gains_weekday_profile[i] += gain["full_load"] * gain["weekday"][i]
+            internal_gains_weekend_profile[i] += gain["full_load"] * gain["weekend"][i]
+
     # Create BuildingArchetype from BUI_JSON
     BUI = Buildings(
         latitude=building_archetype["building"]["latitude"],
@@ -253,12 +263,8 @@ for building_archetype in building_archetypes:
         ],  # Max Power of the cooling system
         air_change_rate_base_value=infiltration_rate_in_m3_per_sqm_hr,
         air_change_rate_extra=ventilation_rate_extra_in_m3_per_sqm_hr,
-        internal_gains_base_value=building_archetype["building_parameters"][
-            "internal_gains"
-        ]["unoccupied"],
-        internal_gains_extra=building_archetype["building_parameters"][
-            "internal_gains"
-        ]["occupied_extra"],
+        internal_gains_wd=internal_gains_weekday_profile,
+        internal_gains_we=internal_gains_weekend_profile,
         thermal_bridge_heat=building_archetype["building_parameters"]["construction"][
             "thermal_bridges"
         ],  # value of thermal bridges
@@ -281,18 +287,24 @@ for building_archetype in building_archetypes:
         thermal_resistance_R_elements=thermal_resistances,
         thermal_capacity_elements=heat_capacities,
         g_factor_windows=g_values,
-        occ_level_wd=building_archetype["building_parameters"]["occupancy_profiles"][
+        heating_profile_wd=building_archetype["building_parameters"]["heating_profile"][
             "weekday"
         ],
-        occ_level_we=building_archetype["building_parameters"]["occupancy_profiles"][
+        heating_profile_we=building_archetype["building_parameters"]["heating_profile"][
             "weekend"
         ],
-        comf_level_wd=building_archetype["building_parameters"]["occupancy_profiles"][
+        cooling_profile_wd=building_archetype["building_parameters"]["cooling_profile"][
             "weekday"
         ],
-        comf_level_we=building_archetype["building_parameters"]["occupancy_profiles"][
+        cooling_profile_we=building_archetype["building_parameters"]["cooling_profile"][
             "weekend"
         ],
+        ventilation_profile_wd=building_archetype["building_parameters"][
+            "ventilation_profile"
+        ]["weekday"],
+        ventilation_profile_we=building_archetype["building_parameters"][
+            "ventilation_profile"
+        ]["weekend"],
         azimuth_relative_to_true_north=building_archetype["building"][
             "azimuth_relative_to_true_north"
         ],

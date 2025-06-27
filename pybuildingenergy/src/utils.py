@@ -1139,11 +1139,13 @@ class __ISO52016__:
         **kwargs,
     ):
         """
-        Calcualation fo energy needs according to the equation (37) of ISO 52016:2017. Page 60. 
+        Calculation fo energy needs according to the equation (37) of ISO 52016:2017. Page 60. 
         
-        [Matrix A] x [Node temperature vector X] = [State vector B] 
-        
-        the 
+        [Matrix A] x [Node temperature vector X] = [State vector B]
+
+        Units:
+
+        [W/K] x [K] = [W]
         
         where:
         Theta_int_air: internal air temperature [°C]

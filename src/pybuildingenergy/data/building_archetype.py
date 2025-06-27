@@ -334,8 +334,8 @@ class Buildings(object):
         power_cooling_max=float,  # Max Power of the cooling system
         air_change_rate_base_value=float,  # air change rate
         air_change_rate_extra=float,
-        internal_gains_base_value=float,
-        internal_gains_extra=float,
+        internal_gains_wd=np.array,
+        internal_gains_we=np.array,
         thermal_bridge_heat=float,  # value of thermal bridges
         thermal_resistance_floor=float,
         area_elements=list,  # Area of each facade elements
@@ -343,10 +343,12 @@ class Buildings(object):
         thermal_resistance_R_elements=list,
         thermal_capacity_elements=list,
         g_factor_windows=list,
-        occ_level_wd=np.array,
-        occ_level_we=np.array,
-        comf_level_wd=np.array,
-        comf_level_we=np.array,
+        heating_profile_wd=np.array,
+        heating_profile_we=np.array,
+        cooling_profile_wd=np.array,
+        cooling_profile_we=np.array,
+        ventilation_profile_wd=np.array,
+        ventilation_profile_we=np.array,
         azimuth_relative_to_true_north=float,  # Azimuth angle between true north and the main building surface (long side or entrance), measured clockwise in degrees. N = 0, E = 90, S = 180, W = 270
         construction_class="class_i",
         building_type="",
@@ -392,8 +394,8 @@ class Buildings(object):
         self.power_heating_max = power_heating_max
         self.air_change_rate_base_value = air_change_rate_base_value
         self.air_change_rate_extra = air_change_rate_extra
-        self.internal_gains_base_value = internal_gains_base_value
-        self.internal_gains_extra = internal_gains_extra
+        self.internal_gains_wd = internal_gains_wd
+        self.internal_gains_we = internal_gains_we
         self.thermal_bridge_heat = thermal_bridge_heat
         self.thermal_resistance_floor = thermal_resistance_floor
         self.typology_elements = typology_elements
@@ -409,10 +411,12 @@ class Buildings(object):
         self.heat_convective_elements_external = heat_convective_elements_external
         self.heat_radiative_elements_external = heat_radiative_elements_external
         self.sky_factor_elements = sky_factor_elements
-        self.occ_level_wd = occ_level_wd
-        self.occ_level_we = occ_level_we
-        self.comf_level_wd = comf_level_wd
-        self.comf_level_we = comf_level_we
+        self.heating_profile_wd = heating_profile_wd
+        self.heating_profile_we = heating_profile_we
+        self.cooling_profile_wd = cooling_profile_wd
+        self.cooling_profile_we = cooling_profile_we
+        self.ventilation_profile_wd = ventilation_profile_wd
+        self.ventilation_profile_we = ventilation_profile_we
         self.azimuth_relative_to_true_north = azimuth_relative_to_true_north
         self.baseline_hci = baseline_hci
         self.baseline_hce = baseline_hce
