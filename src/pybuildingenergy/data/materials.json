@@ -1,800 +1,935 @@
 {
     "materials": [
-      {
-        "name": "25mm Stucco",
-        "roughness": "Smooth",
-        "thickness": 0.0254,
-        "conductivity": 0.71951849592325,
-        "density": 1856.00424372353,
-        "specific_heat": 839.458381452284,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.7,
-        "visible_absorptance": 0.7
-      },    
-      {
-        "name": "Hollow clay brick 25",
-        "roughness": "MediumRough",
-        "thickness": 0.2521054,
-        "conductivity": 0.45,
-        "density": 1500,
-        "specific_heat": 1000,
-        "thermal_absorptance": null,
-        "solar_absorptance": null,
-        "visible_absorptance": null
-      },
-      {
-        "name": "Clay brick35",
-        "roughness": "MediumRough",
-        "thickness": 0.3573388,
-        "conductivity": 0.89,
-        "density": 1900,
-        "specific_heat": 790,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.7,
-        "visible_absorptance": 0.7
-      },
-      {
-        "name": "Generic 25mm Insulation",
-        "roughness": "MediumRough",
-        "thickness": 0.025,
-        "conductivity": 0.03,
-        "density": 43,
-        "specific_heat": 1210,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.7,
-        "visible_absorptance": 0.7
-      },
-      {
-        "name": "Generic 25mm Wood",
-        "roughness": "MediumSmooth",
-        "thickness": 0.0254,
-        "conductivity": 0.15,
-        "density": 608,
-        "specific_heat": 1630,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.5,
-        "visible_absorptance": 0.5
-      },
-      {
-        "name": "Generic 50mm Insulation",
-        "roughness": "MediumRough",
-        "thickness": 0.05,
-        "conductivity": 0.03,
-        "density": 43,
-        "specific_heat": 1210,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.7,
-        "visible_absorptance": 0.7
-      },
-      {
-        "name": "Generic Acoustic Tile",
-        "roughness": "MediumSmooth",
-        "thickness": 0.02,
-        "conductivity": 0.06,
-        "density": 368,
-        "specific_heat": 590,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.2,
-        "visible_absorptance": 0.2
-      },
-      {
-        "name": "Generic Brick",
-        "roughness": "MediumRough",
-        "thickness": 0.1,
-        "conductivity": 0.9,
-        "density": 1920,
-        "specific_heat": 790,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.65,
-        "visible_absorptance": 0.65
-      },
-      {
-        "name": "Generic Ceiling Air Gap",
-        "roughness": "Smooth",
-        "thickness": 0.1,
-        "conductivity": 0.556,
-        "density": 1.28,
-        "specific_heat": 1000,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.7,
-        "visible_absorptance": 0.7
-      },
-      {
-        "name": "Generic Gypsum Board",
-        "roughness": "MediumSmooth",
-        "thickness": 0.0127,
-        "conductivity": 0.16,
-        "density": 800,
-        "specific_heat": 1090,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.5,
-        "visible_absorptance": 0.5
-      },
-      {
-        "name": "Generic HW Concrete",
-        "roughness": "MediumRough",
-        "thickness": 0.2,
-        "conductivity": 1.95,
-        "density": 2240,
-        "specific_heat": 900,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.8,
-        "visible_absorptance": 0.8
-      },
-      {
-        "name": "Generic LW Concrete",
-        "roughness": "MediumRough",
-        "thickness": 0.1,
-        "conductivity": 0.53,
-        "density": 1280,
-        "specific_heat": 840,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.8,
-        "visible_absorptance": 0.8
-      },
-      {
-        "name": "Generic Painted Metal",
-        "roughness": "Smooth",
-        "thickness": 0.0015,
-        "conductivity": 45,
-        "density": 7690,
-        "specific_heat": 410,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.5,
-        "visible_absorptance": 0.5
-      },
-      {
-        "name": "Generic Roof Membrane",
-        "roughness": "MediumRough",
-        "thickness": 0.01,
-        "conductivity": 0.16,
-        "density": 1120,
-        "specific_heat": 1460,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.65,
-        "visible_absorptance": 0.65
-      },
-      {
-        "name": "Generic Wall Air Gap",
-        "roughness": "Smooth",
-        "thickness": 0.1,
-        "conductivity": 0.667,
-        "density": 1.28,
-        "specific_heat": 1000,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.7,
-        "visible_absorptance": 0.7
-      },
-      {
-        "name": "Gypsum",
-        "roughness": "Smooth",
-        "thickness": 0.019,
-        "conductivity": 0.16,
-        "density": 784.9,
-        "specific_heat": 830,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.7,
-        "visible_absorptance": 0.7
-      },
-      {
-        "name": "Material 1",
-        "roughness": "Smooth",
-        "thickness": 0.1,
-        "conductivity": 0.1,
-        "density": 0.1,
-        "specific_heat": 100,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.65,
-        "visible_absorptance": 0.65
-      },
-      {
-        "name": "Material 2",
-        "roughness": "Smooth",
-        "thickness": 0.1,
-        "conductivity": 0.1,
-        "density": 0.1,
-        "specific_heat": 100,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.8,
-        "visible_absorptance": 0.8
-      },
-      {
-        "name": "Solid wooden slab",
-        "roughness": "MediumRough",
-        "thickness": 0.04875,
-        "conductivity": 0.15,
-        "density": 720,
-        "specific_heat": 1600,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.7,
-        "visible_absorptance": 0.7
-      },
-      {
-        "name": "Terracotta",
-        "roughness": "MediumRough",
-        "thickness": 0.02,
-        "conductivity": 0.798,
-        "density": 1892,
-        "specific_heat": 880,
-        "thermal_absorptance": 0.9,
-        "solar_absorptance": 0.7,
-        "visible_absorptance": 0.7
-      },
-      {
-        "name": "Single-Aluminum",
-        "u_factor": 5.01,
-        "solar_heat_gain_coefficient": 0.68,
-        "visible_transmittance": 0.58
-      },
-      {
-        "name": "Single-Wood",
-        "u_factor": 4.5,
-        "solar_heat_gain_coefficient": 0.68,
-        "visible_transmittance": 0.53
-      },
-      {
-        "name": "Double-Aluminum",
-        "u_factor": 3.3,
-        "solar_heat_gain_coefficient": 0.68,
-        "visible_transmittance": 0.55
-      },
-      {
-        "name": "Double-wood",
-        "u_factor": 2.7,
-        "solar_heat_gain_coefficient": 0.68,
-        "visible_transmittance": 0.53
-      },
-      {
-        "name": "Double-Insulated",
-        "u_factor": 2.4,
-        "solar_heat_gain_coefficient": 0.68,
-        "visible_transmittance": 0.53
-      },
-      {
-        "name": "Double-LowE-Wood",
-        "u_factor": 1.7,
-        "solar_heat_gain_coefficient": 0.68,
-        "visible_transmittance": 0.53
-      },
-      {
-        "name": "Double-LowE-Reinforced",
-        "u_factor": 1.3,
-        "solar_heat_gain_coefficient": 0.68,
-        "visible_transmittance": 0.53
-      },
-      {
-        "name": "Triple-LowE",
-        "u_factor": 1.07,
-        "solar_heat_gain_coefficient": 0.68,
-        "visible_transmittance": 0.53
-      }
+        {
+            "name": "ReinforcedConcrete",
+            "roughness": "MediumRough",
+            "thickness": 0.04,
+            "conductivity": 1.8,
+            "density": 2400,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "HollowBrickSlab",
+            "roughness": "MediumRough",
+            "thickness": 0.2,
+            "conductivity": 0.6,
+            "density": 900,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "InternalFlooring_CeramicTile",
+            "roughness": "MediumSmooth",
+            "thickness": 0.015,
+            "conductivity": 1.47,
+            "density": 1700,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "StoneBlock",
+            "roughness": "MediumRough",
+            "thickness": 0.6,
+            "conductivity": 2.4,
+            "density": 2500,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "CementMortar",
+            "roughness": "MediumRough",
+            "thickness": 0.02,
+            "conductivity": 1.4,
+            "density": 2000,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "LightweightConcreteScreed",
+            "roughness": "MediumRough",
+            "thickness": 0.05,
+            "conductivity": 0.58,
+            "density": 900,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "HollowBrickConcreteSlab",
+            "roughness": "MediumRough",
+            "thickness": 0.2,
+            "conductivity": 0.62,
+            "density": 900,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "ExternalPlaster",
+            "roughness": "MediumRough",
+            "thickness": 0.02,
+            "conductivity": 0.9,
+            "density": 1800,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "SolidBrick_38cm",
+            "roughness": "MediumRough",
+            "thickness": 0.38,
+            "conductivity": 0.72,
+            "density": 1800,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.65,
+            "visible_absorptance": 0.65
+        },
+        {
+            "name": "ReinforcedBrickConcreteSlab",
+            "roughness": "MediumRough",
+            "thickness": 0.21,
+            "conductivity": 0.455,
+            "density": 1800,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.65,
+            "visible_absorptance": 0.65
+        },
+        {
+            "name": "ConcreteScreed",
+            "roughness": "MediumRough",
+            "thickness": 0.05,
+            "conductivity": 1.4,
+            "density": 2000,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.65,
+            "visible_absorptance": 0.65
+        },
+        {
+            "name": "2cm Plaster",
+            "roughness": "Smooth",
+            "thickness": 0.02,
+            "conductivity": 0.72,
+            "density": 1400,
+            "specific_heat": 1080,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.75,
+            "visible_absorptance": 0.75
+        },
+        {
+            "name": "25mm Stucco",
+            "roughness": "Smooth",
+            "thickness": 0.0254,
+            "conductivity": 0.71951849592325,
+            "density": 1856.00424372353,
+            "specific_heat": 839.458381452284,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "HollowBrick_8cm",
+            "roughness": "Rough",
+            "thickness": 0.08,
+            "conductivity": 0.44,
+            "density": 1000,
+            "specific_heat": 900,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.65,
+            "visible_absorptance": 0.65
+        },
+        {
+            "name": "HollowBrick_12cm",
+            "roughness": "Rough",
+            "thickness": 0.12,
+            "conductivity": 0.4,
+            "density": 900,
+            "specific_heat": 900,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.65,
+            "visible_absorptance": 0.65
+        },
+        {
+            "name": "AirGap_18cm",
+            "roughness": "Smooth",
+            "thickness": 0.16,
+            "conductivity": 0.75,
+            "density": 1.28,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "Hollow clay brick 25",
+            "roughness": "MediumRough",
+            "thickness": 0.2521054,
+            "conductivity": 0.45,
+            "density": 1500,
+            "specific_heat": 1000,
+            "thermal_absorptance": null,
+            "solar_absorptance": null,
+            "visible_absorptance": null
+        },
+        {
+            "name": "Clay brick35",
+            "roughness": "MediumRough",
+            "thickness": 0.3573388,
+            "conductivity": 0.89,
+            "density": 1900,
+            "specific_heat": 790,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "Generic 25mm Insulation",
+            "roughness": "MediumRough",
+            "thickness": 0.025,
+            "conductivity": 0.03,
+            "density": 43,
+            "specific_heat": 1210,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "Generic 25mm Wood",
+            "roughness": "MediumSmooth",
+            "thickness": 0.0254,
+            "conductivity": 0.15,
+            "density": 608,
+            "specific_heat": 1630,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.5,
+            "visible_absorptance": 0.5
+        },
+        {
+            "name": "Generic 50mm Insulation",
+            "roughness": "MediumRough",
+            "thickness": 0.05,
+            "conductivity": 0.03,
+            "density": 43,
+            "specific_heat": 1210,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "Generic Acoustic Tile",
+            "roughness": "MediumSmooth",
+            "thickness": 0.02,
+            "conductivity": 0.06,
+            "density": 368,
+            "specific_heat": 590,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.2,
+            "visible_absorptance": 0.2
+        },
+        {
+            "name": "Generic Brick",
+            "roughness": "MediumRough",
+            "thickness": 0.1,
+            "conductivity": 0.9,
+            "density": 1920,
+            "specific_heat": 790,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.65,
+            "visible_absorptance": 0.65
+        },
+        {
+            "name": "Generic Ceiling Air Gap",
+            "roughness": "Smooth",
+            "thickness": 0.1,
+            "conductivity": 0.556,
+            "density": 1.28,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "Generic Gypsum Board",
+            "roughness": "MediumSmooth",
+            "thickness": 0.0127,
+            "conductivity": 0.16,
+            "density": 800,
+            "specific_heat": 1090,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.5,
+            "visible_absorptance": 0.5
+        },
+        {
+            "name": "Generic HW Concrete",
+            "roughness": "MediumRough",
+            "thickness": 0.2,
+            "conductivity": 1.95,
+            "density": 2240,
+            "specific_heat": 900,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.8,
+            "visible_absorptance": 0.8
+        },
+        {
+            "name": "Generic LW Concrete",
+            "roughness": "MediumRough",
+            "thickness": 0.1,
+            "conductivity": 0.53,
+            "density": 1280,
+            "specific_heat": 840,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.8,
+            "visible_absorptance": 0.8
+        },
+        {
+            "name": "Generic Painted Metal",
+            "roughness": "Smooth",
+            "thickness": 0.0015,
+            "conductivity": 45,
+            "density": 7690,
+            "specific_heat": 410,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.5,
+            "visible_absorptance": 0.5
+        },
+        {
+            "name": "Generic Roof Membrane",
+            "roughness": "MediumRough",
+            "thickness": 0.01,
+            "conductivity": 0.16,
+            "density": 1120,
+            "specific_heat": 1460,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.65,
+            "visible_absorptance": 0.65
+        },
+        {
+            "name": "Generic Wall Air Gap",
+            "roughness": "Smooth",
+            "thickness": 0.1,
+            "conductivity": 0.667,
+            "density": 1.28,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "Gypsum",
+            "roughness": "Smooth",
+            "thickness": 0.019,
+            "conductivity": 0.16,
+            "density": 784.9,
+            "specific_heat": 830,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "Material 1",
+            "roughness": "Smooth",
+            "thickness": 0.1,
+            "conductivity": 0.1,
+            "density": 0.1,
+            "specific_heat": 100,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.65,
+            "visible_absorptance": 0.65
+        },
+        {
+            "name": "Material 2",
+            "roughness": "Smooth",
+            "thickness": 0.1,
+            "conductivity": 0.1,
+            "density": 0.1,
+            "specific_heat": 100,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.8,
+            "visible_absorptance": 0.8
+        },
+        {
+            "name": "Solid wooden slab",
+            "roughness": "MediumRough",
+            "thickness": 0.04875,
+            "conductivity": 0.15,
+            "density": 720,
+            "specific_heat": 1600,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "Terracotta",
+            "roughness": "MediumRough",
+            "thickness": 0.02,
+            "conductivity": 0.798,
+            "density": 1892,
+            "specific_heat": 880,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "Single-Aluminum",
+            "u_factor": 5.01,
+            "solar_heat_gain_coefficient": 0.68,
+            "visible_transmittance": 0.58
+        },
+        {
+            "name": "Single-Wood",
+            "u_factor": 4.5,
+            "solar_heat_gain_coefficient": 0.68,
+            "visible_transmittance": 0.53
+        },
+        {
+            "name": "Double-Aluminum",
+            "u_factor": 3.3,
+            "solar_heat_gain_coefficient": 0.68,
+            "visible_transmittance": 0.55
+        },
+        {
+            "name": "Double-wood",
+            "u_factor": 2.7,
+            "solar_heat_gain_coefficient": 0.68,
+            "visible_transmittance": 0.53
+        },
+        {
+            "name": "Double-Insulated",
+            "u_factor": 2.4,
+            "solar_heat_gain_coefficient": 0.68,
+            "visible_transmittance": 0.53
+        },
+        {
+            "name": "Double-LowE-Wood",
+            "u_factor": 1.7,
+            "solar_heat_gain_coefficient": 0.68,
+            "visible_transmittance": 0.53
+        },
+        {
+            "name": "Double-LowE-Reinforced",
+            "u_factor": 1.3,
+            "solar_heat_gain_coefficient": 0.68,
+            "visible_transmittance": 0.53
+        },
+        {
+            "name": "Triple-LowE",
+            "u_factor": 1.07,
+            "solar_heat_gain_coefficient": 0.68,
+            "visible_transmittance": 0.53
+        }
     ],
     "constructions": [
-      {
-        "name": "Generic Context",
-        "layers": ["Material 2"]
-      },
-      {
-        "name": "Generic Exposed Floor",
-        "layers": [
-          "Generic Painted Metal",
-          "Generic Ceiling Air Gap",
-          "Generic 50mm Insulation",
-          "Generic LW Concrete"
-        ]
-      },
-      {
-        "name": "Generic Exterior Door",
-        "layers": [
-          "Generic Painted Metal",
-          "Generic 25mm Insulation",
-          "Generic Painted Metal"
-        ]
-      },
-      {
-        "name": "Generic Exterior Wall",
-        "layers": [
-          "Generic Brick",
-          "Generic LW Concrete",
-          "Generic 50mm Insulation",
-          "Generic Wall Air Gap",
-          "Generic Gypsum Board"
-        ]
-      },
-      {
-        "name": "Generic Ground Slab",
-        "layers": [
-          "Generic 50mm Insulation",
-          "Generic HW Concrete"
-        ]
-      },
-      {
-        "name": "Generic Interior Ceiling",
-        "layers": [
-          "Generic LW Concrete",
-          "Generic Ceiling Air Gap",
-          "Generic Acoustic Tile"
-        ]
-      },
-      {
-        "name": "Generic Interior Door",
-        "layers": ["Generic 25mm Wood"]
-      },
-      {
-        "name": "Generic Interior Floor",
-        "layers": [
-          "Generic Acoustic Tile",
-          "Generic Ceiling Air Gap",
-          "Generic LW Concrete"
-        ]
-      },
-      {
-        "name": "Generic Interior Wall",
-        "layers": [
-          "Generic Gypsum Board",
-          "Generic Wall Air Gap",
-          "Generic Gypsum Board"
-        ]
-      },
-      {
-        "name": "Generic Roof",
-        "layers": [
-          "Generic Roof Membrane",
-          "Generic 50mm Insulation",
-          "Generic LW Concrete",
-          "Generic Ceiling Air Gap",
-          "Generic Acoustic Tile"
-        ]
-      },
-      {
-        "name": "Generic Shade",
-        "layers": ["Material 1"]
-      },
-      {
-        "name": "Generic Underground Roof",
-        "layers": [
-          "Generic 50mm Insulation",
-          "Generic HW Concrete",
-          "Generic Ceiling Air Gap",
-          "Generic Acoustic Tile"
-        ]
-      },
-      {
-        "name": "Generic Underground Wall",
-        "layers": [
-          "Generic 50mm Insulation",
-          "Generic HW Concrete",
-          "Generic Wall Air Gap",
-          "Generic Gypsum Board"
-        ]
-      },
-      {
-        "name": "ROOF 1",
-        "layers": [
-          "Terracotta",
-          "Solid wooden slab"
-        ]
-      },
-      {
-        "name": "OpaqueConstruction_8366c7b7",
-        "layers": [
-            "25mm Stucco",
-            "Hollow block",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL1",
-        "layers": [
-            "25mm Stucco",
-            "Hollow block",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL2",
-        "layers": [
-            "25mm Stucco",
-            "Simple Concrete35",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL3",
-        "layers": [
-            "25mm Stucco",
-            "Hollow block",
-            "Typical Air Wall",
-            "Hollow block",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL4",
-        "layers": [
-            "25mm Stucco",
-            "Clay brick35",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL5",
-        "layers": [
-            "25mm Stucco",
-            "Hollow clay brick 15",
-            "Typical Air Wall",
-            "Clay brick15",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL6",
-        "layers": [
-            "25mm Stucco",
-            "Hollow clay brick 25",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL7",
-        "layers": [
-            "25mm Stucco",
-            "Hollow clay brick 30",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL8",
-        "layers": [
-            "25mm Stucco",
-            "Insulation 3",
-            "Simple Concrete 35",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL9",
-        "layers": [
-            "25mm Stucco",
-            "Insulation35",
-            "Simple Concrete25",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL10",
-        "layers": [
-            "25mm Stucco",
-            "Insulation 3",
-            "Clay brick 35",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL11",
-        "layers": [
-            "25mm Stucco",
-            "Insulation 35",
-            "Hollow clay brick25",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL12",
-        "layers": [
-            "25mm Stucco",
-            "Insulation4",
-            "Hollow clay brick 15",
-            "Typical Air Wall",
-            "Clay brick15",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL13",
-        "layers": [
-            "25mm Stucco",
-            "Wall insulation7",
-            "Simple Concrete25",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL14",
-        "layers": [
-            "25mm Stucco",
-            "Wall Insulation 7",
-            "Hollow clay brick 30",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL15",
-        "layers": [
-            "25mm Stucco",
-            "Insulation 35",
-            "Hollow block",
-            "Typical Air Wall",
-            "Hollow block",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL16",
-        "layers": [
-            "25mm Stucco",
-            "High Insulation10",
-            "Hollow clay brick 25",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL17",
-        "layers": [
-            "25mm Stucco",
-            "HIGH INSULATION15",
-            "Concrete25",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL18",
-        "layers": [
-            "25mm Stucco",
-            "Rockwool",
-            "Hollow clay brick 25",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WALL19",
-        "layers": [
-            "CLT",
-            "Rockwool (with timber fraction)",
-            "Oriented strand board (OSB)",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "WindowConstruction_9436c677",
-        "layers": [
-            "Single-Aluminum"
-        ]
-    },
-    {
-        "name": "WIN1",
-        "layers": [
-            "Single-Aluminum"
-        ]
-    },
-    {
-        "name": "WIN2",
-        "layers": [
-            "Single-Wood"
-        ]
-    },
-    {
-        "name": "WIN3",
-        "layers": [
-            "Double-Aluminum"
-        ]
-    },
-    {
-        "name": "WIN4",
-        "layers": [
-            "Double-wood"
-        ]
-    },
-    {
-        "name": "WIN5",
-        "layers": [
-            "Double-Insulated"
-        ]
-    },
-    {
-        "name": "WIN6",
-        "layers": [
-            "Double-LowE-Wood"
-        ]
-    },
-    {
-        "name": "WIN7",
-        "layers": [
-            "Double-LowE-Reinforced"
-        ]
-    },
-    {
-        "name": "WIN8",
-        "layers": [
-            "Triple-LowE"
-        ]
-    },
-    {
-        "name": "WIN9",
-        "layers": [
-            "Triple-LowE"
-        ]
-    },
-    {
-        "name": "OpaqueConstruction_736ff2c3",
-        "layers": [
-            "Terracotta",
-            "Solid wooden slab"
-        ]
-    },
-    {
-        "name": "SLOPED_ROOF1",
-        "layers": [
-            "Terracotta",
-            "Solid wooden slab"
-        ]
-    },
-    {
-        "name": "SLOPED_ROOF2",
-        "layers": [
-            "Terracotta",
-            "Solid wooden slab",
-            "Wood ceiling"
-        ]
-    },
-    {
-        "name": "SLOPED_ROOF3",
-        "layers": [
-            "Metal Roof Surface",
-            "IEAD Roof Insulation",
-            "reforced concrete",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "SLOPED_ROOF4",
-        "layers": [
-            "Terracotta",
-            "INSULATION4",
-            "Solid wooden slab",
-            "Wood ceiling"
-        ]
-    },
-    {
-        "name": "SLOPED_ROOF5",
-        "layers": [
-            "Terracotta",
-            "IEAD Roof Insulation",
-            "reforced concrete",
-            "Wood ceiling"
-        ]
-    },
-    {
-        "name": "SLOPED_ROOF6",
-        "layers": [
-            "Terracotta",
-            "IEAD Roof Insulation",
-            "reforced concrete",
-            "Wood ceiling"
-        ]
-    },
-    {
-        "name": "SLOPED_ROOF7",
-        "layers": [
-            "Metal Roof Surface",
-            "Mineral wool insulation (with timber fraction)",
-            "Solid wooden slab",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "SLOPED_ROOF8",
-        "layers": [
-            "Metal Roof Surface",
-            "Mineral wool insulation (with timber fraction)",
-            "IEAD Roof Insulation",
-            "Solid wooden slab",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "SLOPED_ROOF9",
-        "layers": [
-            "Metal Roof Surface",
-            "IEAD Roof Insulation",
-            "Mineral wool insulation (with timber fraction)",
-            "Solid wooden slab",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "OpaqueConstruction_03162601",
-        "layers": [
-            "Built-up Roofing",
-            "Solid wooden slab"
-        ]
-    },
-    {
-        "name": "HORIZONTAL_ROOF1",
-        "layers": [
-            "Built-up Roofing",
-            "Solid wooden slab"
-        ]
-    },
-    {
-        "name": "HORIZONTAL_ROOF2",
-        "layers": [
-            "Built-up Roofing",
-            "Solid wooden slab",
-            "Wood ceiling"
-        ]
-    },
-    {
-        "name": "HORIZONTAL_ROOF3",
-        "layers": [
-            "Built-up Roofing",
-            "IEAD Roof Insulation",
-            "reforced concrete",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "HORIZONTAL_ROOF4",
-        "layers": [
-            "Built-up Roofing",
-            "INSULATION4",
-            "Solid wooden slab",
-            "Wood ceiling"
-        ]
-    },
-    {
-        "name": "HORIZONTAL_ROOF5",
-        "layers": [
-            "Built-up Roofing",
-            "IEAD Roof Insulation",
-            "reforced concrete",
-            "Wood ceiling"
-        ]
-    },
-    {
-        "name": "HORIZONTAL_ROOF6",
-        "layers": [
-            "Built-up Roofing",
-            "IEAD Roof Insulation",
-            "reforced concrete",
-            "Wood ceiling"
-        ]
-    },
-    {
-        "name": "HORIZONTAL_ROOF7",
-        "layers": [
-            "Built-up Roofing",
-            "Mineral wool insulation (with timber fraction)",
-            "Solid wooden slab",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "HORIZONTAL_ROOF8",
-        "layers": [
-            "Built-up Roofing",
-            "Mineral wool insulation (with timber fraction)",
-            "IEAD Roof Insulation",
-            "Solid wooden slab",
-            "Gypsum"
-        ]
-    },
-    {
-        "name": "HORIZONTAL_ROOF9",
-        "layers": [
-            "Built-up Roofing",
-            "IEAD Roof Insulation",
-            "Mineral wool insulation (with timber fraction)",
-            "Solid wooden slab",
-            "Gypsum"
-        ]
-    }
+        {
+            "name": "Generic Context",
+            "layers": ["Material 2"]
+        },
+        {
+            "name": "Generic Exposed Floor",
+            "layers": [
+                "Generic Painted Metal",
+                "Generic Ceiling Air Gap",
+                "Generic 50mm Insulation",
+                "Generic LW Concrete"
+            ]
+        },
+        {
+            "name": "Simil MCV01",
+            "layers": [
+                "2cm Plaster",
+                "HollowBrick_8cm",
+                "AirGap_18cm",
+                "HollowBrick_12cm",
+                "2cm Plaster"
+            ]
+        },
+        {
+            "name": "Reinforced brick-concrete slab U 1.50 Simil SOL04",
+            "layers": ["ReinforcedBrickConcreteSlab", "ConcreteScreed"]
+        },
+        {
+            "name": "Solid brick wall Simil MLP01",
+            "layers": ["2cm Plaster", "SolidBrick_38cm", "2cm Plaster"]
+        },
+        {
+            "name": "SOL03",
+            "layers": [
+                "InternalFlooring_CeramicTile",
+                "CementMortar",
+                "LightweightConcreteScreed",
+                "CementMortar",
+                "HollowBrickConcreteSlab",
+                "ExternalPlaster"
+            ]
+        },
+        {
+            "name": "SOL06 - Solaio in laterocemento",
+            "layers": [
+                "InternalFlooring_CeramicTile",
+                "CementMortar",
+                "ConcreteScreed",
+                "CementMortar",
+                "ReinforcedConcrete",
+                "HollowBrickSlab",
+                "ExternalPlaster"
+            ]
+        },
+        {
+            "name": "MPI02 - P02 - Parete in pietra",
+            "layers": ["ExternalPlaster", "StoneBlock", "2cm Plaster"]
+        },
+        {
+            "name": "Generic Exterior Door",
+            "layers": [
+                "Generic Painted Metal",
+                "Generic 25mm Insulation",
+                "Generic Painted Metal"
+            ]
+        },
+        {
+            "name": "Generic Exterior Wall",
+            "layers": [
+                "Generic Brick",
+                "Generic LW Concrete",
+                "Generic 50mm Insulation",
+                "Generic Wall Air Gap",
+                "Generic Gypsum Board"
+            ]
+        },
+        {
+            "name": "Generic Ground Slab",
+            "layers": ["Generic 50mm Insulation", "Generic HW Concrete"]
+        },
+        {
+            "name": "Generic Interior Ceiling",
+            "layers": [
+                "Generic LW Concrete",
+                "Generic Ceiling Air Gap",
+                "Generic Acoustic Tile"
+            ]
+        },
+        {
+            "name": "Generic Interior Door",
+            "layers": ["Generic 25mm Wood"]
+        },
+        {
+            "name": "Generic Interior Floor",
+            "layers": [
+                "Generic Acoustic Tile",
+                "Generic Ceiling Air Gap",
+                "Generic LW Concrete"
+            ]
+        },
+        {
+            "name": "Generic Interior Wall",
+            "layers": [
+                "Generic Gypsum Board",
+                "Generic Wall Air Gap",
+                "Generic Gypsum Board"
+            ]
+        },
+        {
+            "name": "Generic Roof",
+            "layers": [
+                "Generic Roof Membrane",
+                "Generic 50mm Insulation",
+                "Generic LW Concrete",
+                "Generic Ceiling Air Gap",
+                "Generic Acoustic Tile"
+            ]
+        },
+        {
+            "name": "Generic Shade",
+            "layers": ["Material 1"]
+        },
+        {
+            "name": "Generic Underground Roof",
+            "layers": [
+                "Generic 50mm Insulation",
+                "Generic HW Concrete",
+                "Generic Ceiling Air Gap",
+                "Generic Acoustic Tile"
+            ]
+        },
+        {
+            "name": "Generic Underground Wall",
+            "layers": [
+                "Generic 50mm Insulation",
+                "Generic HW Concrete",
+                "Generic Wall Air Gap",
+                "Generic Gypsum Board"
+            ]
+        },
+        {
+            "name": "ROOF 1",
+            "layers": ["Terracotta", "Solid wooden slab"]
+        },
+        {
+            "name": "OpaqueConstruction_8366c7b7",
+            "layers": ["25mm Stucco", "Hollow block", "Gypsum"]
+        },
+        {
+            "name": "WALL1",
+            "layers": ["25mm Stucco", "Hollow block", "Gypsum"]
+        },
+        {
+            "name": "WALL2",
+            "layers": ["25mm Stucco", "Simple Concrete35", "Gypsum"]
+        },
+        {
+            "name": "WALL3",
+            "layers": [
+                "25mm Stucco",
+                "Hollow block",
+                "Typical Air Wall",
+                "Hollow block",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "WALL4",
+            "layers": ["25mm Stucco", "Clay brick35", "Gypsum"]
+        },
+        {
+            "name": "WALL5",
+            "layers": [
+                "25mm Stucco",
+                "Hollow clay brick 15",
+                "Typical Air Wall",
+                "Clay brick15",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "WALL6",
+            "layers": ["25mm Stucco", "Hollow clay brick 25", "Gypsum"]
+        },
+        {
+            "name": "WALL7",
+            "layers": ["25mm Stucco", "Hollow clay brick 30", "Gypsum"]
+        },
+        {
+            "name": "WALL8",
+            "layers": [
+                "25mm Stucco",
+                "Insulation 3",
+                "Simple Concrete 35",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "WALL9",
+            "layers": [
+                "25mm Stucco",
+                "Insulation35",
+                "Simple Concrete25",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "WALL10",
+            "layers": ["25mm Stucco", "Insulation 3", "Clay brick 35", "Gypsum"]
+        },
+        {
+            "name": "WALL11",
+            "layers": [
+                "25mm Stucco",
+                "Insulation 35",
+                "Hollow clay brick25",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "WALL12",
+            "layers": [
+                "25mm Stucco",
+                "Insulation4",
+                "Hollow clay brick 15",
+                "Typical Air Wall",
+                "Clay brick15",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "WALL13",
+            "layers": [
+                "25mm Stucco",
+                "Wall insulation7",
+                "Simple Concrete25",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "WALL14",
+            "layers": [
+                "25mm Stucco",
+                "Wall Insulation 7",
+                "Hollow clay brick 30",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "WALL15",
+            "layers": [
+                "25mm Stucco",
+                "Insulation 35",
+                "Hollow block",
+                "Typical Air Wall",
+                "Hollow block",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "WALL16",
+            "layers": [
+                "25mm Stucco",
+                "High Insulation10",
+                "Hollow clay brick 25",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "WALL17",
+            "layers": [
+                "25mm Stucco",
+                "HIGH INSULATION15",
+                "Concrete25",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "WALL18",
+            "layers": [
+                "25mm Stucco",
+                "Rockwool",
+                "Hollow clay brick 25",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "WALL19",
+            "layers": [
+                "CLT",
+                "Rockwool (with timber fraction)",
+                "Oriented strand board (OSB)",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "WindowConstruction_9436c677",
+            "layers": ["Single-Aluminum"]
+        },
+        {
+            "name": "WIN1",
+            "layers": ["Single-Aluminum"]
+        },
+        {
+            "name": "WIN2",
+            "layers": ["Single-Wood"]
+        },
+        {
+            "name": "WIN3",
+            "layers": ["Double-Aluminum"]
+        },
+        {
+            "name": "WIN4",
+            "layers": ["Double-wood"]
+        },
+        {
+            "name": "WIN5",
+            "layers": ["Double-Insulated"]
+        },
+        {
+            "name": "WIN6",
+            "layers": ["Double-LowE-Wood"]
+        },
+        {
+            "name": "WIN7",
+            "layers": ["Double-LowE-Reinforced"]
+        },
+        {
+            "name": "WIN8",
+            "layers": ["Triple-LowE"]
+        },
+        {
+            "name": "WIN9",
+            "layers": ["Triple-LowE"]
+        },
+        {
+            "name": "OpaqueConstruction_736ff2c3",
+            "layers": ["Terracotta", "Solid wooden slab"]
+        },
+        {
+            "name": "SLOPED_ROOF1",
+            "layers": ["Terracotta", "Solid wooden slab"]
+        },
+        {
+            "name": "SLOPED_ROOF2",
+            "layers": ["Terracotta", "Solid wooden slab", "Wood ceiling"]
+        },
+        {
+            "name": "SLOPED_ROOF3",
+            "layers": [
+                "Metal Roof Surface",
+                "IEAD Roof Insulation",
+                "reforced concrete",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "SLOPED_ROOF4",
+            "layers": [
+                "Terracotta",
+                "INSULATION4",
+                "Solid wooden slab",
+                "Wood ceiling"
+            ]
+        },
+        {
+            "name": "SLOPED_ROOF5",
+            "layers": [
+                "Terracotta",
+                "IEAD Roof Insulation",
+                "reforced concrete",
+                "Wood ceiling"
+            ]
+        },
+        {
+            "name": "SLOPED_ROOF6",
+            "layers": [
+                "Terracotta",
+                "IEAD Roof Insulation",
+                "reforced concrete",
+                "Wood ceiling"
+            ]
+        },
+        {
+            "name": "SLOPED_ROOF7",
+            "layers": [
+                "Metal Roof Surface",
+                "Mineral wool insulation (with timber fraction)",
+                "Solid wooden slab",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "SLOPED_ROOF8",
+            "layers": [
+                "Metal Roof Surface",
+                "Mineral wool insulation (with timber fraction)",
+                "IEAD Roof Insulation",
+                "Solid wooden slab",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "SLOPED_ROOF9",
+            "layers": [
+                "Metal Roof Surface",
+                "IEAD Roof Insulation",
+                "Mineral wool insulation (with timber fraction)",
+                "Solid wooden slab",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "OpaqueConstruction_03162601",
+            "layers": ["Built-up Roofing", "Solid wooden slab"]
+        },
+        {
+            "name": "HORIZONTAL_ROOF1",
+            "layers": ["Built-up Roofing", "Solid wooden slab"]
+        },
+        {
+            "name": "HORIZONTAL_ROOF2",
+            "layers": ["Built-up Roofing", "Solid wooden slab", "Wood ceiling"]
+        },
+        {
+            "name": "HORIZONTAL_ROOF3",
+            "layers": [
+                "Built-up Roofing",
+                "IEAD Roof Insulation",
+                "reforced concrete",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "HORIZONTAL_ROOF4",
+            "layers": [
+                "Built-up Roofing",
+                "INSULATION4",
+                "Solid wooden slab",
+                "Wood ceiling"
+            ]
+        },
+        {
+            "name": "HORIZONTAL_ROOF5",
+            "layers": [
+                "Built-up Roofing",
+                "IEAD Roof Insulation",
+                "reforced concrete",
+                "Wood ceiling"
+            ]
+        },
+        {
+            "name": "HORIZONTAL_ROOF6",
+            "layers": [
+                "Built-up Roofing",
+                "IEAD Roof Insulation",
+                "reforced concrete",
+                "Wood ceiling"
+            ]
+        },
+        {
+            "name": "HORIZONTAL_ROOF7",
+            "layers": [
+                "Built-up Roofing",
+                "Mineral wool insulation (with timber fraction)",
+                "Solid wooden slab",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "HORIZONTAL_ROOF8",
+            "layers": [
+                "Built-up Roofing",
+                "Mineral wool insulation (with timber fraction)",
+                "IEAD Roof Insulation",
+                "Solid wooden slab",
+                "Gypsum"
+            ]
+        },
+        {
+            "name": "HORIZONTAL_ROOF9",
+            "layers": [
+                "Built-up Roofing",
+                "IEAD Roof Insulation",
+                "Mineral wool insulation (with timber fraction)",
+                "Solid wooden slab",
+                "Gypsum"
+            ]
+        }
     ],
     "air_boundary_constructions": [
-      {
-        "name": "Generic Air Boundary",
-        "air_exchange_method": "None",
-        "simple_mixing_air_changes_per_hour": 0
-      }
+        {
+            "name": "Generic Air Boundary",
+            "air_exchange_method": "None",
+            "simple_mixing_air_changes_per_hour": 0
+        }
     ]
-  }
+}

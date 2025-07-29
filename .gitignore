@@ -1,11 +1,14 @@
 create_archetype.py
 profiles.py
+*.json
+
+# Results
+results/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
-
 
 # C extensions
 *.so
