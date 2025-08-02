@@ -34,11 +34,176 @@
             "visible_absorptance": 0.7
         },
         {
-            "name": "StoneBlock",
+            "name": "StoneBlock_40cm",
+            "roughness": "MediumRough",
+            "thickness": 0.4,
+            "conductivity": 2.4,
+            "density": 2500,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "StoneBlock_50cm",
+            "roughness": "MediumRough",
+            "thickness": 0.5,
+            "conductivity": 2.4,
+            "density": 2500,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "StoneBlock_60cm",
             "roughness": "MediumRough",
             "thickness": 0.6,
             "conductivity": 2.4,
             "density": 2500,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "StoneBlock_70cm",
+            "roughness": "MediumRough",
+            "thickness": 0.7,
+            "conductivity": 2.4,
+            "density": 2500,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "StoneBlock_80cm",
+            "roughness": "MediumRough",
+            "thickness": 0.8,
+            "conductivity": 2.4,
+            "density": 2500,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "StoneBlock_90cm",
+            "roughness": "MediumRough",
+            "thickness": 0.9,
+            "conductivity": 2.4,
+            "density": 2500,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "StoneBlock_100cm",
+            "roughness": "MediumRough",
+            "thickness": 1.0,
+            "conductivity": 2.4,
+            "density": 2500,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "BricksStones_40cm",
+            "roughness": "MediumRough",
+            "thickness": 0.4,
+            "conductivity": 0.9,
+            "density": 1500,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "BricksStones_50cm",
+            "roughness": "MediumRough",
+            "thickness": 0.5,
+            "conductivity": 0.9,
+            "density": 1500,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "BricksStones_60cm",
+            "roughness": "MediumRough",
+            "thickness": 0.6,
+            "conductivity": 0.9,
+            "density": 1500,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "BricksStones_70cm",
+            "roughness": "MediumRough",
+            "thickness": 0.7,
+            "conductivity": 0.9,
+            "density": 1500,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "BricksStones_80cm",
+            "roughness": "MediumRough",
+            "thickness": 0.8,
+            "conductivity": 0.9,
+            "density": 1500,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "BricksStones_90cm",
+            "roughness": "MediumRough",
+            "thickness": 0.9,
+            "conductivity": 0.9,
+            "density": 1500,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "BricksStones_100cm",
+            "roughness": "MediumRough",
+            "thickness": 1.0,
+            "conductivity": 0.9,
+            "density": 1500,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "SemiSolidBrick_25cm",
+            "roughness": "MediumRough",
+            "thickness": 0.25,
+            "conductivity": 0.4,
+            "density": 1000,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "SemiSolidBrick_30cm",
+            "roughness": "MediumRough",
+            "thickness": 0.3,
+            "conductivity": 0.4,
+            "density": 1000,
             "specific_heat": 1000,
             "thermal_absorptance": 0.9,
             "solar_absorptance": 0.7,
@@ -78,7 +243,18 @@
             "visible_absorptance": 0.7
         },
         {
-            "name": "ExternalPlaster",
+            "name": "HollowBrickConcreteBeam_16cm",
+            "roughness": "MediumRough",
+            "thickness": 0.16,
+            "conductivity": 0.5,
+            "density": 900,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "ExternalPlaster_2cm",
             "roughness": "MediumRough",
             "thickness": 0.02,
             "conductivity": 0.9,
@@ -89,9 +265,53 @@
             "visible_absorptance": 0.7
         },
         {
+            "name": "SolidBrick_12cm",
+            "roughness": "MediumRough",
+            "thickness": 0.12,
+            "conductivity": 0.72,
+            "density": 1800,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.65,
+            "visible_absorptance": 0.65
+        },
+        {
+            "name": "SolidBrick_25cm",
+            "roughness": "MediumRough",
+            "thickness": 0.25,
+            "conductivity": 0.72,
+            "density": 1800,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.65,
+            "visible_absorptance": 0.65
+        },
+        {
             "name": "SolidBrick_38cm",
             "roughness": "MediumRough",
             "thickness": 0.38,
+            "conductivity": 0.72,
+            "density": 1800,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.65,
+            "visible_absorptance": 0.65
+        },
+        {
+            "name": "SolidBrick_51cm",
+            "roughness": "MediumRough",
+            "thickness": 0.51,
+            "conductivity": 0.72,
+            "density": 1800,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.65,
+            "visible_absorptance": 0.65
+        },
+        {
+            "name": "SolidBrick_64cm",
+            "roughness": "MediumRough",
+            "thickness": 0.64,
             "conductivity": 0.72,
             "density": 1800,
             "specific_heat": 1000,
@@ -122,7 +342,7 @@
             "visible_absorptance": 0.65
         },
         {
-            "name": "2cm Plaster",
+            "name": "InternalPlaster_2cm",
             "roughness": "Smooth",
             "thickness": 0.02,
             "conductivity": 0.72,
@@ -161,6 +381,17 @@
             "conductivity": 0.4,
             "density": 900,
             "specific_heat": 900,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.65,
+            "visible_absorptance": 0.65
+        },
+        {
+            "name": "HollowBrick_25cm",
+            "roughness": "Rough",
+            "thickness": 0.25,
+            "conductivity": 0.38,
+            "density": 800,
+            "specific_heat": 1000,
             "thermal_absorptance": 0.9,
             "solar_absorptance": 0.65,
             "visible_absorptance": 0.65
@@ -449,13 +680,33 @@
             ]
         },
         {
-            "name": "Simil MCV01",
+            "name": "MCV01 - CV01 - Hollow brick cavity wall",
             "layers": [
-                "2cm Plaster",
+                "ExternalPlaster_2cm",
+                "HollowBrick_25cm",
+                "AirGap_18cm",
                 "HollowBrick_8cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MCV02 - CV02 - Hollow brick cavity wall",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "HollowBrick_25cm",
                 "AirGap_18cm",
                 "HollowBrick_12cm",
-                "2cm Plaster"
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MCV04 - CV04 - Hollow brick cavity wall",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "HollowBrick_12cm",
+                "AirGap_18cm",
+                "HollowBrick_12cm",
+                "InternalPlaster_2cm"
             ]
         },
         {
@@ -463,8 +714,172 @@
             "layers": ["ReinforcedBrickConcreteSlab", "ConcreteScreed"]
         },
         {
-            "name": "Solid brick wall Simil MLP01",
-            "layers": ["2cm Plaster", "SolidBrick_38cm", "2cm Plaster"]
+            "name": "MLP01 - MP01 - Solid brick (2-12-2 cm) wall",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "SolidBrick_12cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MLP01 - MP01 - Solid brick (2-25-2 cm) wall",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "SolidBrick_25cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MLP01 - MP01 - Solid brick (2-38-2 cm) wall",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "SolidBrick_38cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MLP01 - MP01 - Solid brick (2-51-2 cm) wall",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "SolidBrick_51cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MLP01 - MP01 - Solid brick (2-64-2 cm) wall",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "SolidBrick_64cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MLP03 - MP03 - Muratura in laterizio semipieno (2-25-2 cm)",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "SemiSolidBrick_25cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MLP03 - MP03 - Muratura in laterizio semipieno (2-30-2 cm)",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "SemiSolidBrick_30cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MPI02 - P02 - Parete in pietra (2-40-2 cm)",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "StoneBlock_40cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MPI02 - P02 - Parete in pietra (2-50-2 cm)",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "StoneBlock_50cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MPI02 - P02 - Parete in pietra (2-60-2 cm)",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "StoneBlock_60cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MPI02 - P02 - Parete in pietra (2-70-2 cm)",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "StoneBlock_70cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MPI02 - P02 - Parete in pietra (2-80-2 cm)",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "StoneBlock_80cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MPI02 - P02 - Parete in pietra (2-90-2 cm)",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "StoneBlock_90cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MPI02 - P02 - Parete in pietra (2-100-2 cm)",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "StoneBlock_100cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-40-2 cm)",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "BricksStones_40cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-50-2 cm)",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "BricksStones_50cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-60-2 cm)",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "BricksStones_60cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-70-2 cm)",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "BricksStones_70cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-80-2 cm)",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "BricksStones_80cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-90-2 cm)",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "BricksStones_90cm",
+                "InternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-100-2 cm)",
+            "layers": [
+                "ExternalPlaster_2cm",
+                "BricksStones_100cm",
+                "InternalPlaster_2cm"
+            ]
         },
         {
             "name": "SOL03",
@@ -474,7 +889,7 @@
                 "LightweightConcreteScreed",
                 "CementMortar",
                 "HollowBrickConcreteSlab",
-                "ExternalPlaster"
+                "ExternalPlaster_2cm"
             ]
         },
         {
@@ -486,12 +901,19 @@
                 "CementMortar",
                 "ReinforcedConcrete",
                 "HollowBrickSlab",
-                "ExternalPlaster"
+                "ExternalPlaster_2cm"
             ]
         },
         {
-            "name": "MPI02 - P02 - Parete in pietra",
-            "layers": ["ExternalPlaster", "StoneBlock", "2cm Plaster"]
+            "name": "COP01 - Copertura piana non praticabile (2-16-4-2-2-1 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_16cm",
+                "ReinforcedConcrete",
+                "CementMortar",
+                "ConcreteScreed_2cm",
+                "BituminousMembrane_1cm"
+            ]
         },
         {
             "name": "Generic Exterior Door",
