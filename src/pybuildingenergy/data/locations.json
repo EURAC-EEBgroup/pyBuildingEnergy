@@ -1,0 +1,136 @@
+{
+    "Aosta": [
+        {
+            "Climate zone": "E",
+            "Latitude": 45.7438986,
+            "Longitude": 7.2744784,
+            "Location": "Aosta"
+        },
+        {
+            "Climate zone": "F",
+            "Latitude": 45.7962406,
+            "Longitude": 6.9336369,
+            "Location": "Courmayeur"
+        }
+    ],
+    "Apulia": [
+        {
+            "Climate zone": "D",
+            "Latitude": 41.4571452,
+            "Longitude": 15.5096654,
+            "Location": "Foggia"
+        }
+    ],
+    "Calabria": [
+        {
+            "Climate zone": "B",
+            "Latitude": 38.0979857,
+            "Longitude": 15.5891172,
+            "Location": "Reggio Calabria"
+        },
+        {
+            "Climate zone": "C",
+            "Latitude": 39.3048592,
+            "Longitude": 16.2110235,
+            "Location": "Cosenza"
+        },
+        {
+            "Climate zone": "D",
+            "Latitude": 39.3320937,
+            "Longitude": 16.1745676,
+            "Location": "Rende"
+        },
+        {
+            "Climate zone": "E",
+            "Latitude": 39.4981659,
+            "Longitude": 16.3686506,
+            "Location": "Acri"
+        }
+    ],
+    "Lazio": [
+        {
+            "Climate zone": "D",
+            "Latitude": 41.9102083,
+            "Longitude": 12.3708511,
+            "Location": "Roma"
+        }
+    ],
+    "Liguria": [
+        {
+            "Climate zone": "C",
+            "Latitude": 43.8935352,
+            "Longitude": 7.9701929,
+            "Location": "Imperia"
+        },
+        {
+            "Climate zone": "D",
+            "Latitude": 44.4471038,
+            "Longitude": 8.7256856,
+            "Location": "Genoa"
+        },
+        {
+            "Climate zone": "E",
+            "Latitude": 44.4011877,
+            "Longitude": 8.236517,
+            "Location": "Cairo Montenotte"
+        },
+        {
+            "Climate zone": "F",
+            "Latitude": 44.5884658,
+            "Longitude": 9.0045453,
+            "Location": "Crocefieschi"
+        }
+    ],
+    "Lombardy": [
+        {
+            "Climate zone": "E",
+            "Latitude": 45.4628245,
+            "Longitude": 9.0951611,
+            "Location": "Milan"
+        }
+    ],
+    "Piedmont": [
+        {
+            "Climate zone": "E",
+            "Latitude": 45.0735964,
+            "Longitude": 7.59302,
+            "Location": "Turin"
+        },
+        {
+            "Climate zone": "F",
+            "Latitude": 44.3921367,
+            "Longitude": 7.5149037,
+            "Location": "Cuneo"
+        }
+    ],
+    "Sicily": [
+        {
+            "Climate zone": "B",
+            "Latitude": 38.1406497,
+            "Longitude": 13.2747172,
+            "Location": "Palermo"
+        }
+    ],
+    "Trentino": [
+        {
+            "Climate zone": "F",
+            "Latitude": 46.0805136,
+            "Longitude": 11.0790706,
+            "Location": "Trento"
+        },
+        {
+            "Climate zone": "E",
+            "Latitude": 46.4892883,
+            "Longitude": 11.3058726,
+            "Location": "Bolzano"
+        }
+    ],
+    "Tuscany": [
+        {
+            "Climate zone": "D",
+            "Latitude": 43.7800524,
+            "Longitude": 11.1583967,
+            "Location": "Florence"
+        }
+    ]
+}

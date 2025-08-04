@@ -1,10 +1,241 @@
 {
     "materials": [
         {
-            "name": "ReinforcedConcrete",
+            "name": "LightweightConcreteScreed_2cm",
+            "roughness": "MediumRough",
+            "thickness": 0.02,
+            "conductivity": 0.58,
+            "density": 400,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "LightweightConcreteScreed_6cm",
+            "roughness": "MediumRough",
+            "thickness": 0.06,
+            "conductivity": 0.58,
+            "density": 900,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "LightweightConcreteScreed_12cm",
+            "roughness": "MediumRough",
+            "thickness": 0.12,
+            "conductivity": 0.58,
+            "density": 1400,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "CementMortar_2cm",
+            "roughness": "MediumRough",
+            "thickness": 0.02,
+            "conductivity": 1.4,
+            "density": 2000,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "CementMortar_3cm",
+            "roughness": "MediumRough",
+            "thickness": 0.03,
+            "conductivity": 1.4,
+            "density": 2000,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "Gres_1.5cm",
+            "roughness": "MediumRough",
+            "thickness": 0.015,
+            "conductivity": 1.47,
+            "density": 1700,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "HollowBrickConcreteBeam_16cm",
+            "roughness": "MediumRough",
+            "thickness": 0.16,
+            "conductivity": 0.7,
+            "density": 1400,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "HollowBrickConcreteBeam_24cm",
+            "roughness": "MediumRough",
+            "thickness": 0.24,
+            "conductivity": 0.6,
+            "density": 1400,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "ConcreteScreed_2cm",
+            "roughness": "MediumRough",
+            "thickness": 0.02,
+            "conductivity": 1.06,
+            "density": 1500,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "ConcreteScreed_6cm",
+            "roughness": "MediumRough",
+            "thickness": 0.06,
+            "conductivity": 1.06,
+            "density": 1700,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "ConcreteScreed_12cm",
+            "roughness": "MediumRough",
+            "thickness": 0.12,
+            "conductivity": 1.06,
+            "density": 1900,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "BituminousMembrane_1cm",
+            "roughness": "MediumRough",
+            "thickness": 0.01,
+            "conductivity": 0.17,
+            "density": 1200,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.9,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "Polystyrene_2cm",
+            "roughness": "MediumSmooth",
+            "thickness": 0.02,
+            "conductivity": 0.045,
+            "density": 30,
+            "specific_heat": 1220,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "Polystyrene_5cm",
+            "roughness": "MediumSmooth",
+            "thickness": 0.05,
+            "conductivity": 0.045,
+            "density": 30,
+            "specific_heat": 1220,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "CementScreed_2cm",
+            "roughness": "MediumRough",
+            "thickness": 0.02,
+            "conductivity": 1.06,
+            "density": 2000,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "CementScreed_6cm",
+            "roughness": "MediumRough",
+            "thickness": 0.06,
+            "conductivity": 1.06,
+            "density": 2000,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "CementScreed_12cm",
+            "roughness": "MediumRough",
+            "thickness": 0.12,
+            "conductivity": 1.06,
+            "density": 2000,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "ClinkerPaving_3cm",
+            "roughness": "MediumRough",
+            "thickness": 0.03,
+            "conductivity": 0.7,
+            "density": 1500,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "ReinforcedConcrete_4cm",
             "roughness": "MediumRough",
             "thickness": 0.04,
             "conductivity": 1.8,
+            "density": 2400,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "ReinforcedConcreteCastInPlace_10cm",
+            "roughness": "MediumRough",
+            "thickness": 0.1,
+            "conductivity": 1.91,
+            "density": 2400,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "ReinforcedConcreteCastInPlace_20cm",
+            "roughness": "MediumRough",
+            "thickness": 0.2,
+            "conductivity": 1.91,
+            "density": 2400,
+            "specific_heat": 1000,
+            "thermal_absorptance": 0.9,
+            "solar_absorptance": 0.7,
+            "visible_absorptance": 0.7
+        },
+        {
+            "name": "ReinforcedConcreteCastInPlace_30cm",
+            "roughness": "MediumRough",
+            "thickness": 0.3,
+            "conductivity": 1.91,
             "density": 2400,
             "specific_heat": 1000,
             "thermal_absorptance": 0.9,
@@ -204,17 +435,6 @@
             "thickness": 0.3,
             "conductivity": 0.4,
             "density": 1000,
-            "specific_heat": 1000,
-            "thermal_absorptance": 0.9,
-            "solar_absorptance": 0.7,
-            "visible_absorptance": 0.7
-        },
-        {
-            "name": "CementMortar",
-            "roughness": "MediumRough",
-            "thickness": 0.02,
-            "conductivity": 1.4,
-            "density": 2000,
             "specific_heat": 1000,
             "thermal_absorptance": 0.9,
             "solar_absorptance": 0.7,
@@ -709,10 +929,7 @@
                 "InternalPlaster_2cm"
             ]
         },
-        {
-            "name": "Reinforced brick-concrete slab U 1.50 Simil SOL04",
-            "layers": ["ReinforcedBrickConcreteSlab", "ConcreteScreed"]
-        },
+
         {
             "name": "MLP01 - MP01 - Solid brick (2-12-2 cm) wall",
             "layers": [
@@ -882,25 +1099,230 @@
             ]
         },
         {
-            "name": "SOL03",
+            "name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-2-2-16-2 cm)",
             "layers": [
-                "InternalFlooring_CeramicTile",
-                "CementMortar",
-                "LightweightConcreteScreed",
-                "CementMortar",
-                "HollowBrickConcreteSlab",
+                "Gres_1.5cm",
+                "CementMortar_2cm",
+                "ConcreteScreed_2cm",
+                "CementMortar_2cm",
+                "HollowBrickConcreteBeam_16cm",
                 "ExternalPlaster_2cm"
             ]
         },
         {
-            "name": "SOL06 - Solaio in laterocemento",
+            "name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-2-2-24-2 cm)",
             "layers": [
-                "InternalFlooring_CeramicTile",
-                "CementMortar",
-                "ConcreteScreed",
-                "CementMortar",
-                "ReinforcedConcrete",
-                "HollowBrickSlab",
+                "Gres_1.5cm",
+                "CementMortar_2cm",
+                "ConcreteScreed_2cm",
+                "CementMortar_2cm",
+                "HollowBrickConcreteBeam_24cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-6-2-16-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_2cm",
+                "ConcreteScreed_6cm",
+                "CementMortar_2cm",
+                "HollowBrickConcreteBeam_16cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-6-2-24-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_2cm",
+                "ConcreteScreed_6cm",
+                "CementMortar_2cm",
+                "HollowBrickConcreteBeam_24cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-12-2-16-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_2cm",
+                "ConcreteScreed_12cm",
+                "CementMortar_2cm",
+                "HollowBrickConcreteBeam_16cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-12-2-24-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_2cm",
+                "ConcreteScreed_12cm",
+                "CementMortar_2cm",
+                "HollowBrickConcreteBeam_24cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-2-2-4-16-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_2cm",
+                "LightweightConcreteScreed_2cm",
+                "CementMortar_2cm",
+                "ReinforcedConcrete_4cm",
+                "HollowBrickConcreteBeam_16cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-2-2-4-24-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_2cm",
+                "LightweightConcreteScreed_2cm",
+                "CementMortar_2cm",
+                "ReinforcedConcrete_4cm",
+                "HollowBrickConcreteBeam_24cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-6-2-4-16-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_2cm",
+                "LightweightConcreteScreed_6cm",
+                "CementMortar_2cm",
+                "ReinforcedConcrete_4cm",
+                "HollowBrickConcreteBeam_16cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-6-2-4-24-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_2cm",
+                "LightweightConcreteScreed_6cm",
+                "CementMortar_2cm",
+                "ReinforcedConcrete_4cm",
+                "HollowBrickConcreteBeam_24cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-12-2-4-16-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_2cm",
+                "LightweightConcreteScreed_12cm",
+                "CementMortar_2cm",
+                "ReinforcedConcrete_4cm",
+                "HollowBrickConcreteBeam_16cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-12-2-4-24-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_2cm",
+                "LightweightConcreteScreed_12cm",
+                "CementMortar_2cm",
+                "ReinforcedConcrete_4cm",
+                "HollowBrickConcreteBeam_24cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL06 - Solaio in calcestruzzo (1.5-3-2-10-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_3cm",
+                "LightweightConcreteScreed_2cm",
+                "ReinforcedConcreteCastInPlace_10cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL06 - Solaio in calcestruzzo (1.5-3-2-20-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_3cm",
+                "LightweightConcreteScreed_2cm",
+                "ReinforcedConcreteCastInPlace_20cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL06 - Solaio in calcestruzzo (1.5-3-2-30-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_3cm",
+                "LightweightConcreteScreed_2cm",
+                "ReinforcedConcreteCastInPlace_30cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL06 - Solaio in calcestruzzo (1.5-3-6-10-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_3cm",
+                "LightweightConcreteScreed_6cm",
+                "ReinforcedConcreteCastInPlace_10cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL06 - Solaio in calcestruzzo (1.5-3-6-20-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_3cm",
+                "LightweightConcreteScreed_6cm",
+                "ReinforcedConcreteCastInPlace_20cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL06 - Solaio in calcestruzzo (1.5-3-6-30-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_3cm",
+                "LightweightConcreteScreed_6cm",
+                "ReinforcedConcreteCastInPlace_30cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL06 - Solaio in calcestruzzo (1.5-3-12-10-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_3cm",
+                "LightweightConcreteScreed_12cm",
+                "ReinforcedConcreteCastInPlace_10cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL06 - Solaio in calcestruzzo (1.5-3-12-20-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_3cm",
+                "LightweightConcreteScreed_12cm",
+                "ReinforcedConcreteCastInPlace_20cm",
+                "ExternalPlaster_2cm"
+            ]
+        },
+        {
+            "name": "SOL06 - Solaio in calcestruzzo (1.5-3-12-30-2 cm)",
+            "layers": [
+                "Gres_1.5cm",
+                "CementMortar_3cm",
+                "LightweightConcreteScreed_12cm",
+                "ReinforcedConcreteCastInPlace_30cm",
                 "ExternalPlaster_2cm"
             ]
         },
@@ -909,10 +1331,221 @@
             "layers": [
                 "InternalPlaster_2cm",
                 "HollowBrickConcreteBeam_16cm",
-                "ReinforcedConcrete",
-                "CementMortar",
+                "ReinforcedConcrete_4cm",
+                "CementMortar_2cm",
                 "ConcreteScreed_2cm",
                 "BituminousMembrane_1cm"
+            ]
+        },
+        {
+            "name": "COP01 - Copertura piana non praticabile (2-16-4-2-6-1 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_16cm",
+                "ReinforcedConcrete_4cm",
+                "CementMortar_2cm",
+                "ConcreteScreed_6cm",
+                "BituminousMembrane_1cm"
+            ]
+        },
+        {
+            "name": "COP01 - Copertura piana non praticabile (2-16-4-2-12-1 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_16cm",
+                "ReinforcedConcrete_4cm",
+                "CementMortar_2cm",
+                "ConcreteScreed_12cm",
+                "BituminousMembrane_1cm"
+            ]
+        },
+        {
+            "name": "COP01 - Copertura piana non praticabile (2-24-4-2-2-1 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_24cm",
+                "ReinforcedConcrete_4cm",
+                "CementMortar_2cm",
+                "ConcreteScreed_2cm",
+                "BituminousMembrane_1cm"
+            ]
+        },
+        {
+            "name": "COP01 - Copertura piana non praticabile (2-24-4-2-6-1 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_24cm",
+                "ReinforcedConcrete_4cm",
+                "CementMortar_2cm",
+                "ConcreteScreed_6cm",
+                "BituminousMembrane_1cm"
+            ]
+        },
+        {
+            "name": "COP01 - Copertura piana non praticabile (2-24-4-2-12-1 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_24cm",
+                "ReinforcedConcrete_4cm",
+                "CementMortar_2cm",
+                "ConcreteScreed_12cm",
+                "BituminousMembrane_1cm"
+            ]
+        },
+        {
+            "name": "COP03 - Copertura piana praticabile (2-16-4-2-2-1-2-3 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_16cm",
+                "ReinforcedConcrete_4cm",
+                "Polystyrene_2cm",
+                "CementScreed_2cm",
+                "BituminousMembrane_1cm",
+                "Polystyrene_2cm",
+                "ClinkerPaving_3cm"
+            ]
+        },
+        {
+            "name": "COP03 - Copertura piana praticabile (2-16-4-2-6-1-2-3 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_16cm",
+                "ReinforcedConcrete_4cm",
+                "Polystyrene_2cm",
+                "CementScreed_6cm",
+                "BituminousMembrane_1cm",
+                "Polystyrene_2cm",
+                "ClinkerPaving_3cm"
+            ]
+        },
+        {
+            "name": "COP03 - Copertura piana praticabile (2-16-4-2-12-1-2-3 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_16cm",
+                "ReinforcedConcrete_4cm",
+                "Polystyrene_2cm",
+                "CementScreed_12cm",
+                "BituminousMembrane_1cm",
+                "Polystyrene_2cm",
+                "ClinkerPaving_3cm"
+            ]
+        },
+        {
+            "name": "COP03 - Copertura piana praticabile (2-16-4-2-2-1-5-3 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_16cm",
+                "ReinforcedConcrete_4cm",
+                "Polystyrene_2cm",
+                "CementScreed_2cm",
+                "BituminousMembrane_1cm",
+                "Polystyrene_5cm",
+                "ClinkerPaving_3cm"
+            ]
+        },
+        {
+            "name": "COP03 - Copertura piana praticabile (2-16-4-2-6-1-5-3 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_16cm",
+                "ReinforcedConcrete_4cm",
+                "Polystyrene_2cm",
+                "CementScreed_6cm",
+                "BituminousMembrane_1cm",
+                "Polystyrene_5cm",
+                "ClinkerPaving_3cm"
+            ]
+        },
+        {
+            "name": "COP03 - Copertura piana praticabile (2-16-4-2-12-1-5-3 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_16cm",
+                "ReinforcedConcrete_4cm",
+                "Polystyrene_2cm",
+                "CementScreed_12cm",
+                "BituminousMembrane_1cm",
+                "Polystyrene_5cm",
+                "ClinkerPaving_3cm"
+            ]
+        },
+        {
+            "name": "COP03 - Copertura piana praticabile (2-24-4-2-2-1-2-3 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_24cm",
+                "ReinforcedConcrete_4cm",
+                "Polystyrene_2cm",
+                "CementScreed_2cm",
+                "BituminousMembrane_1cm",
+                "Polystyrene_2cm",
+                "ClinkerPaving_3cm"
+            ]
+        },
+        {
+            "name": "COP03 - Copertura piana praticabile (2-24-4-2-6-1-2-3 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_24cm",
+                "ReinforcedConcrete_4cm",
+                "Polystyrene_2cm",
+                "CementScreed_6cm",
+                "BituminousMembrane_1cm",
+                "Polystyrene_2cm",
+                "ClinkerPaving_3cm"
+            ]
+        },
+        {
+            "name": "COP03 - Copertura piana praticabile (2-24-4-2-12-1-2-3 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_24cm",
+                "ReinforcedConcrete_4cm",
+                "Polystyrene_2cm",
+                "CementScreed_12cm",
+                "BituminousMembrane_1cm",
+                "Polystyrene_2cm",
+                "ClinkerPaving_3cm"
+            ]
+        },
+        {
+            "name": "COP03 - Copertura piana praticabile (2-24-4-2-2-1-5-3 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_24cm",
+                "ReinforcedConcrete_4cm",
+                "Polystyrene_2cm",
+                "CementScreed_2cm",
+                "BituminousMembrane_1cm",
+                "Polystyrene_5cm",
+                "ClinkerPaving_3cm"
+            ]
+        },
+        {
+            "name": "COP03 - Copertura piana praticabile (2-24-4-2-6-1-5-3 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_24cm",
+                "ReinforcedConcrete_4cm",
+                "Polystyrene_2cm",
+                "CementScreed_6cm",
+                "BituminousMembrane_1cm",
+                "Polystyrene_5cm",
+                "ClinkerPaving_3cm"
+            ]
+        },
+        {
+            "name": "COP03 - Copertura piana praticabile (2-24-4-2-12-1-5-3 cm)",
+            "layers": [
+                "InternalPlaster_2cm",
+                "HollowBrickConcreteBeam_24cm",
+                "ReinforcedConcrete_4cm",
+                "Polystyrene_2cm",
+                "CementScreed_12cm",
+                "BituminousMembrane_1cm",
+                "Polystyrene_5cm",
+                "ClinkerPaving_3cm"
             ]
         },
         {

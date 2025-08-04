@@ -119,38 +119,7 @@ data = json.load(open("src/pybuildingenergy/data/materials.json"))
 
 # Calculate U-value and thermal capacity
 results = calculate_u_value_and_thermal_capacity(data=data, R_si=0.13, R_se=0.04)
-result = next((x for x in results if x["construction_name"] == "SLOPED_ROOF1"), None)
-result = next((x for x in results if x["construction_name"] == "WALL4"), None)
-result = next((x for x in results if x["construction_name"] == "WIN2"), None)
-result = next(
-    (x for x in results if x["construction_name"] == "Simil MCV01"), None
-)  # Tuscany, entire multi-family block, 1971-1980, D
-result = next(
-    (
-        x
-        for x in results
-        if x["construction_name"] == "Reinforced brick-concrete slab U 1.50 Simil SOL04"
-    ),
-    None,
-)  # Tuscany, entire multi-family block, 1971-1980, D
-result = next(
-    (x for x in results if x["construction_name"] == "Solid brick wall Simil MLP01"),
-    None,
-)  # Piedmont, multi-family, < 1930, E
 
-result = next(
-    (x for x in results if x["construction_name"] == "SOL03"),
-    None,
-)
-
-result = next(
-    (x for x in results if x["construction_name"] == "MPI02 - P02 - Parete in pietra"),
-    None,
-)
-
-result = next(
-    (x for x in results if x["construction_name"] == "SOL06 - Solaio in laterocemento"),
-    None,
-)
-
-print(results)
+# Save construction properties
+with open("src/pybuildingenergy/data/construction_properties.json", "w") as f:
+    json.dump(results, f, indent=4)

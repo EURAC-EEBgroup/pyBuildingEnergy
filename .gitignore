@@ -2,6 +2,12 @@ create_archetype.py
 profiles.py
 *.json
 
+# Exception: allow some data json to be tracked
+!src/pybuildingenergy/data/materials.json
+!src/pybuildingenergy/data/locations.json
+!src/pybuildingenergy/data/construction_properties.json
+!src/pybuildingenergy/data/urbem_long_format_data.parquet
+
 # Results
 results/
 
