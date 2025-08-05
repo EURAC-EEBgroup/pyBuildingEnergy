@@ -2,636 +2,763 @@
     {
         "construction_name": "Generic Context",
         "u_value": 0.8547008547008548,
-        "thermal_capacity": 1.0000000000000002
+        "thermal_capacity": 1.0000000000000002,
+        "type": null
     },
     {
         "construction_name": "Generic Exposed Floor",
         "u_value": 0.45346633650148127,
-        "thermal_capacity": 114978.85
+        "thermal_capacity": 114978.85,
+        "type": null
     },
     {
         "construction_name": "MCV01 - CV01 - Hollow brick cavity wall",
         "u_value": 0.7855174141819092,
-        "thermal_capacity": 338444.8
+        "thermal_capacity": 338444.8,
+        "type": "wall"
     },
     {
         "construction_name": "MCV02 - CV02 - Hollow brick cavity wall",
         "u_value": 0.7187894073139974,
-        "thermal_capacity": 363644.8
+        "thermal_capacity": 363644.8,
+        "type": "wall"
     },
     {
         "construction_name": "MCV04 - CV04 - Hollow brick cavity wall",
         "u_value": 0.9677419354838709,
-        "thermal_capacity": 260844.8
+        "thermal_capacity": 260844.8,
+        "type": "wall"
     },
     {
         "construction_name": "MLP01 - MP01 - Solid brick (2-12-2 cm) wall",
         "u_value": 2.586206896551724,
-        "thermal_capacity": 282240.0
+        "thermal_capacity": 282240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MLP01 - MP01 - Solid brick (2-25-2 cm) wall",
         "u_value": 1.7629774730656218,
-        "thermal_capacity": 516240.0
+        "thermal_capacity": 516240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MLP01 - MP01 - Solid brick (2-38-2 cm) wall",
         "u_value": 1.337295690936107,
-        "thermal_capacity": 750240.0
+        "thermal_capacity": 750240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MLP01 - MP01 - Solid brick (2-51-2 cm) wall",
         "u_value": 1.0771992818671452,
-        "thermal_capacity": 984240.0
+        "thermal_capacity": 984240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MLP01 - MP01 - Solid brick (2-64-2 cm) wall",
         "u_value": 0.9018036072144288,
-        "thermal_capacity": 1218240.0
+        "thermal_capacity": 1218240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MLP03 - MP03 - Muratura in laterizio semipieno (2-25-2 cm)",
         "u_value": 1.1834319526627217,
-        "thermal_capacity": 316240.0
+        "thermal_capacity": 316240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MLP03 - MP03 - Muratura in laterizio semipieno (2-30-2 cm)",
         "u_value": 1.0309278350515465,
-        "thermal_capacity": 366240.0
+        "thermal_capacity": 366240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MPI02 - P02 - Parete in pietra (2-40-2 cm)",
         "u_value": 2.586206896551724,
-        "thermal_capacity": 1066240.0
+        "thermal_capacity": 1066240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MPI02 - P02 - Parete in pietra (2-50-2 cm)",
         "u_value": 2.3346303501945527,
-        "thermal_capacity": 1316240.0
+        "thermal_capacity": 1316240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MPI02 - P02 - Parete in pietra (2-60-2 cm)",
         "u_value": 2.127659574468085,
-        "thermal_capacity": 1566240.0
+        "thermal_capacity": 1566240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MPI02 - P02 - Parete in pietra (2-70-2 cm)",
         "u_value": 1.9543973941368076,
-        "thermal_capacity": 1816240.0
+        "thermal_capacity": 1816240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MPI02 - P02 - Parete in pietra (2-80-2 cm)",
         "u_value": 1.8072289156626502,
-        "thermal_capacity": 2066240.0
+        "thermal_capacity": 2066240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MPI02 - P02 - Parete in pietra (2-90-2 cm)",
         "u_value": 1.680672268907563,
-        "thermal_capacity": 2316240.0
+        "thermal_capacity": 2316240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MPI02 - P02 - Parete in pietra (2-100-2 cm)",
         "u_value": 1.5706806282722512,
-        "thermal_capacity": 2566240.0
+        "thermal_capacity": 2566240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-40-2 cm)",
         "u_value": 1.5050167224080266,
-        "thermal_capacity": 666240.0
+        "thermal_capacity": 666240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-50-2 cm)",
         "u_value": 1.2893982808022921,
-        "thermal_capacity": 816240.0
+        "thermal_capacity": 816240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-60-2 cm)",
         "u_value": 1.1278195488721805,
-        "thermal_capacity": 966240.0
+        "thermal_capacity": 966240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-70-2 cm)",
         "u_value": 1.0022271714922049,
-        "thermal_capacity": 1116240.0
+        "thermal_capacity": 1116240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-80-2 cm)",
         "u_value": 0.9018036072144288,
-        "thermal_capacity": 1266240.0
+        "thermal_capacity": 1266240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-90-2 cm)",
         "u_value": 0.8196721311475411,
-        "thermal_capacity": 1416240.0
+        "thermal_capacity": 1416240.0,
+        "type": "wall"
     },
     {
         "construction_name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-100-2 cm)",
         "u_value": 0.7512520868113524,
-        "thermal_capacity": 1566240.0
+        "thermal_capacity": 1566240.0,
+        "type": "wall"
     },
     {
         "construction_name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-2-2-16-2 cm)",
         "u_value": 1.7547995528350602,
-        "thermal_capacity": 315500.0
+        "thermal_capacity": 315500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-2-2-24-2 cm)",
         "u_value": 1.5387795758991027,
-        "thermal_capacity": 507500.0
+        "thermal_capacity": 507500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-6-2-16-2 cm)",
         "u_value": 1.6458155388139395,
-        "thermal_capacity": 387500.0
+        "thermal_capacity": 387500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-6-2-24-2 cm)",
         "u_value": 1.4543307297289392,
-        "thermal_capacity": 579500.0
+        "thermal_capacity": 579500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-12-2-16-2 cm)",
         "u_value": 1.5055586438699677,
-        "thermal_capacity": 513500.0
+        "thermal_capacity": 513500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-12-2-24-2 cm)",
         "u_value": 1.343715272408046,
-        "thermal_capacity": 705500.0
+        "thermal_capacity": 705500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-2-2-4-16-2 cm)",
         "u_value": 1.6455414434804314,
-        "thermal_capacity": 389500.0
+        "thermal_capacity": 389500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-2-2-4-24-2 cm)",
         "u_value": 1.454116699999886,
-        "thermal_capacity": 581500.0
+        "thermal_capacity": 581500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-6-2-4-16-2 cm)",
         "u_value": 1.4778290969053294,
-        "thermal_capacity": 435500.0
+        "thermal_capacity": 435500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-6-2-4-24-2 cm)",
         "u_value": 1.3215831716962743,
-        "thermal_capacity": 627500.0
+        "thermal_capacity": 627500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-12-2-4-16-2 cm)",
         "u_value": 1.2818598143112445,
-        "thermal_capacity": 549500.0
+        "thermal_capacity": 549500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-12-2-4-24-2 cm)",
         "u_value": 1.162633192818565,
-        "thermal_capacity": 741500.0
+        "thermal_capacity": 741500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL06 - Solaio in calcestruzzo (1.5-3-2-10-2 cm)",
         "u_value": 3.21860451412795,
-        "thermal_capacity": 369500.0
+        "thermal_capacity": 369500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL06 - Solaio in calcestruzzo (1.5-3-2-20-2 cm)",
         "u_value": 2.7544439967529866,
-        "thermal_capacity": 609500.0
+        "thermal_capacity": 609500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL06 - Solaio in calcestruzzo (1.5-3-2-30-2 cm)",
         "u_value": 2.407285234334881,
-        "thermal_capacity": 849500.0
+        "thermal_capacity": 849500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL06 - Solaio in calcestruzzo (1.5-3-6-10-2 cm)",
         "u_value": 2.6339413703626082,
-        "thermal_capacity": 415500.0
+        "thermal_capacity": 415500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL06 - Solaio in calcestruzzo (1.5-3-6-20-2 cm)",
         "u_value": 2.3147334078359334,
-        "thermal_capacity": 655500.0
+        "thermal_capacity": 655500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL06 - Solaio in calcestruzzo (1.5-3-6-30-2 cm)",
         "u_value": 2.0645322660654184,
-        "thermal_capacity": 895500.0
+        "thermal_capacity": 895500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL06 - Solaio in calcestruzzo (1.5-3-12-10-2 cm)",
         "u_value": 2.069932898454323,
-        "thermal_capacity": 529500.0
+        "thermal_capacity": 529500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL06 - Solaio in calcestruzzo (1.5-3-12-20-2 cm)",
         "u_value": 1.8675410333192026,
-        "thermal_capacity": 769500.0
+        "thermal_capacity": 769500.0,
+        "type": "roof"
     },
     {
         "construction_name": "SOL06 - Solaio in calcestruzzo (1.5-3-12-30-2 cm)",
         "u_value": 1.7012025244025546,
-        "thermal_capacity": 1009500.0
+        "thermal_capacity": 1009500.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP01 - Copertura piana non praticabile (2-16-4-2-2-1 cm)",
         "u_value": 1.5823356448262367,
-        "thermal_capacity": 352240.0
+        "thermal_capacity": 352240.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP01 - Copertura piana non praticabile (2-16-4-2-6-1 cm)",
         "u_value": 1.4931768894949669,
-        "thermal_capacity": 424240.0
+        "thermal_capacity": 424240.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP01 - Copertura piana non praticabile (2-16-4-2-12-1 cm)",
         "u_value": 1.376809695953616,
-        "thermal_capacity": 550240.0
+        "thermal_capacity": 550240.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP01 - Copertura piana non praticabile (2-24-4-2-2-1 cm)",
         "u_value": 1.404539421526621,
-        "thermal_capacity": 544240.0
+        "thermal_capacity": 544240.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP01 - Copertura piana non praticabile (2-24-4-2-6-1 cm)",
         "u_value": 1.3338437201275684,
-        "thermal_capacity": 616240.0
+        "thermal_capacity": 616240.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP01 - Copertura piana non praticabile (2-24-4-2-12-1 cm)",
         "u_value": 1.240207337024918,
-        "thermal_capacity": 742240.0
+        "thermal_capacity": 742240.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP03 - Copertura piana praticabile (2-16-4-2-2-1-2-3 cm)",
         "u_value": 0.6453955123960325,
-        "thermal_capacity": 368704.0
+        "thermal_capacity": 368704.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP03 - Copertura piana praticabile (2-16-4-2-6-1-2-3 cm)",
         "u_value": 0.6300509075539066,
-        "thermal_capacity": 448704.0
+        "thermal_capacity": 448704.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP03 - Copertura piana praticabile (2-16-4-2-12-1-2-3 cm)",
         "u_value": 0.6083549861680505,
-        "thermal_capacity": 568704.0
+        "thermal_capacity": 568704.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP03 - Copertura piana praticabile (2-16-4-2-2-1-5-3 cm)",
         "u_value": 0.45124232944482007,
-        "thermal_capacity": 369802.0
+        "thermal_capacity": 369802.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP03 - Copertura piana praticabile (2-16-4-2-6-1-5-3 cm)",
         "u_value": 0.4436872179811704,
-        "thermal_capacity": 449802.0
+        "thermal_capacity": 449802.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP03 - Copertura piana praticabile (2-16-4-2-12-1-5-3 cm)",
         "u_value": 0.43281728420440707,
-        "thermal_capacity": 569802.0
+        "thermal_capacity": 569802.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP03 - Copertura piana praticabile (2-24-4-2-2-1-2-3 cm)",
         "u_value": 0.613708723890647,
-        "thermal_capacity": 560704.0
+        "thermal_capacity": 560704.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP03 - Copertura piana praticabile (2-24-4-2-6-1-2-3 cm)",
         "u_value": 0.5998176549256841,
-        "thermal_capacity": 640704.0
+        "thermal_capacity": 640704.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP03 - Copertura piana praticabile (2-24-4-2-12-1-2-3 cm)",
         "u_value": 0.5801214061661316,
-        "thermal_capacity": 760704.0
+        "thermal_capacity": 760704.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP03 - Copertura piana praticabile (2-24-4-2-2-1-5-3 cm)",
         "u_value": 0.4355203133861864,
-        "thermal_capacity": 561802.0
+        "thermal_capacity": 561802.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP03 - Copertura piana praticabile (2-24-4-2-6-1-5-3 cm)",
         "u_value": 0.42847838729138077,
-        "thermal_capacity": 641802.0
+        "thermal_capacity": 641802.0,
+        "type": "roof"
     },
     {
         "construction_name": "COP03 - Copertura piana praticabile (2-24-4-2-12-1-5-3 cm)",
         "u_value": 0.41833236592330864,
-        "thermal_capacity": 761802.0
+        "thermal_capacity": 761802.0,
+        "type": "roof"
     },
     {
         "construction_name": "Generic Exterior Door",
         "u_value": 0.9966115208291807,
-        "thermal_capacity": 10759.45
+        "thermal_capacity": 10759.45,
+        "type": null
     },
     {
         "construction_name": "Generic Exterior Wall",
         "u_value": 0.4226976711509313,
-        "thermal_capacity": 273003.9
+        "thermal_capacity": 273003.9,
+        "type": null
     },
     {
         "construction_name": "Generic Ground Slab",
         "u_value": 0.5156683855612851,
-        "thermal_capacity": 405801.5
+        "thermal_capacity": 405801.5,
+        "type": null
     },
     {
         "construction_name": "Generic Interior Ceiling",
         "u_value": 1.146961700996981,
-        "thermal_capacity": 111990.4
+        "thermal_capacity": 111990.4,
+        "type": null
     },
     {
         "construction_name": "Generic Interior Door",
         "u_value": 2.9469548133595285,
-        "thermal_capacity": 25172.415999999997
+        "thermal_capacity": 25172.415999999997,
+        "type": null
     },
     {
         "construction_name": "Generic Interior Floor",
         "u_value": 1.146961700996981,
-        "thermal_capacity": 111990.4
+        "thermal_capacity": 111990.4,
+        "type": null
     },
     {
         "construction_name": "Generic Interior Wall",
         "u_value": 2.089099956542336,
-        "thermal_capacity": 22276.8
+        "thermal_capacity": 22276.8,
+        "type": null
     },
     {
         "construction_name": "Generic Roof",
         "u_value": 0.3844622857605831,
-        "thermal_capacity": 130943.9
+        "thermal_capacity": 130943.9,
+        "type": null
     },
     {
         "construction_name": "Generic Shade",
         "u_value": 0.8547008547008548,
-        "thermal_capacity": 1.0000000000000002
+        "thermal_capacity": 1.0000000000000002,
+        "type": null
     },
     {
         "construction_name": "Generic Underground Roof",
         "u_value": 0.40776046160199236,
-        "thermal_capacity": 410271.9
+        "thermal_capacity": 410271.9,
+        "type": null
     },
     {
         "construction_name": "Generic Underground Wall",
         "u_value": 0.4611417079733447,
-        "thermal_capacity": 417003.9
+        "thermal_capacity": 417003.9,
+        "type": null
     },
     {
         "construction_name": "ROOF 1",
         "u_value": 1.9228452326449965,
-        "thermal_capacity": 89459.20000000001
+        "thermal_capacity": 89459.20000000001,
+        "type": null
     },
     {
         "construction_name": "OpaqueConstruction_8366c7b7",
         "u_value": 3.085930330446905,
-        "thermal_capacity": 51952.046287480014
+        "thermal_capacity": 51952.046287480014,
+        "type": null
     },
     {
         "construction_name": "WALL1",
         "u_value": 3.085930330446905,
-        "thermal_capacity": 51952.046287480014
+        "thermal_capacity": 51952.046287480014,
+        "type": null
     },
     {
         "construction_name": "WALL2",
         "u_value": 3.085930330446905,
-        "thermal_capacity": 51952.046287480014
+        "thermal_capacity": 51952.046287480014,
+        "type": null
     },
     {
         "construction_name": "WALL3",
         "u_value": 3.085930330446905,
-        "thermal_capacity": 51952.046287480014
+        "thermal_capacity": 51952.046287480014,
+        "type": null
     },
     {
         "construction_name": "WALL4",
         "u_value": 1.37825402158897,
-        "thermal_capacity": 588317.58508748
+        "thermal_capacity": 588317.58508748,
+        "type": null
     },
     {
         "construction_name": "WALL5",
         "u_value": 3.085930330446905,
-        "thermal_capacity": 51952.046287480014
+        "thermal_capacity": 51952.046287480014,
+        "type": null
     },
     {
         "construction_name": "WALL6",
         "u_value": 1.130856355629126,
-        "thermal_capacity": 430110.14628748
+        "thermal_capacity": 430110.14628748,
+        "type": null
     },
     {
         "construction_name": "WALL7",
         "u_value": 3.085930330446905,
-        "thermal_capacity": 51952.046287480014
+        "thermal_capacity": 51952.046287480014,
+        "type": null
     },
     {
         "construction_name": "WALL8",
         "u_value": 3.085930330446905,
-        "thermal_capacity": 51952.046287480014
+        "thermal_capacity": 51952.046287480014,
+        "type": null
     },
     {
         "construction_name": "WALL9",
         "u_value": 3.085930330446905,
-        "thermal_capacity": 51952.046287480014
+        "thermal_capacity": 51952.046287480014,
+        "type": null
     },
     {
         "construction_name": "WALL10",
         "u_value": 3.085930330446905,
-        "thermal_capacity": 51952.046287480014
+        "thermal_capacity": 51952.046287480014,
+        "type": null
     },
     {
         "construction_name": "WALL11",
         "u_value": 3.085930330446905,
-        "thermal_capacity": 51952.046287480014
+        "thermal_capacity": 51952.046287480014,
+        "type": null
     },
     {
         "construction_name": "WALL12",
         "u_value": 3.085930330446905,
-        "thermal_capacity": 51952.046287480014
+        "thermal_capacity": 51952.046287480014,
+        "type": null
     },
     {
         "construction_name": "WALL13",
         "u_value": 3.085930330446905,
-        "thermal_capacity": 51952.046287480014
+        "thermal_capacity": 51952.046287480014,
+        "type": null
     },
     {
         "construction_name": "WALL14",
         "u_value": 3.085930330446905,
-        "thermal_capacity": 51952.046287480014
+        "thermal_capacity": 51952.046287480014,
+        "type": null
     },
     {
         "construction_name": "WALL15",
         "u_value": 3.085930330446905,
-        "thermal_capacity": 51952.046287480014
+        "thermal_capacity": 51952.046287480014,
+        "type": null
     },
     {
         "construction_name": "WALL16",
         "u_value": 1.130856355629126,
-        "thermal_capacity": 430110.14628748
+        "thermal_capacity": 430110.14628748,
+        "type": null
     },
     {
         "construction_name": "WALL17",
         "u_value": 3.085930330446905,
-        "thermal_capacity": 51952.046287480014
+        "thermal_capacity": 51952.046287480014,
+        "type": null
     },
     {
         "construction_name": "WALL18",
         "u_value": 1.130856355629126,
-        "thermal_capacity": 430110.14628748
+        "thermal_capacity": 430110.14628748,
+        "type": null
     },
     {
         "construction_name": "WALL19",
         "u_value": 3.463203463203463,
-        "thermal_capacity": 12377.873
+        "thermal_capacity": 12377.873,
+        "type": null
     },
     {
         "construction_name": "WindowConstruction_9436c677",
         "u_value": 5.01,
-        "thermal_capacity": 0
+        "thermal_capacity": 0,
+        "type": null
     },
     {
         "construction_name": "WIN1",
         "u_value": 5.01,
-        "thermal_capacity": 0
+        "thermal_capacity": 0,
+        "type": null
     },
     {
         "construction_name": "WIN2",
         "u_value": 4.5,
-        "thermal_capacity": 0
+        "thermal_capacity": 0,
+        "type": null
     },
     {
         "construction_name": "WIN3",
         "u_value": 3.3,
-        "thermal_capacity": 0
+        "thermal_capacity": 0,
+        "type": null
     },
     {
         "construction_name": "WIN4",
         "u_value": 2.7,
-        "thermal_capacity": 0
+        "thermal_capacity": 0,
+        "type": null
     },
     {
         "construction_name": "WIN5",
         "u_value": 2.4,
-        "thermal_capacity": 0
+        "thermal_capacity": 0,
+        "type": null
     },
     {
         "construction_name": "WIN6",
         "u_value": 1.7,
-        "thermal_capacity": 0
+        "thermal_capacity": 0,
+        "type": null
     },
     {
         "construction_name": "WIN7",
         "u_value": 1.3,
-        "thermal_capacity": 0
+        "thermal_capacity": 0,
+        "type": null
     },
     {
         "construction_name": "WIN8",
         "u_value": 1.07,
-        "thermal_capacity": 0
+        "thermal_capacity": 0,
+        "type": null
     },
     {
         "construction_name": "WIN9",
         "u_value": 1.07,
-        "thermal_capacity": 0
+        "thermal_capacity": 0,
+        "type": null
     },
     {
         "construction_name": "OpaqueConstruction_736ff2c3",
         "u_value": 1.9228452326449965,
-        "thermal_capacity": 89459.20000000001
+        "thermal_capacity": 89459.20000000001,
+        "type": null
     },
     {
         "construction_name": "SLOPED_ROOF1",
         "u_value": 1.9228452326449965,
-        "thermal_capacity": 89459.20000000001
+        "thermal_capacity": 89459.20000000001,
+        "type": null
     },
     {
         "construction_name": "SLOPED_ROOF2",
         "u_value": 1.9228452326449965,
-        "thermal_capacity": 89459.20000000001
+        "thermal_capacity": 89459.20000000001,
+        "type": null
     },
     {
         "construction_name": "SLOPED_ROOF3",
         "u_value": 3.463203463203463,
-        "thermal_capacity": 12377.873
+        "thermal_capacity": 12377.873,
+        "type": null
     },
     {
         "construction_name": "SLOPED_ROOF4",
         "u_value": 1.9228452326449965,
-        "thermal_capacity": 89459.20000000001
+        "thermal_capacity": 89459.20000000001,
+        "type": null
     },
     {
         "construction_name": "SLOPED_ROOF5",
         "u_value": 5.126557882564564,
-        "thermal_capacity": 33299.200000000004
+        "thermal_capacity": 33299.200000000004,
+        "type": null
     },
     {
         "construction_name": "SLOPED_ROOF6",
         "u_value": 5.126557882564564,
-        "thermal_capacity": 33299.200000000004
+        "thermal_capacity": 33299.200000000004,
+        "type": null
     },
     {
         "construction_name": "SLOPED_ROOF7",
         "u_value": 1.6293279022403258,
-        "thermal_capacity": 68537.87299999999
+        "thermal_capacity": 68537.87299999999,
+        "type": null
     },
     {
         "construction_name": "SLOPED_ROOF8",
         "u_value": 1.6293279022403258,
-        "thermal_capacity": 68537.87299999999
+        "thermal_capacity": 68537.87299999999,
+        "type": null
     },
     {
         "construction_name": "SLOPED_ROOF9",
         "u_value": 1.6293279022403258,
-        "thermal_capacity": 68537.87299999999
+        "thermal_capacity": 68537.87299999999,
+        "type": null
     },
     {
         "construction_name": "OpaqueConstruction_03162601",
         "u_value": 2.0202020202020203,
-        "thermal_capacity": 56160.0
+        "thermal_capacity": 56160.0,
+        "type": null
     },
     {
         "construction_name": "HORIZONTAL_ROOF1",
         "u_value": 2.0202020202020203,
-        "thermal_capacity": 56160.0
+        "thermal_capacity": 56160.0,
+        "type": null
     },
     {
         "construction_name": "HORIZONTAL_ROOF2",
         "u_value": 2.0202020202020203,
-        "thermal_capacity": 56160.0
+        "thermal_capacity": 56160.0,
+        "type": null
     },
     {
         "construction_name": "HORIZONTAL_ROOF3",
         "u_value": 3.463203463203463,
-        "thermal_capacity": 12377.873
+        "thermal_capacity": 12377.873,
+        "type": null
     },
     {
         "construction_name": "HORIZONTAL_ROOF4",
         "u_value": 2.0202020202020203,
-        "thermal_capacity": 56160.0
+        "thermal_capacity": 56160.0,
+        "type": null
     },
     {
         "construction_name": "HORIZONTAL_ROOF5",
         "u_value": 2.0202020202020203,
-        "thermal_capacity": 0.0
+        "thermal_capacity": 0.0,
+        "type": null
     },
     {
         "construction_name": "HORIZONTAL_ROOF6",
         "u_value": 2.0202020202020203,
-        "thermal_capacity": 0.0
+        "thermal_capacity": 0.0,
+        "type": null
     },
     {
         "construction_name": "HORIZONTAL_ROOF7",
         "u_value": 1.6293279022403258,
-        "thermal_capacity": 68537.87299999999
+        "thermal_capacity": 68537.87299999999,
+        "type": null
     },
     {
         "construction_name": "HORIZONTAL_ROOF8",
         "u_value": 1.6293279022403258,
-        "thermal_capacity": 68537.87299999999
+        "thermal_capacity": 68537.87299999999,
+        "type": null
     },
     {
         "construction_name": "HORIZONTAL_ROOF9",
         "u_value": 1.6293279022403258,
-        "thermal_capacity": 68537.87299999999
+        "thermal_capacity": 68537.87299999999,
+        "type": null
     }
 ]

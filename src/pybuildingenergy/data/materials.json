@@ -907,7 +907,8 @@
                 "AirGap_18cm",
                 "HollowBrick_8cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MCV02 - CV02 - Hollow brick cavity wall",
@@ -917,7 +918,8 @@
                 "AirGap_18cm",
                 "HollowBrick_12cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MCV04 - CV04 - Hollow brick cavity wall",
@@ -927,7 +929,8 @@
                 "AirGap_18cm",
                 "HollowBrick_12cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
 
         {
@@ -936,7 +939,8 @@
                 "ExternalPlaster_2cm",
                 "SolidBrick_12cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MLP01 - MP01 - Solid brick (2-25-2 cm) wall",
@@ -944,7 +948,8 @@
                 "ExternalPlaster_2cm",
                 "SolidBrick_25cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MLP01 - MP01 - Solid brick (2-38-2 cm) wall",
@@ -952,7 +957,8 @@
                 "ExternalPlaster_2cm",
                 "SolidBrick_38cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MLP01 - MP01 - Solid brick (2-51-2 cm) wall",
@@ -960,7 +966,8 @@
                 "ExternalPlaster_2cm",
                 "SolidBrick_51cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MLP01 - MP01 - Solid brick (2-64-2 cm) wall",
@@ -968,7 +975,8 @@
                 "ExternalPlaster_2cm",
                 "SolidBrick_64cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MLP03 - MP03 - Muratura in laterizio semipieno (2-25-2 cm)",
@@ -976,7 +984,8 @@
                 "ExternalPlaster_2cm",
                 "SemiSolidBrick_25cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MLP03 - MP03 - Muratura in laterizio semipieno (2-30-2 cm)",
@@ -984,7 +993,8 @@
                 "ExternalPlaster_2cm",
                 "SemiSolidBrick_30cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MPI02 - P02 - Parete in pietra (2-40-2 cm)",
@@ -992,7 +1002,8 @@
                 "ExternalPlaster_2cm",
                 "StoneBlock_40cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MPI02 - P02 - Parete in pietra (2-50-2 cm)",
@@ -1000,7 +1011,8 @@
                 "ExternalPlaster_2cm",
                 "StoneBlock_50cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MPI02 - P02 - Parete in pietra (2-60-2 cm)",
@@ -1008,7 +1020,8 @@
                 "ExternalPlaster_2cm",
                 "StoneBlock_60cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MPI02 - P02 - Parete in pietra (2-70-2 cm)",
@@ -1016,7 +1029,8 @@
                 "ExternalPlaster_2cm",
                 "StoneBlock_70cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MPI02 - P02 - Parete in pietra (2-80-2 cm)",
@@ -1024,7 +1038,8 @@
                 "ExternalPlaster_2cm",
                 "StoneBlock_80cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MPI02 - P02 - Parete in pietra (2-90-2 cm)",
@@ -1032,7 +1047,8 @@
                 "ExternalPlaster_2cm",
                 "StoneBlock_90cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MPI02 - P02 - Parete in pietra (2-100-2 cm)",
@@ -1040,7 +1056,8 @@
                 "ExternalPlaster_2cm",
                 "StoneBlock_100cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-40-2 cm)",
@@ -1048,7 +1065,8 @@
                 "ExternalPlaster_2cm",
                 "BricksStones_40cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-50-2 cm)",
@@ -1056,7 +1074,8 @@
                 "ExternalPlaster_2cm",
                 "BricksStones_50cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-60-2 cm)",
@@ -1064,7 +1083,8 @@
                 "ExternalPlaster_2cm",
                 "BricksStones_60cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-70-2 cm)",
@@ -1072,7 +1092,8 @@
                 "ExternalPlaster_2cm",
                 "BricksStones_70cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-80-2 cm)",
@@ -1080,7 +1101,8 @@
                 "ExternalPlaster_2cm",
                 "BricksStones_80cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-90-2 cm)",
@@ -1088,7 +1110,8 @@
                 "ExternalPlaster_2cm",
                 "BricksStones_90cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "MCO01 - CO1 - Muratura in mattoni e sassi (2-100-2 cm)",
@@ -1096,7 +1119,8 @@
                 "ExternalPlaster_2cm",
                 "BricksStones_100cm",
                 "InternalPlaster_2cm"
-            ]
+            ],
+            "type": "wall"
         },
         {
             "name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-2-2-16-2 cm)",
@@ -1107,7 +1131,8 @@
                 "CementMortar_2cm",
                 "HollowBrickConcreteBeam_16cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-2-2-24-2 cm)",
@@ -1118,7 +1143,8 @@
                 "CementMortar_2cm",
                 "HollowBrickConcreteBeam_24cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-6-2-16-2 cm)",
@@ -1129,7 +1155,8 @@
                 "CementMortar_2cm",
                 "HollowBrickConcreteBeam_16cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-6-2-24-2 cm)",
@@ -1140,7 +1167,8 @@
                 "CementMortar_2cm",
                 "HollowBrickConcreteBeam_24cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-12-2-16-2 cm)",
@@ -1151,7 +1179,8 @@
                 "CementMortar_2cm",
                 "HollowBrickConcreteBeam_16cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL03 - Solaio in laterocemento - blocchi collaboranti (1.5-2-12-2-24-2 cm)",
@@ -1162,7 +1191,8 @@
                 "CementMortar_2cm",
                 "HollowBrickConcreteBeam_24cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-2-2-4-16-2 cm)",
@@ -1174,7 +1204,8 @@
                 "ReinforcedConcrete_4cm",
                 "HollowBrickConcreteBeam_16cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-2-2-4-24-2 cm)",
@@ -1186,7 +1217,8 @@
                 "ReinforcedConcrete_4cm",
                 "HollowBrickConcreteBeam_24cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-6-2-4-16-2 cm)",
@@ -1198,7 +1230,8 @@
                 "ReinforcedConcrete_4cm",
                 "HollowBrickConcreteBeam_16cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-6-2-4-24-2 cm)",
@@ -1210,7 +1243,8 @@
                 "ReinforcedConcrete_4cm",
                 "HollowBrickConcreteBeam_24cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-12-2-4-16-2 cm)",
@@ -1222,7 +1256,8 @@
                 "ReinforcedConcrete_4cm",
                 "HollowBrickConcreteBeam_16cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL04 - Solaio in laterocemento - blocchi non collaboranti (1.5-2-12-2-4-24-2 cm)",
@@ -1234,7 +1269,8 @@
                 "ReinforcedConcrete_4cm",
                 "HollowBrickConcreteBeam_24cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL06 - Solaio in calcestruzzo (1.5-3-2-10-2 cm)",
@@ -1244,7 +1280,8 @@
                 "LightweightConcreteScreed_2cm",
                 "ReinforcedConcreteCastInPlace_10cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL06 - Solaio in calcestruzzo (1.5-3-2-20-2 cm)",
@@ -1254,7 +1291,8 @@
                 "LightweightConcreteScreed_2cm",
                 "ReinforcedConcreteCastInPlace_20cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL06 - Solaio in calcestruzzo (1.5-3-2-30-2 cm)",
@@ -1264,7 +1302,8 @@
                 "LightweightConcreteScreed_2cm",
                 "ReinforcedConcreteCastInPlace_30cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL06 - Solaio in calcestruzzo (1.5-3-6-10-2 cm)",
@@ -1274,7 +1313,8 @@
                 "LightweightConcreteScreed_6cm",
                 "ReinforcedConcreteCastInPlace_10cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL06 - Solaio in calcestruzzo (1.5-3-6-20-2 cm)",
@@ -1284,7 +1324,8 @@
                 "LightweightConcreteScreed_6cm",
                 "ReinforcedConcreteCastInPlace_20cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL06 - Solaio in calcestruzzo (1.5-3-6-30-2 cm)",
@@ -1294,7 +1335,8 @@
                 "LightweightConcreteScreed_6cm",
                 "ReinforcedConcreteCastInPlace_30cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL06 - Solaio in calcestruzzo (1.5-3-12-10-2 cm)",
@@ -1304,7 +1346,8 @@
                 "LightweightConcreteScreed_12cm",
                 "ReinforcedConcreteCastInPlace_10cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL06 - Solaio in calcestruzzo (1.5-3-12-20-2 cm)",
@@ -1314,7 +1357,8 @@
                 "LightweightConcreteScreed_12cm",
                 "ReinforcedConcreteCastInPlace_20cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "SOL06 - Solaio in calcestruzzo (1.5-3-12-30-2 cm)",
@@ -1324,7 +1368,8 @@
                 "LightweightConcreteScreed_12cm",
                 "ReinforcedConcreteCastInPlace_30cm",
                 "ExternalPlaster_2cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP01 - Copertura piana non praticabile (2-16-4-2-2-1 cm)",
@@ -1335,7 +1380,8 @@
                 "CementMortar_2cm",
                 "ConcreteScreed_2cm",
                 "BituminousMembrane_1cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP01 - Copertura piana non praticabile (2-16-4-2-6-1 cm)",
@@ -1346,7 +1392,8 @@
                 "CementMortar_2cm",
                 "ConcreteScreed_6cm",
                 "BituminousMembrane_1cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP01 - Copertura piana non praticabile (2-16-4-2-12-1 cm)",
@@ -1357,7 +1404,8 @@
                 "CementMortar_2cm",
                 "ConcreteScreed_12cm",
                 "BituminousMembrane_1cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP01 - Copertura piana non praticabile (2-24-4-2-2-1 cm)",
@@ -1368,7 +1416,8 @@
                 "CementMortar_2cm",
                 "ConcreteScreed_2cm",
                 "BituminousMembrane_1cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP01 - Copertura piana non praticabile (2-24-4-2-6-1 cm)",
@@ -1379,7 +1428,8 @@
                 "CementMortar_2cm",
                 "ConcreteScreed_6cm",
                 "BituminousMembrane_1cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP01 - Copertura piana non praticabile (2-24-4-2-12-1 cm)",
@@ -1390,7 +1440,8 @@
                 "CementMortar_2cm",
                 "ConcreteScreed_12cm",
                 "BituminousMembrane_1cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP03 - Copertura piana praticabile (2-16-4-2-2-1-2-3 cm)",
@@ -1403,7 +1454,8 @@
                 "BituminousMembrane_1cm",
                 "Polystyrene_2cm",
                 "ClinkerPaving_3cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP03 - Copertura piana praticabile (2-16-4-2-6-1-2-3 cm)",
@@ -1416,7 +1468,8 @@
                 "BituminousMembrane_1cm",
                 "Polystyrene_2cm",
                 "ClinkerPaving_3cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP03 - Copertura piana praticabile (2-16-4-2-12-1-2-3 cm)",
@@ -1429,7 +1482,8 @@
                 "BituminousMembrane_1cm",
                 "Polystyrene_2cm",
                 "ClinkerPaving_3cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP03 - Copertura piana praticabile (2-16-4-2-2-1-5-3 cm)",
@@ -1442,7 +1496,8 @@
                 "BituminousMembrane_1cm",
                 "Polystyrene_5cm",
                 "ClinkerPaving_3cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP03 - Copertura piana praticabile (2-16-4-2-6-1-5-3 cm)",
@@ -1455,7 +1510,8 @@
                 "BituminousMembrane_1cm",
                 "Polystyrene_5cm",
                 "ClinkerPaving_3cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP03 - Copertura piana praticabile (2-16-4-2-12-1-5-3 cm)",
@@ -1468,7 +1524,8 @@
                 "BituminousMembrane_1cm",
                 "Polystyrene_5cm",
                 "ClinkerPaving_3cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP03 - Copertura piana praticabile (2-24-4-2-2-1-2-3 cm)",
@@ -1481,7 +1538,8 @@
                 "BituminousMembrane_1cm",
                 "Polystyrene_2cm",
                 "ClinkerPaving_3cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP03 - Copertura piana praticabile (2-24-4-2-6-1-2-3 cm)",
@@ -1494,7 +1552,8 @@
                 "BituminousMembrane_1cm",
                 "Polystyrene_2cm",
                 "ClinkerPaving_3cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP03 - Copertura piana praticabile (2-24-4-2-12-1-2-3 cm)",
@@ -1507,7 +1566,8 @@
                 "BituminousMembrane_1cm",
                 "Polystyrene_2cm",
                 "ClinkerPaving_3cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP03 - Copertura piana praticabile (2-24-4-2-2-1-5-3 cm)",
@@ -1520,7 +1580,8 @@
                 "BituminousMembrane_1cm",
                 "Polystyrene_5cm",
                 "ClinkerPaving_3cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP03 - Copertura piana praticabile (2-24-4-2-6-1-5-3 cm)",
@@ -1533,7 +1594,8 @@
                 "BituminousMembrane_1cm",
                 "Polystyrene_5cm",
                 "ClinkerPaving_3cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "COP03 - Copertura piana praticabile (2-24-4-2-12-1-5-3 cm)",
@@ -1546,7 +1608,8 @@
                 "BituminousMembrane_1cm",
                 "Polystyrene_5cm",
                 "ClinkerPaving_3cm"
-            ]
+            ],
+            "type": "roof"
         },
         {
             "name": "Generic Exterior Door",

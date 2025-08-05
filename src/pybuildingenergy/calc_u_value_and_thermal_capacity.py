@@ -60,6 +60,7 @@ def calculate_u_value_and_thermal_capacity(data, R_si=0.13, R_se=0.04):
                 "construction_name": construction_name,
                 "u_value": u_value,
                 "thermal_capacity": total_thermal_capacity,
+                "type": construction.get("type", None),
             }
         )
 

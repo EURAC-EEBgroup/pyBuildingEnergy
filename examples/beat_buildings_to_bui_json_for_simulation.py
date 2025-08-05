@@ -28,29 +28,9 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     return distance
 
 
-def map_building_to_urbem_scorecard(building, df, climate_zone):
-    """
-    Map building data to the best matching URBEM scorecard row.
-
-    Filtering is done in the following order:
-    1. Filter for residential buildings (excluding non-residential)
-    2. For SFH: filter for 'Single' in building category
-       For other types: filter for 'multifamily' or 'multi-family' in building category
-    3. Filter for matching climate zone
-    4. If multiple matches, select the one with closest construction period
-
-    Args:
-        building (dict): The building data from BEAT
-        df (pd.DataFrame): The URBEM scorecard data
-        climate_zone (str): The climate zone (A-F) determined from HDD
-
-    Returns:
-        pd.DataFrame: The best matching row(s) from the URBEM scorecard
-    """
-    # Make a copy of the dataframe to avoid modifying the original
+def filter_residential_buildings(df):
+    """Filter out non-residential buildings from URBEM scorecard data."""
     filtered_df = df.copy()
-
-    # 1. Filter for residential buildings (case insensitive, exclude non-residential)
     filtered_df = filtered_df[
         filtered_df["Building category"].str.contains(
             "residential", case=False, na=False
@@ -59,175 +39,296 @@ def map_building_to_urbem_scorecard(building, df, climate_zone):
             "non-residential", case=False, na=False
         )
     ]
+    return filtered_df
 
-    if len(filtered_df) == 0:
-        return df.head(1)  # Fallback if no residential buildings found
 
-    # 2. Filter based on building type (SFH vs multi-family)
+def filter_by_building_type(df, building):
+    """
+    Filter URBEM scorecard data based on building type.
+
+    For single family homes, look for 'Single' in building category.
+    For multi-family, look for 'multifamily' or 'multi-family'.
+    """
     beat_building_type = building["building"]["type"].lower()
     is_sfh = "single" in beat_building_type or beat_building_type == "sfh"
 
     if is_sfh:
-        # For single family homes, look for 'Single' in building category
-        filtered_df = filtered_df[
-            filtered_df["Building category"].str.contains(
-                "single", case=False, na=False
-            )
+        filtered_df = df[
+            df["Building category"].str.contains("single", case=False, na=False)
         ]
     else:
-        # For multi-family, look for 'multifamily' or 'multi-family'
-        filtered_df = filtered_df[
-            filtered_df["Building category"].str.contains(
+        filtered_df = df[
+            df["Building category"].str.contains(
                 "multi[- ]?family", case=False, na=False, regex=True
             )
         ]
+    return filtered_df
 
-    if len(filtered_df) == 0:
-        return df.head(1)  # Fallback if no matching building type found
 
-    # 3. Filter for matching climate zone
-    climate_filtered = filtered_df[filtered_df["Climate"] == climate_zone]
+# Function to split climate zones and expand rows
+def expand_climate_zones(df):
+    # Create a list to store the expanded rows
+    expanded_rows = []
 
-    # If no exact climate match, keep the original filtered_df
-    if len(climate_filtered) > 0:
-        filtered_df = climate_filtered
+    # Define all possible dash characters that might be used
+    dash_chars = [
+        "-",
+        "‐",
+        "–",
+        "—",
+        "−",
+    ]  # regular hyphen, non-breaking hyphen, en dash, em dash, minus
 
-    # 4. If still multiple matches, find the best match based on construction period and location
+    for _, row in df.iterrows():
+        climate = str(row["Climate"])
+        # Check for any type of dash in Climate
+        if any(dash in climate for dash in dash_chars):
+            # Replace all types of dashes with regular dash and split
+            for dash in dash_chars[1:]:  # Skip the first one (regular dash)
+                climate = climate.replace(dash, "-")
+            climate_zones = [z.strip() for z in climate.split("-") if z.strip()]
+
+            # For each zone, create a copy of the row with the single climate zone
+            for zone in climate_zones:
+                new_row = row.copy()
+                new_row["Climate"] = zone
+                expanded_rows.append(new_row)
+        else:
+            # If no dash, keep the original row
+            expanded_rows.append(row)
+
+    # Create a new DataFrame from the expanded rows
+    expanded_df = pd.DataFrame(expanded_rows)
+
+    # Remove any rows that still contain dashes (just in case)
+    expanded_df = expanded_df[
+        ~expanded_df["Climate"].str.contains("|".join(dash_chars), na=False)
+    ]
+
+    return expanded_df
+
+
+def map_building_to_urbem_scorecard(building, df, prioritize_period=True):
+    """
+    Map building data to the best matching URBEM scorecard row.
+
+    Select is done based on priority:
+       - If prioritize_period=True (default): Find closest location, then best period
+       - If prioritize_period=False: Find best period, then closest location
+
+    Args:
+        building (dict): The building data from BEAT
+        df (pd.DataFrame): The URBEM scorecard data
+        prioritize_period (bool): If True, prioritize matching construction period over location.
+                                 If False, prioritize matching location over construction period.
+                                 Default is True.
+
+    Returns:
+        pd.DataFrame: The best matching row(s) from the URBEM scorecard
+    """
+    # Find the best match based on construction period and location
     if len(filtered_df) > 1:
-        # Get the building's construction period and location
+        # Get the building's location
         building_lat = building["building"]["latitude"]
         building_lon = building["building"]["longitude"]
 
-        # Extract years from construction period strings
-        def get_period_years(period_str):
-            try:
-                # Handle formats: '1991-2000', '>2010', '<1990', '-1950'
-                if period_str.startswith(">") and period_str[1:].isdigit():
-                    return int(period_str[1:]), float("inf")
-                elif (
-                    period_str.startswith("<")
-                    or period_str.startswith("-")
-                    and period_str[1:].isdigit()
-                ):
-                    return 0, int(period_str[1:])
-                else:
-                    years = period_str.split("-")
-                    if len(years) == 2 and years[0].isdigit() and years[1].isdigit():
-                        return int(years[0]), int(years[1])
-            except:
-                pass
-            return None, None
-
-        # Function to calculate period match score (lower is better)
-        def calculate_period_score(target_start, target_end, row_start, row_end):
-            if row_start is None or row_end is None:
-                return float("inf")
-
-            # If target is within row's period, it's a perfect match
-            if target_start >= row_start and target_end <= row_end:
-                return 0
-
-            # If row is a '>year' period
-            if row_end == float("inf"):
-                return max(
-                    0, row_start - target_end
-                )  # How many years after the period starts
-
-            # If row is a '<year' period
-            if row_end < float("inf") and row_start == 0:
-                return max(
-                    0, target_start - row_end
-                )  # How many years before the period ends
-
-            # For regular period ranges, calculate distance to the nearest edge
-            return min(
-                abs(target_start - row_start)
-                + abs(target_end - row_end),  # Distance between ranges
-                abs(target_start - row_end),  # Distance to end of row's period
-                abs(target_end - row_start),  # Distance to start of row's period
+        def find_closest_region(regions, building_lat, building_lon):
+            """Helper function to find the closest region."""
+            region_distances = []
+            for region in regions:
+                cities = LOCATION_CLIMATE_LAT_LONG[region]
+                for city in cities:
+                    region_distances.append(
+                        {
+                            "region": region,
+                            "distance": calculate_distance(
+                                building_lat,
+                                building_lon,
+                                city["Latitude"],
+                                city["Longitude"],
+                            ),
+                        }
+                    )
+            return (
+                min(region_distances, key=lambda x: x["distance"])
+                if region_distances
+                else None
             )
 
-        # Calculate distance score
-        cities_with_corresponding_climate_zone = []
-        for region, cities in LOCATION_CLIMATE_LAT_LONG.items():
-            for city in cities:
-                if city["Climate zone"] == climate_zone:
-                    city["Region"] = region
-                    cities_with_corresponding_climate_zone.append(city)
+        if prioritize_period:
+            # 1. Find best matching period across all regions
+            best_period = find_best_period(filtered_df, building["building"]["age"])
+            period_filtered = filtered_df[
+                filtered_df["Construction period"] == best_period
+            ]
 
-        cities_with_corresponding_climate_zone = [
-            {
-                **city,
-                "distance_to_building": calculate_distance(
-                    building_lat, building_lon, city["Latitude"], city["Longitude"]
-                ),
-            }
-            for city in cities_with_corresponding_climate_zone
-        ]
+            # 2. Among rows with best period, find closest region
+            if len(period_filtered) > 1:
+                closest_region = find_closest_region(
+                    period_filtered["Location"].unique(),
+                    building_lat,
+                    building_lon,
+                )
+                if closest_region:
+                    return period_filtered[
+                        period_filtered["Location"] == closest_region["region"]
+                    ].copy()
+            return period_filtered
 
-        cities_ordered_by_distance_to_building = sorted(
-            cities_with_corresponding_climate_zone,
-            key=lambda city: city["distance_to_building"],
-        )
-
-        # Calculate scores for each row
-        best_score = float("inf")
-        best_matches = []
-
-        for _, row in filtered_df.iterrows():
-            # Calculate period score
-            row_start, row_end = get_period_years(row["Construction period"])
-            target_start, target_end = get_period_years(building["building"]["age"])
-            period_score = calculate_period_score(
-                target_start, target_end, row_start, row_end
+        else:
+            # 1. Find closest region first
+            closest_region = find_closest_region(
+                filtered_df["Location"].unique(),
+                building_lat,
+                building_lon,
             )
 
-            # Combine scores
-            period_weight = 0.8
-            location_weight = 0.2
-            score = (
-                period_weight * period_score
-                + location_weight
-                * cities_ordered_by_distance_to_building[0]["distance_to_building"]
-            )
+            if closest_region:
+                location_filtered = filtered_df[
+                    filtered_df["Location"] == closest_region["region"]
+                ]
 
-            if score < best_score:
-                best_score = score
-                best_matches = [row]
-            elif score == best_score:
-                best_matches.append(row)
+                # 2. Among rows in closest region, find best period
+                if len(location_filtered) > 1:
+                    best_period = find_best_period(
+                        location_filtered, building["building"]["age"]
+                    )
+                    if best_period:
+                        return location_filtered[
+                            location_filtered["Construction period"] == best_period
+                        ].copy()
+                return location_filtered
 
-        # Return all rows that match the best match criteria
-        if best_matches:
-            # Get the best match's key attributes
-            best_match = best_matches[0]
-            best_attrs = {
-                "Location": best_match["Location"],
-                "Climate": best_match["Climate"],
-                "Building category": best_match["Building category"],
-                "Construction period": best_match["Construction period"],
-            }
-
-            # Filter the original dataframe to get all rows with these attributes
-            mask = pd.Series(True, index=df.index)
-            for col, val in best_attrs.items():
-                mask &= df[col] == val
-
-            return df[mask].copy()
-
-    # If we couldn't find a best match, return the first matching row
+    # Fallback: return the first row of the filtered dataframe
     if len(filtered_df) > 0:
-        best_match = filtered_df.iloc[0]
-        mask = (
-            (df["Location"] == best_match["Location"])
-            & (df["Climate"] == best_match["Climate"])
-            & (df["Building category"] == best_match["Building category"])
-            & (df["Construction period"] == best_match["Construction period"])
-        )
-        return df[mask].copy()
+        return filtered_df.head(1)
 
-    # Fallback: return the first row of the original dataframe
+    # Final fallback: return the first row of the original dataframe
     return df.head(1).copy()
+
+
+def get_period_years(period_str, default_start_year=1900, default_end_year=2024):
+    """
+    Convert period string to start and end years.
+
+    Args:
+        period_str (str or float): Period string in formats like:
+                                 - "<1945" or "-1945" for periods before 1945
+                                 - "2001>" or "2001-" for periods after 2001
+                                 - "1946-1960" for ranges between 1946 and 1960
+                                 - Single year like "1950" for that specific year
+        default_start_year (int, optional): Default start year for open-ended periods.
+                                          Defaults to 1900.
+        default_end_year (int, optional): Default end year for open-ended periods.
+                                        Defaults to 2024.
+
+    Returns:
+        tuple: (start_year, end_year) as integers
+    """
+    if pd.isna(period_str) or period_str == "-":
+        return default_start_year, default_end_year
+
+    period_str = str(period_str).strip()
+
+    # Handle periods before a certain year ("<1945" or "-1945")
+    if period_str.startswith("<") or period_str.startswith("-"):
+        try:
+            end_year = int(period_str[1:].strip())
+            return default_start_year, end_year
+        except (ValueError, IndexError):
+            return default_start_year, default_end_year
+
+    # Handle periods after a certain year ("2001>" or "2001-")
+    if period_str.endswith(">") or period_str.endswith("-"):
+        try:
+            start_year = int(period_str[:-1].strip())
+            return start_year, default_end_year
+        except (ValueError, IndexError):
+            return default_start_year, default_end_year
+
+    # Handle ranges ("1946-1960")
+    if "-" in period_str:
+        try:
+            start, end = period_str.split("-")
+            start_year = int(start.strip()) if start.strip() else default_start_year
+            end_year = int(end.strip()) if end.strip() else default_end_year
+            return start_year, end_year
+        except (ValueError, IndexError):
+            return default_start_year, default_end_year
+
+    # Handle single year
+    try:
+        year = int(period_str)
+        return year, year
+    except ValueError:
+        return default_start_year, default_end_year
+
+
+def calculate_period_score(target_start, target_end, row_start, row_end):
+    """
+    Calculate a score for how well a row's period matches the target.
+    Lower score is better.
+
+    Args:
+        target_start (int): Start year of target period
+        target_end (int): End year of target period
+        row_start (int): Start year of row's period
+        row_end (int): End year of row's period
+
+    Returns:
+        float: Score representing the match quality (lower is better)
+    """
+    if row_start is None or row_end is None:
+        return float("inf")
+
+    # If target is within row's period, it's a perfect match
+    if target_start >= row_start and target_end <= row_end:
+        return 0
+
+    # If row is a '>year' period
+    if row_end == float("inf"):
+        return max(0, row_start - target_end)  # How many years after the period starts
+
+    # If row is a '<year' period
+    if row_end < float("inf") and row_start == 0:
+        return max(0, target_start - row_end)  # How many years before the period ends
+
+    # For regular period ranges, calculate distance to the nearest edge
+    return min(
+        abs(target_start - row_start)
+        + abs(target_end - row_end),  # Distance between ranges
+        abs(target_start - row_end),  # Distance to end of row's period
+        abs(target_end - row_start),  # Distance to start of row's period
+    )
+
+
+def find_best_period(rows, building_age):
+    """
+    Find the best matching construction period from a DataFrame of rows.
+
+    Args:
+        rows (pd.DataFrame): DataFrame containing a 'Construction period' column
+        building_age (str or int): The building's construction period or age
+
+    Returns:
+        str: The best matching construction period
+    """
+    best_period_score = float("inf")
+    best_period = None
+
+    target_start, target_end = get_period_years(building_age)
+
+    for _, row in rows.iterrows():
+        row_start, row_end = get_period_years(row["Construction period"])
+        period_score = calculate_period_score(
+            target_start, target_end, row_start, row_end
+        )
+
+        if period_score < best_period_score:
+            best_period_score = period_score
+            best_period = row["Construction period"]
+
+    return best_period
 
 
 def calculate_HDD_from_weather_data(weather_data, method="italy"):
@@ -345,9 +446,15 @@ LOCATION_CLIMATE_LAT_LONG = json.load(open(data_folder / "locations.json"))
 with open(data_folder / "json_building_sim.json", "r") as f:
     beat_buildings = json.load(f)
 
+with open(data_folder / "construction_properties.json", "r") as f:
+    construction_properties = pd.DataFrame(json.load(f))
+
 df = pd.read_parquet(
     data_folder / "urbem_long_format_data.parquet"
 )  # The data of all URBEM scorecards
+
+# Expand climate zones
+df = expand_climate_zones(df)
 
 with open(data_folder / "template flat roof.json", "r") as f:
     default_bui = json.load(f)
@@ -417,8 +524,15 @@ for building in beat_buildings:
     hdd = calculate_HDD_from_weather_data(weather_data)
     climate_zone = italian_climate_zone_from_weather_file_hdd(hdd)
 
+    # Filter URBEM scorecards for residential, building type, and climate zone
+    filtered_df = filter_residential_buildings(df)
+    filtered_df = filter_by_building_type(filtered_df, building)
+    filtered_df = filtered_df[filtered_df.Climate == climate_zone]
+
     # Get the best matching URBEM scorecard data for this building
-    urbem_scorecard = map_building_to_urbem_scorecard(building, df, climate_zone)
+    urbem_scorecard = map_building_to_urbem_scorecard(
+        building, filtered_df, prioritize_period=False
+    )
 
     # Print the matched scorecard for debugging
     print(f"\nMatched URBEM scorecard for building {building['building']['name']}:")
@@ -465,20 +579,276 @@ for building in beat_buildings:
                 surface["area"] = area_mapping[key]
             else:
                 surface["area"] = area_mapping["slab"]
-        elif surface["type"] == "transparent":
-            key = (
-                surface["orientation"]["azimuth"],
-                surface["orientation"]["tilt"],
-            )
-            surface["area"] = area_mapping[key]
 
-    # Extract relevant parameters from the matched URBEM scorecard
-    # We'll use these to update the building parameters
+    def get_construction_with_closest_u_value(
+        construction_properties, target_u_value, construction_type
+    ):
+        """Find the construction with U-value closest to the target."""
+        construction_properties = construction_properties[
+            construction_properties["type"] == construction_type
+        ].copy()
+        construction_properties["u_value_diff"] = abs(
+            construction_properties["u_value"] - target_u_value
+        )
+        return construction_properties.loc[
+            construction_properties["u_value_diff"].idxmin()
+        ]
+
+    def get_u_value(
+        urbem_scorecard,
+        construction_properties,
+        building,
+        df,
+        u_value_var,
+        structure_var,
+        construction_type,
+    ):
+        """
+        Extract U-value and construction properties for a building component (wall/roof) from URBEM scorecard.
+
+        Args:
+            urbem_scorecard (pd.DataFrame): URBEM scorecard data
+            construction_properties (pd.DataFrame): Construction properties data
+            building (dict): Building data
+            df (pd.DataFrame): URBEM dataset
+            u_value_var (str): Variable name for U-value (e.g., 'U-value of the wall')
+            structure_var (str): Variable name for structure type (e.g., 'External walls structure')
+            construction_type (str): Type of the construction (e.g., 'wall' or 'roof')
+
+        Returns:
+            tuple: (u_value, construction_properties) where construction_properties is a dict with the closest matching construction
+        """
+        # Extract U-value if directly available in scorecard
+        u_value = urbem_scorecard[
+            (urbem_scorecard["Variable"] == u_value_var)
+            & (urbem_scorecard["Metric"] == "Mean value")
+        ].Value.iloc[0]
+
+        # Extract construction name if available
+        construction_name = urbem_scorecard[
+            urbem_scorecard["Variable"] == structure_var
+        ].Value.iloc[0]
+
+        if u_value != "":
+            u_value = float(u_value)
+            # Find closest construction matching this U-value
+            construction = get_construction_with_closest_u_value(
+                construction_properties, u_value, construction_type
+            )
+            return u_value, construction.to_dict()
+
+        if construction_name != "no data available":
+            # Get the specified construction
+            construction = construction_properties[
+                construction_properties["construction_name"] == construction_name
+            ]
+            return (
+                float(construction["u_value"].iloc[0]),
+                construction.iloc[0].to_dict(),
+            )
+
+        # If no direct U-value or construction data, find best matching period
+        location_type_period = df.query(
+            f"Variable == '{u_value_var}' and Metric == 'Mean value' and Value != ''"
+        )[["Location", "Building category", "Construction period"]].drop_duplicates()
+
+        closest_period = find_best_period(
+            location_type_period, building["building"]["age"]
+        )
+        u_value_row = df.query(
+            f"`Construction period` == @closest_period and "
+            f"Variable == '{u_value_var}' and "
+            "Metric == 'Mean value' and Value != ''"
+        )
+        u_value = float(u_value_row.Value.iloc[0])
+        construction = get_construction_with_closest_u_value(
+            construction_properties, u_value, construction_type
+        )
+        return u_value, construction.to_dict()
+
+    # Get wall U-value and construction
+    wall_u_value, wall_construction = get_u_value(
+        urbem_scorecard=urbem_scorecard,
+        construction_properties=construction_properties,
+        building=building,
+        df=filtered_df,
+        u_value_var="U-value of the wall",
+        structure_var="External walls structure",
+        construction_type="wall",
+    )
+
+    # Get roof U-value and construction
+    roof_u_value, roof_construction = get_u_value(
+        urbem_scorecard=urbem_scorecard,
+        construction_properties=construction_properties,
+        building=building,
+        df=filtered_df,
+        u_value_var="U-value of the roof",
+        structure_var="Roof slabs structure",
+        construction_type="roof",
+    )
+
+    # Apply wall construction to vertical opaque surfaces
+    print(f"Closest wall construction: {wall_construction}")
+    for surf in beat_building["building_surface"]:
+        if surf["type"] == "opaque" and surf["orientation"]["tilt"] == 90:
+            surf["u_value"] = wall_construction["u_value"]
+            surf["thermal_capacity"] = wall_construction["thermal_capacity"]
+
+    # Apply roof construction to horizontal opaque surfaces with sky_view_factor = 1
+    print(f"Closest roof construction: {roof_construction}")
+    for surf in beat_building["building_surface"]:
+        if surf["type"] == "opaque" and surf["sky_view_factor"] == 1:
+            surf["u_value"] = roof_construction["u_value"]
+            surf["thermal_capacity"] = roof_construction["thermal_capacity"]
+
+    def get_wwr(best_scorecard, all_scorecards, orientation):
+        """
+        Get WWR for a specific orientation with fallback to best matching period.
+
+        Args:
+            best_scorecard (pd.DataFrame): Best matching scorecard
+            all_scorecards (pd.DataFrame): All scorecards
+            orientation (str): Orientation ('North', 'South', 'East', 'West')
+
+        Returns:
+            float: The WWR value
+        """
+        default_wwr = {"North": 0.15, "South": 0.15, "East": 0.15, "West": 0.15}
+
+        # Try to get WWR directly from the scorecard
+        var_name = f"WWR – {orientation} orientation"
+        wwr_row = best_scorecard.query(
+            f"Variable == @var_name and Metric == 'Mean value' and Value != ''"
+        )
+
+        if not wwr_row.empty:
+            return float(wwr_row.Value.iloc[0])
+
+        # If not found:
+        # Filter for residential buildings with existing WWR values
+        wwr_rows = filter_residential_buildings(all_scorecards).query(
+            f"Variable == @var_name and Metric == 'Mean value' and Value != ''"
+        )
+        # Determine Climate and Construction period combinations
+        climate_period_df = wwr_rows[
+            ["Climate", "Construction period"]
+        ].drop_duplicates()
+
+        def find_best_climate(climate_period_df, target_climate_zone):
+            """
+            Find the best matching climate zone by going backwards in the alphabet.
+            For example, if target_zone is 'F', check 'F' first, then 'E', 'D', etc.
+
+            Args:
+                climate_period_df (pd.DataFrame): DataFrame with 'Climate' column
+                target_climate_zone (str): Target climate zone (A-F)
+
+            Returns:
+                str: The best matching climate zone found
+            """
+            # Get unique climate zones from the dataframe
+            available_zones = climate_period_df["Climate"].unique()
+
+            # If target zone exists, return it
+            if target_climate_zone in available_zones:
+                return target_climate_zone
+
+            # If target zone not found, go backwards in the alphabet
+            # Create a list of zones in reverse order (e.g., ['F', 'E', 'D', 'C', 'B', 'A'])
+            all_zones = ["F", "E", "D", "C", "B", "A"]
+
+            try:
+                # Find the position of our target zone in the sequence
+                target_idx = all_zones.index(target_climate_zone)
+
+                # Check zones after our target (warmer climates)
+                for zone in all_zones[target_idx + 1 :]:
+                    if zone in available_zones:
+                        return zone
+
+                # If no warmer climate found, check colder climates
+                for zone in reversed(all_zones[:target_idx]):
+                    if zone in available_zones:
+                        return zone
+            except ValueError:
+                # If target_zone is not in all_zones (shouldn't happen with valid input)
+                pass
+
+            # If no match found, return the first available zone or None if empty
+            return available_zones[0] if len(available_zones) > 0 else None
+
+        # Determine closest climate first
+        closest_climate_zone = find_best_climate(climate_period_df, climate_zone)
+
+        # Filter climate_period_df for closest climate zone
+        climate_period_df = climate_period_df.query(f"Climate == @closest_climate_zone")
+
+        # Now determine closest period
+        closest_period = find_best_period(
+            climate_period_df, building["building"]["age"]
+        )
+
+        # Filter climate_period_df for closest period
+        climate_period_df = climate_period_df.query(
+            "`Construction period` == @closest_period"
+        )
+
+        return float(
+            wwr_rows.query(
+                "Climate == @closest_climate_zone and `Construction period` == @closest_period"
+            ).Value.iloc[0]
+        )
+
+    # Get WWR for each orientation
+    wwr_north = get_wwr(urbem_scorecard, df, "North")
+    wwr_south = get_wwr(urbem_scorecard, df, "South")
+    wwr_east = get_wwr(urbem_scorecard, df, "East")
+    wwr_west = get_wwr(urbem_scorecard, df, "West")
+
+    print(
+        f"Using WWR values - North: {wwr_north}, South: {wwr_south}, East: {wwr_east}, West: {wwr_west}"
+    )
+
+    # Calculate window areas based on WWR and apply to transparent surfaces
+    for surface in beat_building["building_surface"]:
+        if surface["type"] == "opaque" and surface["orientation"]["tilt"] == 90:
+            # Find matching transparent surface (window) for this wall
+            orientation = surface["orientation"]["azimuth"]
+            match orientation:
+                case 0:
+                    wwr = wwr_north
+                case 90:
+                    wwr = wwr_east
+                case 180:
+                    wwr = wwr_south
+                case 270:
+                    wwr = wwr_west
+
+            # Find corresponding window surface
+            for window_surface in beat_building["building_surface"]:
+                if (
+                    window_surface["type"] == "transparent"
+                    and window_surface["orientation"]["tilt"] == 90
+                    and window_surface["orientation"]["azimuth"] == orientation
+                ):
+                    # Calculate window area
+                    wall_area = surface["area"]
+                    window_area = wall_area * wwr
+                    window_surface["area"] = window_area
+                    surface["area"] -= window_area
+                    break
+
+    # Extract other relevant parameters from the matched URBEM scorecard
     building_params = {}
     for _, row in urbem_scorecard.iterrows():
         if row["Metric"] == "Value":  # We only want the actual values, not statistics
             param_name = row["Variable"]
             param_value = row["Value"]
+
+            if param_name == "External walls structure":
+                if param_value == "no data available":
+                    continue
 
             # Map the parameter to the appropriate location in the building JSON
             if param_name in urbem_df_to_bui_json_mapping:
