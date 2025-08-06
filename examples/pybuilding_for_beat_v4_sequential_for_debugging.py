@@ -20,6 +20,7 @@ import json
 def get_building_surface(
     json_data,
     type_surface="opaque",
+    adiabatic=False,
     sky_view_factor=0.0,
     orientation_tilt=0,
     orientation_azimuth=0,
@@ -43,100 +44,70 @@ def process_building(building_archetype, output_dir="results"):
     try:
         # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
-
         height = building_archetype["building"]["height"]
         floor_to_floor_height = 3
         number_of_floors = round(height / floor_to_floor_height)
 
-        roof = get_building_surface(
-            building_archetype,
-            type_surface="opaque",
-            sky_view_factor=1.0,
-            orientation_tilt=0,
-            orientation_azimuth=0,
-        )
+        # Define surface configurations
+        surface_configs = [
+            # Roof
+            {"name": "roof", "type": "opaque", "adiabatic": False, "sky_view": 1.0, "tilt": 0, "azimuth": 0},
+            # Slab to ground
+            {"name": "slab_to_ground", "type": "opaque", "adiabatic": False, "sky_view": 0.0, "tilt": 0, "azimuth": 0},
+            # Opaque non-adiabatic walls
+            {"name": "opaque_nonadiabatic_north", "type": "opaque", "adiabatic": False, "sky_view": 0.5, "tilt": 90, "azimuth": 0},
+            {"name": "opaque_nonadiabatic_south", "type": "opaque", "adiabatic": False, "sky_view": 0.5, "tilt": 90, "azimuth": 180},
+            {"name": "opaque_nonadiabatic_east", "type": "opaque", "adiabatic": False, "sky_view": 0.5, "tilt": 90, "azimuth": 90},
+            {"name": "opaque_nonadiabatic_west", "type": "opaque", "adiabatic": False, "sky_view": 0.5, "tilt": 90, "azimuth": 270},
+            # Opaque adiabatic walls
+            {"name": "opaque_adiabatic_north", "type": "opaque", "adiabatic": True, "sky_view": 0.5, "tilt": 90, "azimuth": 0},
+            {"name": "opaque_adiabatic_south", "type": "opaque", "adiabatic": True, "sky_view": 0.5, "tilt": 90, "azimuth": 180},
+            {"name": "opaque_adiabatic_east", "type": "opaque", "adiabatic": True, "sky_view": 0.5, "tilt": 90, "azimuth": 90},
+            {"name": "opaque_adiabatic_west", "type": "opaque", "adiabatic": True, "sky_view": 0.5, "tilt": 90, "azimuth": 270},
+            # Transparent surfaces (windows)
+            {"name": "transparent_north", "type": "transparent", "adiabatic": False, "sky_view": 0.5, "tilt": 90, "azimuth": 0},
+            {"name": "transparent_south", "type": "transparent", "adiabatic": False, "sky_view": 0.5, "tilt": 90, "azimuth": 180},
+            {"name": "transparent_east", "type": "transparent", "adiabatic": False, "sky_view": 0.5, "tilt": 90, "azimuth": 90},
+            {"name": "transparent_west", "type": "transparent", "adiabatic": False, "sky_view": 0.5, "tilt": 90, "azimuth": 270},
+        ]
 
-        slab_to_ground = get_building_surface(
-            building_archetype,
-            type_surface="opaque",
-            sky_view_factor=0.0,
-            orientation_tilt=0,
-            orientation_azimuth=0,
-        )
+        # Get all surfaces and store in a dictionary
+        surfaces = {}
+        for config in surface_configs:
+            surfaces[config["name"]] = get_building_surface(
+                building_archetype,
+                type_surface=config["type"],
+                adiabatic=config["adiabatic"],
+                sky_view_factor=config["sky_view"],
+                orientation_tilt=config["tilt"],
+                orientation_azimuth=config["azimuth"],
+            )
 
-        opaque_surface_north = get_building_surface(
-            building_archetype,
-            type_surface="opaque",
-            sky_view_factor=0.5,
-            orientation_tilt=90,
-            orientation_azimuth=0,
-        )
-
-        opaque_surface_south = get_building_surface(
-            building_archetype,
-            type_surface="opaque",
-            sky_view_factor=0.5,
-            orientation_tilt=90,
-            orientation_azimuth=180,
-        )
-
-        opaque_surface_east = get_building_surface(
-            building_archetype,
-            type_surface="opaque",
-            sky_view_factor=0.5,
-            orientation_tilt=90,
-            orientation_azimuth=90,
-        )
-
-        opaque_surface_west = get_building_surface(
-            building_archetype,
-            type_surface="opaque",
-            sky_view_factor=0.5,
-            orientation_tilt=90,
-            orientation_azimuth=270,
-        )
-
-        transparent_surface_north = get_building_surface(
-            building_archetype,
-            type_surface="transparent",
-            sky_view_factor=0.5,
-            orientation_tilt=90,
-            orientation_azimuth=0,
-        )
-
-        transparent_surface_south = get_building_surface(
-            building_archetype,
-            type_surface="transparent",
-            sky_view_factor=0.5,
-            orientation_tilt=90,
-            orientation_azimuth=180,
-        )
-
-        transparent_surface_east = get_building_surface(
-            building_archetype,
-            type_surface="transparent",
-            sky_view_factor=0.5,
-            orientation_tilt=90,
-            orientation_azimuth=90,
-        )
-
-        transparent_surface_west = get_building_surface(
-            building_archetype,
-            type_surface="transparent",
-            sky_view_factor=0.5,
-            orientation_tilt=90,
-            orientation_azimuth=270,
-        )
+        # Create variables for backward compatibility
+        roof = surfaces["roof"]
+        slab_to_ground = surfaces["slab_to_ground"]
+        opaque_nonadiabatic_surface_north = surfaces["opaque_nonadiabatic_north"]
+        opaque_nonadiabatic_surface_south = surfaces["opaque_nonadiabatic_south"]
+        opaque_nonadiabatic_surface_east = surfaces["opaque_nonadiabatic_east"]
+        opaque_nonadiabatic_surface_west = surfaces["opaque_nonadiabatic_west"]
+        opaque_adiabatic_surface_north = surfaces["opaque_adiabatic_north"]
+        opaque_adiabatic_surface_south = surfaces["opaque_adiabatic_south"]
+        opaque_adiabatic_surface_east = surfaces["opaque_adiabatic_east"]
+        opaque_adiabatic_surface_west = surfaces["opaque_adiabatic_west"]
+        transparent_surface_north = surfaces["transparent_north"]
+        transparent_surface_south = surfaces["transparent_south"]
+        transparent_surface_east = surfaces["transparent_east"]
+        transparent_surface_west = surfaces["transparent_west"]
 
         volume = number_of_floors * floor_to_floor_height * slab_to_ground["area"]
 
         surface_envelope = (
             roof["area"]
             + slab_to_ground["area"]
-            + opaque_surface_north["area"]
-            + opaque_surface_south["area"]
-            + opaque_surface_east["area"]
-            + opaque_surface_west["area"]
+            + opaque_nonadiabatic_surface_north["area"]
+            + opaque_nonadiabatic_surface_south["area"]
+            + opaque_nonadiabatic_surface_east["area"]
+            + opaque_nonadiabatic_surface_west["area"]
             + transparent_surface_north["area"]
             + transparent_surface_south["area"]
             + transparent_surface_east["area"]
@@ -196,6 +167,20 @@ def process_building(building_archetype, output_dir="results"):
             ventilation_rate_extra_in_ach * volume / treated_floor_area
         )
 
+        # Initialize profiles with zeros
+        internal_gains_weekday_profile = [0] * 24
+        internal_gains_weekend_profile = [0] * 24
+
+        # Calculate combined profiles
+        for gain in building_archetype["building_parameters"]["internal_gains"]:
+            for i in range(24):
+                internal_gains_weekday_profile[i] += (
+                    gain["full_load"] * gain["weekday"][i]
+                )
+                internal_gains_weekend_profile[i] += (
+                    gain["full_load"] * gain["weekend"][i]
+                )
+
         # Create BuildingArchetype from BUI_JSON
         BUI = Buildings(
             latitude=building_archetype["building"]["latitude"],
@@ -213,7 +198,7 @@ def process_building(building_archetype, output_dir="results"):
             surface_envelope=surface_envelope,
             surface_envelope_model=surface_envelope,
             side=side,
-            heating_mode=True,  # True or False if heating system is
+            heating_mode=True,  # True or False if heating syste is
             cooling_mode=True,
             heating_setpoint=building_archetype["building_parameters"][
                 "temperature_setpoints"
@@ -247,12 +232,8 @@ def process_building(building_archetype, output_dir="results"):
             ],  # Max Power of the cooling system
             air_change_rate_base_value=infiltration_rate_in_m3_per_sqm_hr,
             air_change_rate_extra=ventilation_rate_extra_in_m3_per_sqm_hr,
-            internal_gains_base_value=building_archetype["building_parameters"][
-                "internal_gains"
-            ]["unoccupied"],
-            internal_gains_extra=building_archetype["building_parameters"][
-                "internal_gains"
-            ]["occupied_extra"],
+            internal_gains_wd=internal_gains_weekday_profile,
+            internal_gains_we=internal_gains_weekend_profile,
             thermal_bridge_heat=building_archetype["building_parameters"][
                 "construction"
             ][
@@ -277,18 +258,27 @@ def process_building(building_archetype, output_dir="results"):
             thermal_resistance_R_elements=thermal_resistances,
             thermal_capacity_elements=heat_capacities,
             g_factor_windows=g_values,
-            occ_level_wd=building_archetype["building_parameters"][
-                "occupancy_profiles"
+            heating_profile_wd=building_archetype["building_parameters"][
+                "heating_profile"
             ]["weekday"],
-            occ_level_we=building_archetype["building_parameters"][
-                "occupancy_profiles"
+            heating_profile_we=building_archetype["building_parameters"][
+                "heating_profile"
             ]["weekend"],
-            comf_level_wd=building_archetype["building_parameters"][
-                "occupancy_profiles"
+            cooling_profile_wd=building_archetype["building_parameters"][
+                "cooling_profile"
             ]["weekday"],
-            comf_level_we=building_archetype["building_parameters"][
-                "occupancy_profiles"
+            cooling_profile_we=building_archetype["building_parameters"][
+                "cooling_profile"
             ]["weekend"],
+            ventilation_profile_wd=building_archetype["building_parameters"][
+                "ventilation_profile"
+            ]["weekday"],
+            ventilation_profile_we=building_archetype["building_parameters"][
+                "ventilation_profile"
+            ]["weekend"],
+            azimuth_relative_to_true_north=building_archetype["building"][
+                "azimuth_relative_to_true_north"
+            ],
         )
 
         # Process the building
@@ -376,33 +366,37 @@ def main():
     collection = db[collection_name]
 
     # Reset the status field for all documents to "unprocessed"
-    # collection.update_many(
-    #     {"status": {"$exists": True}}, {"$set": {"status": "unprocessed"}}
-    # )
+    collection.update_many(
+        {"status": {"$exists": True}}, {"$set": {"status": "unprocessed"}}
+    )
 
     # Initialize the status field for documents that don't have it
     collection.update_many(
         {"status": {"$exists": False}}, {"$set": {"status": "unprocessed"}}
     )
 
-    # Determine number of processes to use (leave one core free)
-    num_processes = max(1, cpu_count() - 1)
-
     # Create output directory
     output_dir = "simulation_results"
     os.makedirs(output_dir, exist_ok=True)
 
-    # Initialize the worker pool
-    with Pool(
-        processes=num_processes,
-        initializer=worker_init,
-        initargs=(db_name, collection_name),
-    ) as pool:
-        # Use tqdm for progress bar
-        results = list(pool.imap(worker_task, range(num_processes)))
+    # Initialize worker (for database connection)
+    worker_init(db_name, collection_name)
 
-    # Flatten the results list
-    results = [result for sublist in results for result in sublist]
+    # Process buildings one by one (debug mode)
+    results = []
+    while True:
+        # Find and update the document to mark it as processing
+        building_archetype = collection.find_one_and_update(
+            {"status": "unprocessed"}, {"$set": {"status": "processing"}}
+        )
+        if building_archetype is None:
+            break
+        result = process_building(building_archetype)
+        results.append(result)
+        # Mark the document as processed
+        collection.update_one(
+            {"_id": building_archetype["_id"]}, {"$set": {"status": "processed"}}
+        )
 
     # Save summary of results
     summary_df = pd.DataFrame(results)

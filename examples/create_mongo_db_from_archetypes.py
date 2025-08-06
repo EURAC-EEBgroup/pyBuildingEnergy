@@ -14,7 +14,7 @@ def insert_building(building):
 
 
 # Load building archetypes
-archetypes_folder = "examples/archetypes"
+archetypes_folder = "examples/archetypes/beat_buildings"
 for root, _, files in os.walk(archetypes_folder):
     for file in files:
         if file.endswith(".json"):

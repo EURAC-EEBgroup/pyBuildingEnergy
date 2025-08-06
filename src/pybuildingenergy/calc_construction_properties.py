@@ -1,7 +1,7 @@
 import json
 
 
-def calculate_u_value_and_thermal_capacity(data, R_si=0.13, R_se=0.04):
+def calculate_construction_properties(data, R_si=0.13, R_se=0.04):
     # Extract materials and constructions from the JSON data
     materials = {material["name"]: material for material in data["materials"]}
     constructions = data["constructions"]
@@ -14,6 +14,7 @@ def calculate_u_value_and_thermal_capacity(data, R_si=0.13, R_se=0.04):
 
         total_thermal_resistance = 0.0
         total_thermal_capacity = 0.0
+        total_thickness = 0.0
 
         for layer_name in layers:
             if layer_name in materials:
@@ -24,6 +25,7 @@ def calculate_u_value_and_thermal_capacity(data, R_si=0.13, R_se=0.04):
                 else:
                     # Calculate U-value with air resistances
                     thickness = layer["thickness"]
+                    total_thickness += thickness
                     conductivity = layer["conductivity"]
                     density = layer["density"]
                     specific_heat = layer["specific_heat"]
@@ -60,6 +62,7 @@ def calculate_u_value_and_thermal_capacity(data, R_si=0.13, R_se=0.04):
                 "construction_name": construction_name,
                 "u_value": u_value,
                 "thermal_capacity": total_thermal_capacity,
+                "thickness": total_thickness,
                 "type": construction.get("type", None),
             }
         )
@@ -119,7 +122,7 @@ def calculate_u_value_and_thermal_capacity(data, R_si=0.13, R_se=0.04):
 data = json.load(open("src/pybuildingenergy/data/materials.json"))
 
 # Calculate U-value and thermal capacity
-results = calculate_u_value_and_thermal_capacity(data=data, R_si=0.13, R_se=0.04)
+results = calculate_construction_properties(data=data, R_si=0.13, R_se=0.04)
 
 # Save construction properties
 with open("src/pybuildingenergy/data/construction_properties.json", "w") as f:

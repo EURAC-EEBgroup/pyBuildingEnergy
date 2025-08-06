@@ -302,6 +302,50 @@ def calculate_period_score(target_start, target_end, row_start, row_end):
     )
 
 
+def find_best_climate(climate_period_df, target_climate_zone):
+    """
+    Find the best matching climate zone by going backwards in the alphabet.
+    For example, if target_zone is 'F', check 'F' first, then 'E', 'D', etc.
+
+    Args:
+        climate_period_df (pd.DataFrame): DataFrame with 'Climate' column
+        target_climate_zone (str): Target climate zone (A-F)
+
+    Returns:
+        str: The best matching climate zone found
+    """
+    # Get unique climate zones from the dataframe
+    available_zones = climate_period_df["Climate"].unique()
+
+    # If target zone exists, return it
+    if target_climate_zone in available_zones:
+        return target_climate_zone
+
+    # If target zone not found, go backwards in the alphabet
+    # Create a list of zones in reverse order (e.g., ['F', 'E', 'D', 'C', 'B', 'A'])
+    all_zones = ["F", "E", "D", "C", "B", "A"]
+
+    try:
+        # Find the position of our target zone in the sequence
+        target_idx = all_zones.index(target_climate_zone)
+
+        # Check zones after our target (warmer climates)
+        for zone in all_zones[target_idx + 1 :]:
+            if zone in available_zones:
+                return zone
+
+        # If no warmer climate found, check colder climates
+        for zone in reversed(all_zones[:target_idx]):
+            if zone in available_zones:
+                return zone
+    except ValueError:
+        # If target_zone is not in all_zones (shouldn't happen with valid input)
+        pass
+
+    # If no match found, return the first available zone or None if empty
+    return available_zones[0] if len(available_zones) > 0 else None
+
+
 def find_best_period(rows, building_age):
     """
     Find the best matching construction period from a DataFrame of rows.
@@ -440,6 +484,7 @@ def get_tmy_data(latitude, longitude):
 
 cwd = Path(__file__).parent  # Get the current working directory
 data_folder = cwd / "../src/pybuildingenergy/data"
+output_folder = cwd / "../examples/archetypes/beat_buildings"
 
 LOCATION_CLIMATE_LAT_LONG = json.load(open(data_folder / "locations.json"))
 
@@ -456,35 +501,8 @@ df = pd.read_parquet(
 # Expand climate zones
 df = expand_climate_zones(df)
 
-with open(data_folder / "template flat roof.json", "r") as f:
-    default_bui = json.load(f)
-    # Print the structure of default_bui to understand the building_surface format
-    print("Default BUI structure:", json.dumps(default_bui, indent=2))
-
 # Mapping of variable names in URBEM scorecards dataframe to their properties in the bui json data structure
 urbem_df_to_bui_json_mapping = {
-    "U-value of the wall": {
-        "type": "opaque",
-        "tilt": 90,
-        "key_path": ["u_value"],
-    },
-    "U-value of the roof": {
-        "type": "opaque",
-        "tilt": 0,
-        "sky_view_factor": 1,
-        "key_path": ["u_value"],
-    },
-    "U-value of the floor": {
-        "type": "opaque",
-        "tilt": 0,
-        "sky_view_factor": 0,
-        "key_path": ["u_value"],
-    },
-    "U-value of the windows": {
-        "type": "transparent",
-        "tilt": 90,
-        "key_path": ["u_value"],
-    },
     "Air exchange rate": {
         "key_path": ["building_parameters", "airflow_rates", "infiltration_rate"]
     },
@@ -505,6 +523,21 @@ beat_to_urbem_regions = {
 }
 
 for building in beat_buildings:
+
+    # Skip calculation if output JSON for this building already exists
+    output_path = output_folder / f"beat_building_{building['building']['name']}.json"
+    if output_path.exists():
+        print(f"Skipping {output_path.name} because it already exists")
+        continue
+
+    # Read template at each iteration to make sure no field from before is erroneously kept
+    with open(data_folder / "template flat roof.json", "r", encoding="utf-8") as f:
+        default_bui = json.load(f)
+        # # Print the structure of default_bui to understand the building_surface format
+        # print(
+        #     "Default BUI structure:", json.dumps(default_bui, indent=2, ensure_ascii=False)
+        # )
+
     # Get weather data from PVGIS
     elevation, weather_data, utcoffset_in_hours, latitude, longitude = get_tmy_data(
         building["building"]["latitude"], building["building"]["longitude"]
@@ -619,10 +652,15 @@ for building in beat_buildings:
             tuple: (u_value, construction_properties) where construction_properties is a dict with the closest matching construction
         """
         # Extract U-value if directly available in scorecard
-        u_value = urbem_scorecard[
+
+        u_value_series = urbem_scorecard[
             (urbem_scorecard["Variable"] == u_value_var)
             & (urbem_scorecard["Metric"] == "Mean value")
-        ].Value.iloc[0]
+        ].Value
+        if u_value_series.empty:
+            u_value = ""
+        else:
+            u_value = u_value_series.iloc[0]
 
         # Extract construction name if available
         construction_name = urbem_scorecard[
@@ -690,10 +728,47 @@ for building in beat_buildings:
 
     # Apply wall construction to vertical opaque surfaces
     print(f"Closest wall construction: {wall_construction}")
+
+    # Process all opaque wall surfaces and collect new adiabatic surfaces
+    new_adiabatic_surfaces = []
     for surf in beat_building["building_surface"]:
         if surf["type"] == "opaque" and surf["orientation"]["tilt"] == 90:
             surf["u_value"] = wall_construction["u_value"]
             surf["thermal_capacity"] = wall_construction["thermal_capacity"]
+            surf["adiabatic"] = False
+            surf["name"] += " - non-adiabatic"
+
+            # Finding exposed percentage of the wall with same azimuth
+            exposed_surf = next(
+                (
+                    s
+                    for s in building["building_surface"]
+                    if s["orientation"]["azimuth"] == surf["orientation"]["azimuth"]
+                ),
+                None,
+            )
+
+            if exposed_surf and exposed_surf.get("exposed_perc", 1.0) < 1.0:
+                exposed_surf_percentage = exposed_surf["exposed_perc"]
+
+                # Create corresponding adiabatic wall surface
+                adiabatic_surf = surf.copy()
+                adiabatic_surf["adiabatic"] = True
+                adiabatic_surf["name"] += " - adiabatic"
+                adiabatic_surf["area"] *= 1 - exposed_surf_percentage
+                new_adiabatic_surfaces.append(adiabatic_surf)
+
+                # Update the original surface
+                surf["area"] *= exposed_surf_percentage
+
+    # Add all new adiabatic surfaces
+    if new_adiabatic_surfaces:
+        beat_building["building_surface"].extend(new_adiabatic_surfaces)
+        print(f"Added {len(new_adiabatic_surfaces)} new adiabatic surfaces")
+
+    # Set wall thickness
+    beat_building["building"]["wall_thickness"] = wall_construction["thickness"]
+    print(f"Wall thickness: {wall_construction['thickness']}")
 
     # Apply roof construction to horizontal opaque surfaces with sky_view_factor = 1
     print(f"Closest roof construction: {roof_construction}")
@@ -701,6 +776,70 @@ for building in beat_buildings:
         if surf["type"] == "opaque" and surf["sky_view_factor"] == 1:
             surf["u_value"] = roof_construction["u_value"]
             surf["thermal_capacity"] = roof_construction["thermal_capacity"]
+            surf["adiabatic"] = False
+            surf["name"] += " - non-adiabatic"
+
+    def get_window_u_value(best_scorecard, all_scorecards, climate_zone, building):
+        """
+        Get window U-value with fallback logic.
+
+        Args:
+            best_scorecard (pd.DataFrame): The best matching scorecard
+            all_scorecards (pd.DataFrame): All available scorecards
+            climate_zone (str): Target climate zone
+            building (dict): Building data containing age information
+
+        Returns:
+            float: The window U-value
+        """
+        default_u_value = 3.1  # Mean in residential URBEM scorecards
+        u_value_var = "U-value of the windows"
+
+        # Try to get U-value directly from the best scorecard
+        u_value_row = best_scorecard.query(
+            f"Variable == @u_value_var and Metric == 'Mean value' and Value != ''"
+        )
+
+        if not u_value_row.empty:
+            return float(u_value_row.Value.iloc[0])
+
+        # If not found, filter for residential buildings with window U-values
+        filtered_df = filter_residential_buildings(all_scorecards).query(
+            f"Variable == @u_value_var and Metric == 'Mean value' and Value != ''"
+        )
+
+        if not filtered_df.empty:
+            # Get unique climate and construction period combinations
+            climate_period_df = filtered_df[
+                ["Climate", "Construction period"]
+            ].drop_duplicates()
+
+            # Find closest climate
+            closest_climate = find_best_climate(climate_period_df, climate_zone)
+            if closest_climate is None:
+                return default_u_value
+
+            # Filter for closest climate
+            filtered_df = filtered_df[filtered_df["Climate"] == closest_climate]
+
+            if not filtered_df.empty:
+                # Find best matching period
+                location_type_period = filtered_df[
+                    ["Location", "Building category", "Construction period"]
+                ].drop_duplicates()
+                closest_period = find_best_period(
+                    location_type_period, building["building"]["age"]
+                )
+
+                # Get U-value for closest period
+                period_u_value = filtered_df[
+                    filtered_df["Construction period"] == closest_period
+                ].Value.iloc[0]
+
+                if period_u_value:
+                    return float(period_u_value)
+
+        return default_u_value
 
     def get_wwr(best_scorecard, all_scorecards, orientation):
         """
@@ -714,7 +853,12 @@ for building in beat_buildings:
         Returns:
             float: The WWR value
         """
-        default_wwr = {"North": 0.15, "South": 0.15, "East": 0.15, "West": 0.15}
+        default_wwr = {
+            "North": 0.15,
+            "South": 0.15,
+            "East": 0.15,
+            "West": 0.15,
+        }  # Mean of residential scorecards with existing WWR values
 
         # Try to get WWR directly from the scorecard
         var_name = f"WWR – {orientation} orientation"
@@ -734,49 +878,6 @@ for building in beat_buildings:
         climate_period_df = wwr_rows[
             ["Climate", "Construction period"]
         ].drop_duplicates()
-
-        def find_best_climate(climate_period_df, target_climate_zone):
-            """
-            Find the best matching climate zone by going backwards in the alphabet.
-            For example, if target_zone is 'F', check 'F' first, then 'E', 'D', etc.
-
-            Args:
-                climate_period_df (pd.DataFrame): DataFrame with 'Climate' column
-                target_climate_zone (str): Target climate zone (A-F)
-
-            Returns:
-                str: The best matching climate zone found
-            """
-            # Get unique climate zones from the dataframe
-            available_zones = climate_period_df["Climate"].unique()
-
-            # If target zone exists, return it
-            if target_climate_zone in available_zones:
-                return target_climate_zone
-
-            # If target zone not found, go backwards in the alphabet
-            # Create a list of zones in reverse order (e.g., ['F', 'E', 'D', 'C', 'B', 'A'])
-            all_zones = ["F", "E", "D", "C", "B", "A"]
-
-            try:
-                # Find the position of our target zone in the sequence
-                target_idx = all_zones.index(target_climate_zone)
-
-                # Check zones after our target (warmer climates)
-                for zone in all_zones[target_idx + 1 :]:
-                    if zone in available_zones:
-                        return zone
-
-                # If no warmer climate found, check colder climates
-                for zone in reversed(all_zones[:target_idx]):
-                    if zone in available_zones:
-                        return zone
-            except ValueError:
-                # If target_zone is not in all_zones (shouldn't happen with valid input)
-                pass
-
-            # If no match found, return the first available zone or None if empty
-            return available_zones[0] if len(available_zones) > 0 else None
 
         # Determine closest climate first
         closest_climate_zone = find_best_climate(climate_period_df, climate_zone)
@@ -839,71 +940,152 @@ for building in beat_buildings:
                     surface["area"] -= window_area
                     break
 
-    # Extract other relevant parameters from the matched URBEM scorecard
-    building_params = {}
-    for _, row in urbem_scorecard.iterrows():
-        if row["Metric"] == "Value":  # We only want the actual values, not statistics
-            param_name = row["Variable"]
-            param_value = row["Value"]
+    # Get window U-value
+    window_u_value = get_window_u_value(urbem_scorecard, df, climate_zone, building)
+    print(f"Using window U-value: {window_u_value} W/(m²K)")
 
-            if param_name == "External walls structure":
-                if param_value == "no data available":
-                    continue
+    # Estimate window g-value from U-value (linear, simplified)
+    window_g_value = 0.45 + 0.08 * window_u_value
+    print(f"Using window g-value: {window_g_value}")
 
-            # Map the parameter to the appropriate location in the building JSON
-            if param_name in urbem_df_to_bui_json_mapping:
-                mapping = urbem_df_to_bui_json_mapping[param_name]
-                current = beat_building
+    # Apply to all window surfaces
+    for surface in beat_building["building_surface"]:
+        if surface["type"] == "transparent":
+            surface["u_value"] = window_u_value
+            surface["g_factor_windows"] = window_g_value
 
-                # Navigate the path in the building JSON
-                for key in mapping["key_path"][:-1]:
-                    if key not in current:
-                        current[key] = {}
-                    current = current[key]
+    def get_air_change_rate(construction_period):
+        """
+        Get air change rate (1/h) based on climate zone and building construction year.
 
-                # Set the final value
-                final_key = mapping["key_path"][-1]
-                current[final_key] = param_value
+        Args:
+            construction_period (str): Construction period of the building
 
-    region = beat_to_urbem_regions[building["building"]["region"]]
-    province = building["building"]["province"]
-    beat_building_type = building["building"]["type"]
+        Returns:
+            float: Air change rate in 1/h
+        """
+        ach = pd.DataFrame(
+            {
+                "Construction period": ["<1980", "1981-2000", ">2000"],
+                "ACH": [1.5, 1.0, 0.6],
+            }
+        )
+        closest_period = find_best_period(ach, construction_period)
+        air_change_rate = ach.query("`Construction period` == @closest_period")[
+            "ACH"
+        ].iloc[0]
+        return air_change_rate
 
+    # Calculate realistic air change value since URBEM scorecards provide (too low) design values
+    air_change_rate = get_air_change_rate(
+        urbem_scorecard["Construction period"].iloc[0]
+    )
+    beat_building["building_parameters"]["airflow_rates"][
+        "infiltration_rate"
+    ] = air_change_rate
+    print(f"Set air change rate to {air_change_rate}/h")
 
-# print(df.Location.unique())
+    def get_system_capacity(
+        best_scorecard, all_scorecards, climate_zone, building, capacity_type
+    ):
+        """
+        Get system capacity (heating or cooling) with fallback logic.
 
-regions = []
-provinces = []
-for building in beat_buildings:
-    regions.append(building["building"]["region"])
-    provinces.append(building["building"]["province"])
+        Args:
+            best_scorecard (pd.DataFrame): The best matching scorecard
+            all_scorecards (pd.DataFrame): All available scorecards
+            climate_zone (str): Target climate zone
+            building (dict): Building data
+            capacity_type (str): 'heating' or 'cooling'
 
-# print(set(regions))
-# print(set(provinces))
+        Returns:
+            float: The system capacity in kW per apartment
+        """
+        # Default values - mean of residential URBEM scorecards
+        default_values = {"heating": 47.0, "cooling": 19.0}  # kW
+        var_names = {"heating": "Total heating power", "cooling": "Total cooling power"}
 
-urbem_to_beat_regions = {
-    "Trentino": "Abruzzo",
-    "Lombardy": "Emilia-Romagna",
-    "Piedmont": "Emilia-Romagna",
-    "Aosta": "Abruzzo",
-    "Sicily": "Basilicata",
-    "Apulia": "Campania",
-    "Tuscany": "Emilia-Romagna",
-    "Liguria": "Campania",
-    "Calabria": "Calabria",
-    "Lazio": "Abruzzo",
-}
+        var_name = var_names[capacity_type]
+        default_value = default_values[capacity_type]
 
+        # Try to get capacity directly from the best scorecard
+        capacity_row = best_scorecard.query(
+            f"Variable == @var_name and Metric == 'Mean value' and Value != ''"
+        )
 
-ages = []
-for building in beat_buildings:
-    ages.append(building["building"]["age"])
+        if not capacity_row.empty:
+            return float(capacity_row.Value.iloc[0])
 
-print(set(ages))
+        # If not found, filter for residential buildings with capacity values
+        filtered_df = filter_residential_buildings(all_scorecards).query(
+            f"Variable == @var_name and Metric == 'Mean value' and Value != ''"
+        )
 
+        if not filtered_df.empty:
+            # Get unique climate and construction period combinations
+            climate_period_df = filtered_df[
+                ["Climate", "Construction period"]
+            ].drop_duplicates()
 
-types = []
-for building in beat_buildings:
-    types.append(building["building"]["type"])
+            # Find closest climate
+            closest_climate = find_best_climate(climate_period_df, climate_zone)
+            if closest_climate is not None:
+                # Filter for closest climate
+                filtered_df = filtered_df[filtered_df["Climate"] == closest_climate]
 
-print(set(types))
+                if not filtered_df.empty:
+                    # Find best matching period
+                    location_type_period = filtered_df[
+                        ["Location", "Building category", "Construction period"]
+                    ].drop_duplicates()
+                    closest_period = find_best_period(
+                        location_type_period, building["building"]["age"]
+                    )
+
+                    # Get capacity for closest period
+                    period_capacity = filtered_df[
+                        filtered_df["Construction period"] == closest_period
+                    ].Value
+
+                    if not period_capacity.empty:
+                        return float(period_capacity.iloc[0])
+
+        return default_value
+
+    # Get and set system capacities
+    heating_capacity = get_system_capacity(
+        urbem_scorecard, df, climate_zone, building, "heating"
+    )
+    cooling_capacity = get_system_capacity(
+        urbem_scorecard, df, climate_zone, building, "cooling"
+    )
+
+    interfloor_height = 3.0
+    n_of_floors = round(building["building"]["height"] / interfloor_height)
+
+    if building["building"]["type"] == "SFH":
+        n_apartments = 1
+    else:
+        area_per_apartment = 80
+        n_apartments = round(building["building"]["area"] / area_per_apartment)
+
+    beat_building["building_parameters"]["system_capacities"]["heating_capacity"] = (
+        heating_capacity * n_apartments
+    )
+    beat_building["building_parameters"]["system_capacities"]["cooling_capacity"] = (
+        cooling_capacity * n_apartments
+    )
+
+    print(f"Estimated number of apartments: {n_apartments}")
+    print(
+        f"Estimated number of apartments per floor (for cross-checking only): {n_apartments/n_of_floors}"
+    )
+    print(f"Set heating capacity per apartment to {heating_capacity} kW")
+    print(f"Set cooling capacity per apartment to {cooling_capacity} kW")
+
+    # Save BUI JSON
+    # Convert to JSON string with proper encoding
+    json_str = json.dumps(beat_building, indent=4, ensure_ascii=False)
+
+    # Write with explicit UTF-8 encoding
+    output_path.write_text(json_str, encoding="utf-8")

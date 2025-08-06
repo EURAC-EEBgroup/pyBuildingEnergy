@@ -404,7 +404,8 @@ def main():
     )
 
     # Determine number of processes to use (leave one core free)
-    num_processes = max(1, cpu_count() - 1)
+    # num_processes = max(1, cpu_count() - 1)
+    num_processes = 1
 
     # Create output directory
     output_dir = "simulation_results"
