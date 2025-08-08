@@ -458,7 +458,7 @@ class Buildings(object):
         else:
             self._volume = value
 
-    # Area of building elements can not be 0. Se
+    # Area of building elements can not be 0.
     @property
     def area_elements(self):
         return self._area_elements
