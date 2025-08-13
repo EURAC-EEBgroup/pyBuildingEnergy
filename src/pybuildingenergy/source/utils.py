@@ -635,16 +635,54 @@ class ISO52016:
         """
         R_gr = 0.5 / lambda_gr  # thermal resistance of 0.5 m of ground [m2 K/W]
         # Number of envelop building elements
-        el_type = building_object.__getattribute__("typology_elements")
+        if isinstance(building_object, dict):
+            el_type = [
+                surf["ISO52016_type_string"]
+                for surf in building_object["building_surface"]
+            ]
+        else:
+            el_type = building_object.__getattribute__("typology_elements")
         # Initialization of conduttance coefficient calcualation
         h_pli_eli = np.zeros((4, len(el_type)))
 
-        U_eli = building_object.__getattribute__("transmittance_U_elements")
-        R_c_eli = building_object.__getattribute__("thermal_resistance_R_elements")
-        h_ci_eli = building_object.__getattribute__("heat_convective_elements_internal")
-        h_ri_eli = building_object.__getattribute__("heat_radiative_elements_internal")
-        h_ce_eli = building_object.__getattribute__("heat_convective_elements_external")
-        h_re_eli = building_object.__getattribute__("heat_radiative_elements_external")
+        if isinstance(building_object, dict):
+            U_eli = [surf["u_value"] for surf in building_object["building_surface"]]
+            R_c_eli = [0.0] * len(el_type)
+            h_ci_eli = [
+                surf["convective_heat_transfer_coefficient_internal"]
+                for surf in building_object["building_surface"]
+            ]
+            h_ri_eli = [
+                surf["radiative_heat_transfer_coefficient_internal"]
+                for surf in building_object["building_surface"]
+            ]
+            convective_heat_transfer_coefficient_external = 20.0  # See ISO 13789
+            h_ce_eli = [convective_heat_transfer_coefficient_external] * len(el_type)
+            for surf in building_object["building_surface"]:
+                surf["convective_heat_transfer_coefficient_external"] = (
+                    convective_heat_transfer_coefficient_external
+                )
+            radiative_heat_transfer_coefficient_external = 4.14  # See ISO 13789
+            h_re_eli = [radiative_heat_transfer_coefficient_external] * len(el_type)
+            for surf in building_object["building_surface"]:
+                surf["radiative_heat_transfer_coefficient_external"] = (
+                    radiative_heat_transfer_coefficient_external
+                )
+        else:
+            U_eli = building_object.__getattribute__("transmittance_U_elements")
+            R_c_eli = building_object.__getattribute__("thermal_resistance_R_elements")
+            h_ci_eli = building_object.__getattribute__(
+                "heat_convective_elements_internal"
+            )
+            h_ri_eli = building_object.__getattribute__(
+                "heat_radiative_elements_internal"
+            )
+            h_ce_eli = building_object.__getattribute__(
+                "heat_convective_elements_external"
+            )
+            h_re_eli = building_object.__getattribute__(
+                "heat_radiative_elements_external"
+            )
 
         for i in range(0, len(el_type)):
             if R_c_eli[i] == 0.0:
@@ -657,10 +695,7 @@ class ISO52016:
         # layer = 1
         layer_no = 0
         for i in range(len(el_type)):
-            if (
-                building_object.__getattribute__("thermal_resistance_R_elements")[i]
-                != 0
-            ):
+            if R_c_eli[i] != 0:
                 if el_type[i] == "OP":
                     # h_pli_eli[0, i] = 6 / BUI.__getattribute__('thermal_resistance_R_elements')[i]
                     h_pli_eli[0, i] = 6 / R_c_eli[i]
@@ -673,10 +708,7 @@ class ISO52016:
         # layer = 2
         layer_no = 1
         for i in range(len(el_type)):
-            if (
-                building_object.__getattribute__("thermal_resistance_R_elements")[i]
-                != 0
-            ):
+            if R_c_eli[i] != 0:
                 if el_type[i] == "OP":
                     # h_pli_eli[layer_no, i] = 3 / building_object.__getattribute__('thermal_resistance_R_elements')[i]
                     h_pli_eli[layer_no, i] = 3 / R_c_eli[i]
@@ -687,10 +719,7 @@ class ISO52016:
         # layer = 3
         layer_no = 2
         for i in range(len(el_type)):
-            if (
-                building_object.__getattribute__("thermal_resistance_R_elements")[i]
-                != 0
-            ):
+            if R_c_eli[i] != 0:
                 if el_type[i] == "OP":
                     # h_pli_eli[layer_no, i] = 3 / building_object.__getattribute__('thermal_resistance_R_elements')[i]
                     h_pli_eli[layer_no, i] = 3 / R_c_eli[i]
@@ -701,10 +730,7 @@ class ISO52016:
         # layer = 4
         layer_no = 3
         for i in range(len(el_type)):
-            if (
-                building_object.__getattribute__("thermal_resistance_R_elements")[i]
-                != 0
-            ):
+            if R_c_eli[i] != 0:
                 if el_type[i] == "OP":
                     # h_pli_eli[layer_no, i] = 6 / building_object.__getattribute__('thermal_resistance_R_elements')[i]
                     h_pli_eli[layer_no, i] = 6 / R_c_eli[i]
@@ -744,9 +770,20 @@ class ISO52016:
 
         """
         # Number of envelop building elements
-        el_list = len(building_object.__getattribute__("typology_elements"))
+        if isinstance(building_object, dict):
+            el_list = len(building_object["building_surface"])
+        else:
+            el_list = len(building_object.__getattribute__("typology_elements"))
         # Coefficient list of elements
-        solar_abs_elements = building_object.__getattribute__("solar_abs_elements")
+        solar_abs_elements = [0.0] * el_list
+        if isinstance(building_object, dict):
+            for i, surf in enumerate(building_object["building_surface"]):
+                if "solar_absorptance" in surf:  # Opaque element
+                    solar_abs_elements[i] = surf["solar_absorptance"]
+                else:  # Transparent element
+                    solar_abs_elements[i] = surf["g_value"]
+        else:
+            solar_abs_elements = building_object.__getattribute__("solar_abs_elements")
 
         # Initialization of solar_abs_coeff
         a_sol_pli_eli = np.zeros((5, el_list))
@@ -773,28 +810,40 @@ class ISO52016:
         """
 
         # Number of envelop building elements
-        el_type = building_object.__getattribute__("typology_elements")
-        # List of heat capacyit of building envelope elements
-        list_kappa_el = building_object.__getattribute__("thermal_capacity_elements")
+        if isinstance(building_object, dict):
+            el_type = [
+                surf["ISO52016_type_string"]
+                for surf in building_object["building_surface"]
+            ]
+            list_kappa_el = [0] * len(el_type)
+            for i, surf in enumerate(building_object["building_surface"]):
+                if "thermal_capacity" in surf:
+                    list_kappa_el[i] = surf["thermal_capacity"]
+        else:
+            el_type = building_object.__getattribute__("typology_elements")
+            list_kappa_el = building_object.__getattribute__(
+                "thermal_capacity_elements"
+            )
+
         # Initialization of heat capacity of nodes
         kappa_pli_eli_ = np.zeros((5, len(el_type)))
 
         #
-        if (
+        if isinstance(building_object, dict) or (
             building_object.__getattribute__("construction_class") == "class_i"
         ):  # Mass concetrated at internal side
             # OPAQUE: kpl5 = km_eli ; kpl1=kpl2=kpl3=kpl4=0
             # GROUND: kpl5 = km_eli ; kpl3=kpl4=0
             node = 1
             for i in range(len(el_type)):
-                if building_object.__getattribute__("typology_elements")[i] == "GR":
+                if el_type[i] == "GR":
                     kappa_pli_eli_[node, i] = 1e6  # heat capacity of the ground
 
             node = 4
             for i in range(len(el_type)):
-                if building_object.__getattribute__("typology_elements")[i] == "OP":
+                if el_type[i] == "OP":
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
-                elif building_object.__getattribute__("typology_elements")[i] == "GR":
+                elif el_type[i] == "GR":
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
 
         elif (
@@ -804,9 +853,9 @@ class ISO52016:
             # GROUND: kpl3 = km_eli ; kpl4=kpl5=0
             node = 0
             for i in range(len(el_type)):
-                if building_object.__getattribute__("typology_elements")[i] == "OP":
+                if el_type[i] == "OP":
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
-                elif building_object.__getattribute__("typology_elements")[i] == "GR":
+                elif el_type[i] == "GR":
                     node = 2
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
 
@@ -817,15 +866,15 @@ class ISO52016:
             # GROUND: kpl1 = kp5 =km_eli/2; kpl4=0
             node = 0
             for i in range(len(el_type)):
-                if building_object.__getattribute__("typology_elements")[i] == "OP":
+                if el_type[i] == "OP":
                     kappa_pli_eli_[node, i] = list_kappa_el[i] / 2
-                elif building_object.__getattribute__("typology_elements")[i] == "GR":
+                elif el_type[i] == "GR":
                     kappa_pli_eli_[node, i] = list_kappa_el[i] / 2
             node = 4
             for i in range(len(el_type)):
-                if building_object.__getattribute__("typology_elements")[i] == "OP":
+                if el_type[i] == "OP":
                     kappa_pli_eli_[node, i] = list_kappa_el[i] / 2
-                elif building_object.__getattribute__("typology_elements")[i] == "GR":
+                elif el_type[i] == "GR":
                     kappa_pli_eli_[node, i] = list_kappa_el[i] / 2
 
         elif (
@@ -836,9 +885,9 @@ class ISO52016:
             node_list_1 = [1, 2, 3]
             for node in node_list_1:
                 for i in range(len(el_type)):
-                    if building_object.__getattribute__("typology_elements")[i] == "OP":
+                    if el_type[i] == "OP":
                         kappa_pli_eli_[node, i] = list_kappa_el[i] / 4
-                    if building_object.__getattribute__("typology_elements")[i] == "GR":
+                    if el_type[i] == "GR":
                         if node == 2:
                             kappa_pli_eli_[node, i] = list_kappa_el[i] / 4
                         if node == 3:
@@ -849,9 +898,9 @@ class ISO52016:
             node_list_2 = [0, 4]
             for node in node_list_2:
                 for i in range(len(el_type)):
-                    if building_object.__getattribute__("typology_elements")[i] == "OP":
+                    if el_type[i] == "OP":
                         kappa_pli_eli_[node, i] = list_kappa_el[i] / 8
-                    if building_object.__getattribute__("typology_elements")[i] == "GR":
+                    if el_type[i] == "GR":
                         if node == 4:
                             kappa_pli_eli_[node, i] = list_kappa_el[i] / 4
 
@@ -862,9 +911,9 @@ class ISO52016:
             # GROUND: kpl4=km_eli; kpl3=kpl5=0
             node = 2
             for i in range(len(el_type)):
-                if building_object.__getattribute__("typology_elements")[i] == "OP":
+                if el_type[i] == "OP":
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
-                if building_object.__getattribute__("typology_elements")[i] == "GR":
+                if el_type[i] == "GR":
                     node = 3
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
 
@@ -969,77 +1018,99 @@ class ISO52016:
         # ============================
 
         # ============================
-        if building_object.__getattribute__(
-            "heating_mode"
-        ) and building_object.__getattribute__("cooling_mode"):
-            if (
-                building_object.__getattribute__("heating_setpoint") is not None
-                and building_object.__getattribute__("cooling_setpoint") is not None
-            ):
-                # Calculate annual mean internal temperature and amplitude of internal temperature variations
-                annual_mean_internal_temperature = (
-                    building_object.__getattribute__("heating_setpoint")
-                    + building_object.__getattribute__("cooling_setpoint")
-                ) / 2  # [°C]
-                amplitude_of_internal_temperature_variations = (
-                    building_object.__getattribute__("cooling_setpoint")
-                    - building_object.__getattribute__("heating_setpoint")
-                ) / 2  # [K]
+        if isinstance(building_object, dict):
+            # For the Grins Beat project, we assume active heating and cooling setpoints
+            annual_mean_internal_temperature = (
+                building_object["building_parameters"]["temperature_setpoints"][
+                    "heating_setpoint"
+                ]
+                + building_object["building_parameters"]["temperature_setpoints"][
+                    "cooling_setpoint"
+                ]
+            ) / 2
+            amplitude_of_internal_temperature_variations = (
+                building_object["building_parameters"]["temperature_setpoints"][
+                    "cooling_setpoint"
+                ]
+                - building_object["building_parameters"]["temperature_setpoints"][
+                    "heating_setpoint"
+                ]
+            ) / 2
         else:
-            if (
-                hasattr(building_object, "annual_mean_internal_temperature")
-                and building_object.__getattribute__("annual_mean_internal_temperature")
-                is not None
-            ):
-                # Use provided annual mean internal temperature if available
-                annual_mean_internal_temperature = building_object.__getattribute__(
-                    "annual_mean_internal_temperature"
-                )
-                # User can provide amplitude_of_internal_temperature_variations
+            if building_object.__getattribute__(
+                "heating_mode"
+            ) and building_object.__getattribute__("cooling_mode"):
                 if (
-                    hasattr(
-                        building_object, "amplitude_of_internal_temperature_variations"
-                    )
+                    building_object.__getattribute__("heating_setpoint") is not None
+                    and building_object.__getattribute__("cooling_setpoint") is not None
+                ):
+                    # Calculate annual mean internal temperature and amplitude of internal temperature variations
+                    annual_mean_internal_temperature = (
+                        building_object.__getattribute__("heating_setpoint")
+                        + building_object.__getattribute__("cooling_setpoint")
+                    ) / 2  # [°C]
+                    amplitude_of_internal_temperature_variations = (
+                        building_object.__getattribute__("cooling_setpoint")
+                        - building_object.__getattribute__("heating_setpoint")
+                    ) / 2  # [K]
+            else:
+                if (
+                    hasattr(building_object, "annual_mean_internal_temperature")
                     and building_object.__getattribute__(
-                        "amplitude_of_internal_temperature_variations"
+                        "annual_mean_internal_temperature"
                     )
                     is not None
                 ):
-                    amplitude_of_internal_temperature_variations = (
-                        building_object.__getattribute__(
+                    # Use provided annual mean internal temperature if available
+                    annual_mean_internal_temperature = building_object.__getattribute__(
+                        "annual_mean_internal_temperature"
+                    )
+                    # User can provide amplitude_of_internal_temperature_variations
+                    if (
+                        hasattr(
+                            building_object,
+                            "amplitude_of_internal_temperature_variations",
+                        )
+                        and building_object.__getattribute__(
                             "amplitude_of_internal_temperature_variations"
                         )
-                    )
+                        is not None
+                    ):
+                        amplitude_of_internal_temperature_variations = (
+                            building_object.__getattribute__(
+                                "amplitude_of_internal_temperature_variations"
+                            )
+                        )
+                    else:
+                        amplitude_of_internal_temperature_variations = 3
                 else:
+                    # Use default or expert input if user-provided data is not available
+                    annual_mean_internal_temperature = (
+                        23  # Default estimate or expert input, user input
+                    )
                     amplitude_of_internal_temperature_variations = 3
-            else:
-                # Use default or expert input if user-provided data is not available
-                annual_mean_internal_temperature = (
-                    23  # Default estimate or expert input, user input
-                )
-                amplitude_of_internal_temperature_variations = 3
         # ============================
 
         # ============================
-        if not building_object.__getattribute__("coldest_month"):
-            if building_object.__getattribute__("latitude") >= 0:
-                building_object.__setattr__("coldest_month", 1)
-                # building_object.coldest_month = 1  # 1..12;
-            else:
-                building_object.__setattr__("coldest_month", 7)
-                # building_object.coldest_month= 7
+        if isinstance(building_object, dict):
+            coldest_month = 1
+            building_object["building_parameters"]["coldest_month"] = coldest_month
+        else:
+            if not building_object.__getattribute__("coldest_month"):
+                if building_object.__getattribute__("latitude") >= 0:
+                    building_object.__setattr__("coldest_month", 1)
+                    # building_object.coldest_month = 1  # 1..12;
+                else:
+                    building_object.__setattr__("coldest_month", 7)
+                    # building_object.coldest_month= 7
+            coldest_month = building_object.__getattribute__("coldest_month")
 
         internal_temperature_by_month = np.zeros(12)
         for month in range(12):
             internal_temperature_by_month[month] = (
                 annual_mean_internal_temperature
                 - amplitude_of_internal_temperature_variations
-                * np.cos(
-                    2
-                    * np.pi
-                    * (month + 1 - building_object.__getattribute__("coldest_month"))
-                    / 12
-                )
+                * np.cos(2 * np.pi * (month + 1 - coldest_month) / 12)
             )  # estimate
         # ============================
 
@@ -1048,16 +1119,21 @@ class ISO52016:
         Area in contact with the ground. 
         If the value is nor provided by the user 
         """
-        sog_area = building_object.__getattribute__("slab_on_ground")
-        if sog_area == -999:
-            sog_area = sum(
-                Filter_list_by_indices(
-                    building_object.__getattribute__("area"),
-                    Get_positions(
-                        building_object.__getattribute__("typology_elements"), "GR"
-                    ),
+        if isinstance(building_object, dict):
+            for surf in building_object["building_surface"]:
+                if surf["sky_view_factor"] == 0:
+                    sog_area = surf["area"]
+        else:
+            sog_area = building_object.__getattribute__("slab_on_ground")
+            if sog_area == -999:
+                sog_area = sum(
+                    Filter_list_by_indices(
+                        building_object.__getattribute__("area"),
+                        Get_positions(
+                            building_object.__getattribute__("typology_elements"), "GR"
+                        ),
+                    )
                 )
-            )
         # ============================
 
         # ============================
@@ -1066,32 +1142,39 @@ class ISO52016:
         If the value is not provided by the user a rectangluar shape of the building is considered.
         The perimeter is calcuated according to the area of the south and east facade
         """
-        if building_object.__getattribute__("exposed_perimeter") == None:
-            # SOUTH FACADE
-            south_facade_area = sum(
-                Filter_list_by_indices(
-                    building_object.__getattribute__("area"),
-                    Get_positions(
-                        building_object.__getattribute__("orientation_elements"), "SV"
-                    ),
-                )
-            )
-            # EAST FACADE
-            east_facade_area = sum(
-                Filter_list_by_indices(
-                    building_object.__getattribute__("area"),
-                    Get_positions(
-                        building_object.__getattribute__("orientation_elements"), "EV"
-                    ),
-                )
-            )
-            #
-            facade_height = np.sqrt(east_facade_area * south_facade_area / sog_area)
-            sog_width = south_facade_area / facade_height
-            sog_length = sog_area / sog_width
-            exposed_perimeter = 2 * (sog_length + sog_width)
+        if isinstance(building_object, dict):
+            exposed_perimeter = building_object["building"]["exposed_perimeter"]
         else:
-            exposed_perimeter = building_object.__getattribute__("exposed_perimeter")
+            if building_object.__getattribute__("exposed_perimeter") == None:
+                # SOUTH FACADE
+                south_facade_area = sum(
+                    Filter_list_by_indices(
+                        building_object.__getattribute__("area"),
+                        Get_positions(
+                            building_object.__getattribute__("orientation_elements"),
+                            "SV",
+                        ),
+                    )
+                )
+                # EAST FACADE
+                east_facade_area = sum(
+                    Filter_list_by_indices(
+                        building_object.__getattribute__("area"),
+                        Get_positions(
+                            building_object.__getattribute__("orientation_elements"),
+                            "EV",
+                        ),
+                    )
+                )
+                #
+                facade_height = np.sqrt(east_facade_area * south_facade_area / sog_area)
+                sog_width = south_facade_area / facade_height
+                sog_length = sog_area / sog_width
+                exposed_perimeter = 2 * (sog_length + sog_width)
+            else:
+                exposed_perimeter = building_object.__getattribute__(
+                    "exposed_perimeter"
+                )
         characteristic_floor_dimension = sog_area / (0.5 * exposed_perimeter)
         # ============================
 
@@ -1101,19 +1184,25 @@ class ISO52016:
             1. the thermal Resistance (R) and Transmittance (U) of the floor
             2. External Temperature [°C]
         """
-        if not building_object.__getattribute__("wall_thickness"):
-            # building_object.wall_thickness = 0.35  # [m]
-            building_object.__setattr__("wall_thickness", 0.35)
+        if isinstance(building_object, dict):
+            wall_thickness = building_object["building"]["wall_thickness"]
+            thermal_resistance_floor = 5.3
+        else:
+            if not building_object.__getattribute__("wall_thickness"):
+                # building_object.wall_thickness = 0.35  # [m]
+                wall_thickness = 0.35
+                building_object.__setattr__("wall_thickness", wall_thickness)
 
-        if not building_object.thermal_resistance_floor:
-            building_object.__setattr__("thermal_resistance_floor", 5.3)
-            # building_object.thermal_resistance_floor = 5.3  # Floor construction thermal resistance (excluding effect of ground) [m2 K/W]
+            if not building_object.thermal_resistance_floor:
+                thermal_resistance_floor = 5.3
+                building_object.__setattr__(
+                    "thermal_resistance_floor", thermal_resistance_floor
+                )
+                # building_object.thermal_resistance_floor = 5.3  # Floor construction thermal resistance (excluding effect of ground) [m2 K/W]
 
         # The thermal transmittance depends on the characteristic dimension of the floor, B' [see 8.1 and Equation (2)], and the total equivalent thickness, dt (see 8.2), defined by Equation (3):
-        equivalent_ground_thickness = building_object.__getattribute__(
-            "wall_thickness"
-        ) + lambda_gr * (
-            building_object.thermal_resistance_floor + R_se
+        equivalent_ground_thickness = wall_thickness + lambda_gr * (
+            thermal_resistance_floor + R_se
         )  # [m]
 
         if (
@@ -1134,25 +1223,23 @@ class ISO52016:
             )
 
         # calcualtion of thermal resistance of virtual layer
-        R_gr_ve = (
-            1 / U_sog
-            - R_si
-            - building_object.__getattribute__("thermal_resistance_floor")
-            - R_gr
-        )
+        R_gr_ve = 1 / U_sog - R_si - thermal_resistance_floor - R_gr
 
         # Adding thermal bridges
-        if not building_object.__getattribute__("thermal_bridge_heat"):
-            # building_object.thermal_bridge_heat = exposed_perimeter * psi_k
-            building_object.__setattr__(
-                "thermal_bridge_heat", exposed_perimeter * psi_k
-            )
+        if isinstance(building_object, dict):
+            thermal_bridge_heat = exposed_perimeter * psi_k
         else:
-            thermal_bridge = building_object.__getattribute__("thermal_bridge_heat")
-            # building_object.thermal_bridge_heat += exposed_perimeter * psi_k
-            building_object.__setattr__(
-                "thermal_bridge_heat", thermal_bridge + (exposed_perimeter * psi_k)
-            )
+            if not building_object.__getattribute__("thermal_bridge_heat"):
+                # building_object.thermal_bridge_heat = exposed_perimeter * psi_k
+                building_object.__setattr__(
+                    "thermal_bridge_heat", exposed_perimeter * psi_k
+                )
+            else:
+                thermal_bridge = building_object.__getattribute__("thermal_bridge_heat")
+                # building_object.thermal_bridge_heat += exposed_perimeter * psi_k
+                building_object.__setattr__(
+                    "thermal_bridge_heat", thermal_bridge + (exposed_perimeter * psi_k)
+                )
 
         # Calculation of steady-state  ground  heat  transfer  coefficients  are  related  to  the  ratio  of  equivalent  thickness
         # to  characteristic floor dimension, and the periodic heat transfer coefficients are related to the ratio
@@ -1191,34 +1278,14 @@ class ISO52016:
             periodic_heat_flow_due_to_internal_temperature_variation[month] = (
                 -H_pi
                 * amplitude_of_internal_temperature_variations
-                * np.cos(
-                    2
-                    * np.pi
-                    * (
-                        month
-                        + 1
-                        - building_object.__getattribute__("coldest_month")
-                        + a_tl
-                    )
-                    / 12
-                )
+                * np.cos(2 * np.pi * (month + 1 - coldest_month + a_tl) / 12)
             )
         periodic_heat_flow_due_to_external_temperature_variation = np.zeros(12)
         for month in range(12):
             periodic_heat_flow_due_to_external_temperature_variation[month] = (
                 H_pe
                 * amplitude_of_external_temperature_variations
-                * np.cos(
-                    2
-                    * np.pi
-                    * (
-                        month
-                        + 1
-                        - building_object.__getattribute__("coldest_month")
-                        - b_tl
-                    )
-                    / 12
-                )
+                * np.cos(2 * np.pi * (month + 1 - coldest_month - b_tl) / 12)
             )
         average_heat_flow_rate = (
             annual_average_heat_flow_rate
@@ -1235,7 +1302,7 @@ class ISO52016:
         return temp_ground(
             R_gr_ve=R_gr_ve,
             Theta_gr_ve=Theta_gr_ve,
-            thermal_bridge_heat=building_object.__getattribute__("thermal_bridge_heat"),
+            thermal_bridge_heat=thermal_bridge_heat,
         )
 
     @classmethod
@@ -1645,6 +1712,7 @@ class ISO52016:
                                 typology_elements[i] = "OP"
                     elif surf["type"] == "transparent":
                         typology_elements[i] = "W"
+                    surf["ISO52016_type_string"] = typology_elements[i]
             else:
                 typology_elements = np.array(
                     building_object.__getattribute__("typology_elements")
@@ -1694,6 +1762,7 @@ class ISO52016:
                                 orientation_elements[i] = "SV"
                             case 270:
                                 orientation_elements[i] = "WV"
+                    surf["ISO52016_orientation_string"] = orientation_elements[i]
             else:
                 orientation_elements = np.array(
                     building_object.__getattribute__("orientation_elements")
@@ -1725,7 +1794,9 @@ class ISO52016:
                         hci[i] = hci_roof
                     else:
                         hci[i] = hci_facade
+                    surf["convective_heat_transfer_coefficient_internal"] = hci[i]
                 Ah_ci = np.dot(area_elements, hci)
+
             else:
                 Ah_ci = np.dot(
                     area_elements,
@@ -1737,10 +1808,18 @@ class ISO52016:
 
             # mean internal radiative transfer coefficient
             if isinstance(building_object, dict):
+                radiative_heat_transfer_coefficient = 5.13
                 heat_radiative_elements_internal_mn = (
-                    np.dot(area_elements, np.array(5.13 * np.ones(bui_eln)))
+                    np.dot(
+                        area_elements,
+                        radiative_heat_transfer_coefficient * np.ones(bui_eln),
+                    )
                     / area_elements_tot
                 )
+                for surf in building_object["building_surface"]:
+                    surf["radiative_heat_transfer_coefficient_internal"] = (
+                        radiative_heat_transfer_coefficient
+                    )
             else:
                 heat_radiative_elements_internal_mn = (
                     np.dot(
@@ -1770,15 +1849,15 @@ class ISO52016:
 
             pbar.set_postfix({"Info": f"Calculating conduttance of elements"})
             pbar.update(1)
-            kappa_pli_eli = (
-                ISO52016().Areal_heat_capacity_of_element(building_object).kappa_pli_eli
-            )
+            kappa_pli_eli = ISO52016.Areal_heat_capacity_of_element(
+                building_object
+            ).kappa_pli_eli
 
             pbar.set_postfix({"Info": f"Calculating aeral heat capacity of elements"})
             pbar.update(1)
-            a_sol_pli_eli = (
-                ISO52016().Solar_absorption_of_element(building_object).a_sol_pli_eli
-            )
+            a_sol_pli_eli = ISO52016.Solar_absorption_of_element(
+                building_object
+            ).a_sol_pli_eli
 
             pbar.set_postfix({"Info": f"Calculating solar absorption of element"})
             pbar.update(1)
@@ -1803,20 +1882,32 @@ class ISO52016:
                 if Theta_H_set < -995:  #
                     power_heating_max_act = 0
                 else:
-                    power_heating_max_act = building_object.__getattribute__(
-                        "power_heating_max"
-                    )  #
+                    if isinstance(building_object, dict):
+                        power_heating_max = building_object["building_parameters"][
+                            "system_capacities"
+                        ]["heating_capacity"]
 
+                    else:
+                        power_heating_max = building_object.__getattribute__(
+                            "power_heating_max"
+                        )  #
+                    power_heating_max_act = power_heating_max
                 # COOLING:
                 # if there is no set point for heating (cooling system not installed) -> cooling power = 0
                 # otherwise the actual power is equal to the maximum one
                 if Theta_C_set > 995:
                     power_cooling_max_act = 0
                 else:
-                    power_cooling_max_act = building_object.__getattribute__(
-                        "power_cooling_max"
-                    )
-
+                    if isinstance(building_object, dict):
+                        power_cooling_max = building_object["building_parameters"][
+                            "system_capacities"
+                        ]["cooling_capacity"]
+                        power_cooling_max_act = power_cooling_max
+                    else:
+                        power_cooling_max = building_object.__getattribute__(
+                            "power_cooling_max"
+                        )
+                        power_cooling_max_act = power_cooling_max
                 Phi_HC_nd_calc[0] = (
                     0  # the load has three values:  0 no heating e no cooling, 1  heating, 2 cooling
                 )
@@ -1861,7 +1952,7 @@ class ISO52016:
                             )
 
                     ri = 0
-                    # Energy balacne on zone level. Eq. (38) UNI 52016
+                    # Energy balance on zone level. Eq. (38) UNI 52016
                     # XTemp = Thermal capacity at specific time (t) and for  a specific degree °C [W] +
                     # + Ventilation loss (at time t)[W] + Transmission loss (at time t)[W] + intrnal gain[W] + solar gain [W]. Missed the
                     # the convective fraction of the heating/cooling system
@@ -1891,14 +1982,56 @@ class ISO52016:
                         + int_gains_vent.H_ve.iloc[Tstepi]
                     )
 
+                    if isinstance(building_object, dict):
+                        heat_convective_elements_internal = [
+                            surf["convective_heat_transfer_coefficient_internal"]
+                            for surf in building_object["building_surface"]
+                        ]
+                        heat_radiative_elements_internal = [
+                            surf["radiative_heat_transfer_coefficient_internal"]
+                            for surf in building_object["building_surface"]
+                        ]
+                        heat_convective_elements_external = [
+                            surf["convective_heat_transfer_coefficient_external"]
+                            for surf in building_object["building_surface"]
+                        ]
+                        heat_radiative_elements_external = [
+                            surf["radiative_heat_transfer_coefficient_external"]
+                            for surf in building_object["building_surface"]
+                        ]
+                        sky_factor_elements = [
+                            surf["sky_view_factor"]
+                            for surf in building_object["building_surface"]
+                        ]
+                    else:
+                        heat_convective_elements_internal = (
+                            building_object.__getattribute__(
+                                "heat_convective_elements_internal"
+                            )
+                        )
+                        heat_radiative_elements_internal = (
+                            building_object.__getattribute__(
+                                "heat_radiative_elements_internal"
+                            )
+                        )
+                        heat_convective_elements_external = (
+                            building_object.__getattribute__(
+                                "heat_convective_elements_external"
+                            )
+                        )
+                        heat_radiative_elements_external = (
+                            building_object.__getattribute__(
+                                "heat_radiative_elements_external"
+                            )
+                        )
+                        sky_factor_elements = building_object.__getattribute__(
+                            "sky_factor_elements"
+                        )
                     for Eli in range(bui_eln):
                         Pli = nodes.Pln[Eli]
                         ci = nodes.PlnSum[Eli] + Pli
                         MatA[ri, ci] -= (
-                            area_elements[Eli]
-                            * building_object.__getattribute__(
-                                "heat_convective_elements_internal"
-                            )[Eli]
+                            area_elements[Eli] * heat_convective_elements_internal[Eli]
                         )
 
                     for Eli in range(bui_eln):
@@ -1927,21 +2060,13 @@ class ISO52016:
                             elif Pli == 0:
                                 if Type_eli[Eli] == "EXT":
                                     XTemp = (
-                                        building_object.__getattribute__(
-                                            "heat_convective_elements_external"
-                                        )[Eli]
-                                        + building_object.__getattribute__(
-                                            "heat_radiative_elements_external"
-                                        )[Eli]
+                                        heat_convective_elements_external[Eli]
+                                        + heat_radiative_elements_external[Eli]
                                     ) * sim_df["T2m"].iloc[
                                         Tstepi
-                                    ] - building_object.__getattribute__(
-                                        "sky_factor_elements"
-                                    )[
+                                    ] - sky_factor_elements[
                                         Eli
-                                    ] * building_object.__getattribute__(
-                                        "heat_radiative_elements_external"
-                                    )[
+                                    ] * heat_radiative_elements_external[
                                         Eli
                                     ] * delta_Theta_er
                                     for cBi in range(nrHCmodes):
@@ -1957,33 +2082,21 @@ class ISO52016:
                             MatA[ri, ci] += kappa_pli_eli[Pli, Eli] / Dtime[Tstepi]
                             if Pli == (nodes.Pln[Eli] - 1):
                                 MatA[ri, ci] += (
-                                    building_object.__getattribute__(
-                                        "heat_convective_elements_internal"
-                                    )[Eli]
+                                    heat_convective_elements_internal[Eli]
                                     + heat_radiative_elements_internal_mn
                                 )
-                                MatA[ri, 0] -= building_object.__getattribute__(
-                                    "heat_convective_elements_internal"
-                                )[Eli]
+                                MatA[ri, 0] -= heat_convective_elements_internal[Eli]
                                 for Elk in range(bui_eln):
                                     Plk = nodes.Pln[Elk] - 1
                                     ck = 1 + nodes.PlnSum[Elk] + Plk
                                     MatA[ri, ck] -= (
                                         area_elements[Elk] / area_elements_tot
-                                    ) * building_object.__getattribute__(
-                                        "heat_radiative_elements_internal"
-                                    )[
-                                        Elk
-                                    ]
+                                    ) * heat_radiative_elements_internal[Elk]
                             elif Pli == 0:
                                 if Type_eli[Eli] == "EXT":
                                     MatA[ri, ci] += (
-                                        building_object.__getattribute__(
-                                            "heat_convective_elements_external"
-                                        )[Eli]
-                                        + building_object.__getattribute__(
-                                            "heat_radiative_elements_external"
-                                        )[Eli]
+                                        heat_convective_elements_external[Eli]
+                                        + heat_radiative_elements_external[Eli]
                                     )
                                 elif Type_eli[Eli] == "GR":
                                     MatA[ri, ci] += 1 / t_Th.R_gr_ve
@@ -2011,21 +2124,15 @@ class ISO52016:
                         if Theta_int_op[Tstepi, 0] < Theta_H_set:
                             Theta_op_set = Theta_H_set
                             Phi_HC_nd_act[Tstepi] = (
-                                building_object.__getattribute__("power_heating_max")
+                                power_heating_max
                                 * (Theta_op_set - Theta_int_op[Tstepi, 0])
                                 / (
                                     Theta_int_op[Tstepi, colB_H]
                                     - Theta_int_op[Tstepi, 0]
                                 )
                             )
-                            if Phi_HC_nd_act[Tstepi] > building_object.__getattribute__(
-                                "power_heating_max"
-                            ):
-                                Phi_HC_nd_act[Tstepi] = (
-                                    building_object.__getattribute__(
-                                        "power_heating_max"
-                                    )
-                                )
+                            if Phi_HC_nd_act[Tstepi] > power_heating_max:
+                                Phi_HC_nd_act[Tstepi] = power_heating_max
                                 Theta_op_act[Tstepi] = Theta_int_op[Tstepi, colB_H]
                                 colB_act = colB_H
                             else:
@@ -2037,21 +2144,15 @@ class ISO52016:
                         elif Theta_int_op[Tstepi, 0] > Theta_C_set:
                             Theta_op_set = Theta_C_set
                             Phi_HC_nd_act[Tstepi] = (
-                                building_object.__getattribute__("power_cooling_max")
+                                power_cooling_max
                                 * (Theta_op_set - Theta_int_op[Tstepi, 0])
                                 / (
                                     Theta_int_op[Tstepi, colB_C]
                                     - Theta_int_op[Tstepi, 0]
                                 )
                             )
-                            if Phi_HC_nd_act[Tstepi] < building_object.__getattribute__(
-                                "power_cooling_max"
-                            ):
-                                Phi_HC_nd_act[Tstepi] = (
-                                    building_object.__getattribute__(
-                                        "power_cooling_max"
-                                    )
-                                )
+                            if Phi_HC_nd_act[Tstepi] < power_cooling_max:
+                                Phi_HC_nd_act[Tstepi] = power_cooling_max
                                 Theta_op_act[Tstepi] = Theta_int_op[Tstepi, colB_C]
                                 colB_act = colB_C
                             else:
@@ -2097,8 +2198,12 @@ class ISO52016:
 
         Q_H_annual = hourly_results["Q_H"].sum()
         Q_C_annual = hourly_results["Q_C"].sum()
-        Q_H_annual_per_sqm = Q_H_annual / building_object.__getattribute__("a_use")
-        Q_C_annual_per_sqm = Q_C_annual / building_object.__getattribute__("a_use")
+        if isinstance(building_object, dict):
+            a_use = building_object["building"]["treated_floor_area"]
+        else:
+            a_use = building_object.__getattribute__("a_use")
+        Q_H_annual_per_sqm = Q_H_annual / a_use
+        Q_C_annual_per_sqm = Q_C_annual / a_use
 
         annual_results_dic = {
             "Q_H_annual": Q_H_annual,

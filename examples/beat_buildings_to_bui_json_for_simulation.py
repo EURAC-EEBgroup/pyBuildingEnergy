@@ -1220,7 +1220,7 @@ for building in beat_buildings:
     for surface in beat_building["building_surface"]:
         if surface["type"] == "transparent":
             surface["u_value"] = window_u_value
-            surface["g_factor_windows"] = window_g_value
+            surface["g_value"] = window_g_value
 
     def get_air_change_rate(construction_period):
         """

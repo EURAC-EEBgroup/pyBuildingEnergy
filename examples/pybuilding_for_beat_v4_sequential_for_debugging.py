@@ -388,7 +388,7 @@ def process_building(building_archetype, output_dir="results"):
         # Calculate metrics
         heating_kWh = hourly_sim[hourly_sim["Q_HC"] > 0]["Q_HC"].sum() / 1000
         cooling_kWh = -hourly_sim[hourly_sim["Q_HC"] < 0]["Q_HC"].sum() / 1000
-        treated_floor_area = slab_to_ground["area"] * number_of_floors
+        treated_floor_area = building_archetype["building"]["treated_floor_area"]
         heating_kWh_per_sqm = heating_kWh / treated_floor_area
         cooling_kWh_per_sqm = cooling_kWh / treated_floor_area
 
