@@ -658,16 +658,24 @@ class ISO52016:
             ]
             convective_heat_transfer_coefficient_external = 20.0  # See ISO 13789
             h_ce_eli = [convective_heat_transfer_coefficient_external] * len(el_type)
-            for surf in building_object["building_surface"]:
-                surf["convective_heat_transfer_coefficient_external"] = (
-                    convective_heat_transfer_coefficient_external
-                )
+            for i, surf in enumerate(building_object["building_surface"]):
+                if surf["ISO52016_type_string"] == "AD":
+                    h_ce_eli[i] = 0.0
+                    surf["convective_heat_transfer_coefficient_external"] = 0.0
+                else:
+                    surf["convective_heat_transfer_coefficient_external"] = (
+                        convective_heat_transfer_coefficient_external
+                    )
             radiative_heat_transfer_coefficient_external = 4.14  # See ISO 13789
             h_re_eli = [radiative_heat_transfer_coefficient_external] * len(el_type)
-            for surf in building_object["building_surface"]:
-                surf["radiative_heat_transfer_coefficient_external"] = (
-                    radiative_heat_transfer_coefficient_external
-                )
+            for i, surf in enumerate(building_object["building_surface"]):
+                if surf["ISO52016_type_string"] == "AD":
+                    h_re_eli[i] = 0.0
+                    surf["radiative_heat_transfer_coefficient_external"] = 0.0
+                else:
+                    surf["radiative_heat_transfer_coefficient_external"] = (
+                        radiative_heat_transfer_coefficient_external
+                    )
         else:
             U_eli = building_object.__getattribute__("transmittance_U_elements")
             R_c_eli = building_object.__getattribute__("thermal_resistance_R_elements")
@@ -779,7 +787,10 @@ class ISO52016:
         if isinstance(building_object, dict):
             for i, surf in enumerate(building_object["building_surface"]):
                 if "solar_absorptance" in surf:  # Opaque element
-                    solar_abs_elements[i] = surf["solar_absorptance"]
+                    if surf["ISO52016_type_string"] == "AD":
+                        solar_abs_elements[i] = 0.0
+                    else:
+                        solar_abs_elements[i] = surf["solar_absorptance"]
                 else:  # Transparent element
                     solar_abs_elements[i] = surf["g_value"]
         else:
@@ -1696,7 +1707,6 @@ class ISO52016:
             else:
                 bui_eln = len(building_object.__getattribute__("typology_elements"))
 
-            #
             pbar.update(1)
             # Element types and orientations
             if isinstance(building_object, dict):
@@ -1939,7 +1949,17 @@ class ISO52016:
                     Phi_sol_zi = 0
 
                     for Eli in range(bui_eln):
+                        if isinstance(building_object, dict):
+                            if (
+                                building_object["building_surface"][Eli][
+                                    "ISO52016_type_string"
+                                ]
+                                == "AD"
+                            ):
+                                continue
+
                         if Type_eli[Eli] == "EXT":
+
                             # Solar gains for each elements, the sim_df['SV' or 'EV', etc.] is calculated based on the
                             # UNI 52010:
                             # Phi_sol_zi: solar gain [W]
