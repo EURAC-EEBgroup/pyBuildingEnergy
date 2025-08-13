@@ -1655,9 +1655,9 @@ class ISO52016:
         i = 1
         with tqdm(total=15) as pbar:
 
-            pbar.set_postfix({"Info": f"Inizailization {i}"})
+            pbar.set_postfix({"Info": f"Initialization {i}"})
 
-            # INIZIALIZATION
+            # INITIALIZATION
             if kwargs["weather_source"] == "pvgis":
                 path_weather_file_ = None
             elif kwargs["weather_source"] == "epw":
@@ -1674,7 +1674,7 @@ class ISO52016:
             sim_df = int_gains_vent.sim_df_update
             Tstepn = len(sim_df)  # number of hours to perform the simulation
 
-            # HEating and cooling Load
+            # Heating and cooling Load
             Phi_HC_nd_calc = np.zeros(
                 3
             )  # Load of Heating or Cooling needed to heat/cool the zone - calculated
@@ -1909,7 +1909,7 @@ class ISO52016:
                     power_cooling_max_act = 0
                 else:
                     if isinstance(building_object, dict):
-                        power_cooling_max = building_object["building_parameters"][
+                        power_cooling_max = -building_object["building_parameters"][
                             "system_capacities"
                         ]["cooling_capacity"]
                         power_cooling_max_act = power_cooling_max
@@ -2140,7 +2140,7 @@ class ISO52016:
                         Theta_int_air[Tstepi, :] + Theta_int_r_mn[Tstepi, :]
                     )
 
-                    if nrHCmodes > 1:  # se
+                    if nrHCmodes > 1:
                         if Theta_int_op[Tstepi, 0] < Theta_H_set:
                             Theta_op_set = Theta_H_set
                             Phi_HC_nd_act[Tstepi] = (

@@ -12,31 +12,6 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))  # Prioritize this path
 
 from src.pybuildingenergy.source.utils import ISO52016
-from src.pybuildingenergy.data.building_archetype import Buildings
-from src.pybuildingenergy.source.graphs import Graphs_and_report
-import json
-
-
-# def get_building_surface(
-#     json_data,
-#     type_surface="opaque",
-#     adiabatic=False,
-#     sky_view_factor=0.0,
-#     orientation_tilt=0,
-#     orientation_azimuth=0,
-# ):
-#     """Get building surface area"""
-#     return next(
-#         (
-#             d
-#             for d in json_data["building_surface"]
-#             if d["type"] == type_surface
-#             and d["sky_view_factor"] == sky_view_factor
-#             and d["orientation"]["tilt"] == orientation_tilt
-#             and d["orientation"]["azimuth"] == orientation_azimuth
-#         ),
-#         None,
-#     )
 
 
 def process_building(building_archetype, output_dir="results"):
@@ -94,13 +69,6 @@ def process_building(building_archetype, output_dir="results"):
         }
 
 
-def worker_init(db_name, collection_name):
-    global db, collection
-    client = MongoClient("localhost", 27017)
-    db = client[db_name]
-    collection = db[collection_name]
-
-
 def main():
     # Database and collection names
     db_name = "buildings_db"
@@ -126,25 +94,20 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
 
     # Initialize worker (for database connection)
-    worker_init(db_name, collection_name)
+    # worker_init(db_name, collection_name)
 
-    # Process buildings one by one (debug mode)
-    results = []
-    while True:
-        # Find and update the document to mark it as processing
-        building_archetype = collection.find_one_and_update(
-            {"status": "unprocessed"}, {"$set": {"status": "processing"}}
-        )
-        if building_archetype is None:
-            break
+    # Get all unprocessed buildings
+    unprocessed_buildings = list(collection.find({"status": "unprocessed"}))
+    print(f"Total unprocessed buildings: {len(unprocessed_buildings)}")
 
+    # Process internal gains for all buildings first
+    for building in unprocessed_buildings:
         # Internal gains calculation
-        # Initialize profiles with zeros
         internal_gains_weekday_profile = [0] * 24
         internal_gains_weekend_profile = [0] * 24
 
         # Calculate combined profiles
-        for gain in building_archetype["building_parameters"]["internal_gains"]:
+        for gain in building["building_parameters"]["internal_gains"]:
             for i in range(24):
                 internal_gains_weekday_profile[i] += (
                     gain["full_load"] * gain["weekday"][i]
@@ -152,18 +115,31 @@ def main():
                 internal_gains_weekend_profile[i] += (
                     gain["full_load"] * gain["weekend"][i]
                 )
-        # Update building archetype with internal gains profiles
-        building_archetype["building_parameters"]["internal_gains_total"] = {
+
+        # Update building with internal gains profiles
+        building["building_parameters"]["internal_gains_total"] = {
             "weekday": internal_gains_weekday_profile,
             "weekend": internal_gains_weekend_profile,
         }
 
-        print(f"Processing building: {building_archetype['building']['name']}")
-        result = process_building(building_archetype)
-        results.append(result)
-        # Mark the document as processed
-        collection.update_one(
-            {"_id": building_archetype["_id"]}, {"$set": {"status": "processed"}}
+    # Mark all buildings as processing
+    collection.update_many(
+        {"_id": {"$in": [b["_id"] for b in unprocessed_buildings]}},
+        {"$set": {"status": "processing"}},
+    )
+
+    # Process buildings in parallel
+    num_workers = cpu_count() - 1
+    print(f"Starting parallel processing with {num_workers} workers...")
+
+    # Process buildings in parallel
+    with Pool(processes=num_workers) as pool:
+        results = list(
+            tqdm(
+                pool.imap(process_building, unprocessed_buildings),
+                total=len(unprocessed_buildings),
+                desc="Processing buildings",
+            )
         )
 
     # Save summary of results
@@ -171,11 +147,17 @@ def main():
     summary_file = os.path.join(output_dir, "simulation_summary.csv")
     summary_df.to_csv(summary_file, index=False)
 
-    # Remove the "status" field from each document after processing
-    # for result in results:
-    #     collection.update_one(
-    #         {"_id": result["building_id"]}, {"$unset": {"status": ""}}
-    #     )
+    # Update status in the database
+    for result in results:
+        if result["status"] == "success":
+            collection.update_one(
+                {"_id": result["building_id"]}, {"$set": {"status": "processed"}}
+            )
+        else:
+            collection.update_one(
+                {"_id": result["building_id"]},
+                {"$set": {"status": "failed", "error": result.get("error", "")}},
+            )
 
     # Print summary
     success_count = (summary_df["status"] == "success").sum()
