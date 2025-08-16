@@ -129,7 +129,7 @@ def main():
     )
 
     # Process buildings in parallel
-    num_workers = cpu_count() - 1
+    num_workers = cpu_count()
     print(f"Starting parallel processing with {num_workers} workers...")
 
     # Process buildings in parallel

@@ -590,11 +590,13 @@ class ISO52016:
             el_list = len(building_object.__getattribute__("typology_elements"))
         # Initialize Pln with all elements as 5
         Pln = np.full(el_list, 5)
-        # Replace elements with value 2 where type is "W"
+        # Replace elements with value 2 where type is "W" and with value 0 where type is "AD"
         if isinstance(building_object, dict):
             for i, surf in enumerate(building_object["building_surface"]):
                 if surf["type"] == "transparent":
                     Pln[i] = 2
+                elif "adiabatic" in surf and surf["adiabatic"]:
+                    Pln[i] = 0
         else:
             Pln[building_object.__getattribute__("typology_elements") == "W"] = 2
         # Calculation fo number of nodes for each building element (wall, roof, window)
@@ -693,6 +695,8 @@ class ISO52016:
             )
 
         for i in range(0, len(el_type)):
+            if el_type[i] == "AD":
+                R_c_eli[i] = float("inf")
             if R_c_eli[i] == 0.0:
                 R_c_eli[i] = (
                     1 / U_eli[i]
@@ -842,20 +846,13 @@ class ISO52016:
         #
         if isinstance(building_object, dict) or (
             building_object.__getattribute__("construction_class") == "class_i"
-        ):  # Mass concetrated at internal side
-            # OPAQUE: kpl5 = km_eli ; kpl1=kpl2=kpl3=kpl4=0
-            # GROUND: kpl5 = km_eli ; kpl3=kpl4=0
-            node = 1
-            for i in range(len(el_type)):
-                if el_type[i] == "GR":
-                    kappa_pli_eli_[node, i] = 1e6  # heat capacity of the ground
-
+        ):  # Mass concentrated at internal side
             node = 4
             for i in range(len(el_type)):
-                if el_type[i] == "OP":
-                    kappa_pli_eli_[node, i] = list_kappa_el[i]
-                elif el_type[i] == "GR":
-                    kappa_pli_eli_[node, i] = list_kappa_el[i]
+                if el_type[i] != "W":
+                    kappa_pli_eli_[node, i] = list_kappa_el[
+                        i
+                    ]  # heat capacity of the ground
 
         elif (
             building_object.__getattribute__("construction_class") == "class_e"
@@ -1885,7 +1882,7 @@ class ISO52016:
                 Theta_C_set = sim_df.iloc[Tstepi]["Cooling"]
                 Theta_old = VecB[:, colB_act]
 
-                # firs step:
+                # first step:
                 # HEATING:
                 # if there is no set point for heating (heating system not installed) -> heating power = 0
                 # otherwise the actual power is equal to the maximum one
@@ -1893,10 +1890,14 @@ class ISO52016:
                     power_heating_max_act = 0
                 else:
                     if isinstance(building_object, dict):
-                        power_heating_max = building_object["building_parameters"][
-                            "system_capacities"
-                        ]["heating_capacity"]
-
+                        if (
+                            Tstepi < 744
+                        ):  # During warmup, almost unlimited heating power to ensure convergence to setpoint
+                            power_heating_max = 1e6
+                        else:
+                            power_heating_max = building_object["building_parameters"][
+                                "system_capacities"
+                            ]["heating_capacity"]
                     else:
                         power_heating_max = building_object.__getattribute__(
                             "power_heating_max"
@@ -1909,9 +1910,14 @@ class ISO52016:
                     power_cooling_max_act = 0
                 else:
                     if isinstance(building_object, dict):
-                        power_cooling_max = -building_object["building_parameters"][
-                            "system_capacities"
-                        ]["cooling_capacity"]
+                        if (
+                            Tstepi < 744
+                        ):  # During warmup, almost unlimited cooling power to ensure convergence to setpoint
+                            power_cooling_max = -1e6
+                        else:
+                            power_cooling_max = -building_object["building_parameters"][
+                                "system_capacities"
+                            ]["cooling_capacity"]
                         power_cooling_max_act = power_cooling_max
                     else:
                         power_cooling_max = building_object.__getattribute__(
@@ -1974,8 +1980,13 @@ class ISO52016:
                     ri = 0
                     # Energy balance on zone level. Eq. (38) UNI 52016
                     # XTemp = Thermal capacity at specific time (t) and for  a specific degree °C [W] +
-                    # + Ventilation loss (at time t)[W] + Transmission loss (at time t)[W] + intrnal gain[W] + solar gain [W]. Missed the
+                    # + Ventilation loss (at time t)[W] + Transmission loss (at time t)[W] + intrnal gain[W] + solar gain [W]. Missed
                     # the convective fraction of the heating/cooling system
+
+                    # Lump adiabatic surface capacitances into the zone node
+                    for surf in building_object["building_surface"]:
+                        if surf["ISO52016_type_string"] == "AD":
+                            C_int += surf["thermal_capacity"]
                     XTemp = (
                         t_Th.thermal_bridge_heat * sim_df.iloc[Tstepi]["T2m"]
                         + int_gains_vent.H_ve.iloc[Tstepi] * theta_sup.iloc[Tstepi]
@@ -2050,6 +2061,8 @@ class ISO52016:
                     for Eli in range(bui_eln):
                         Pli = nodes.Pln[Eli]
                         ci = nodes.PlnSum[Eli] + Pli
+                        if Pli == 0:  # adiabatic element
+                            continue
                         MatA[ri, ci] -= (
                             area_elements[Eli] * heat_convective_elements_internal[Eli]
                         )

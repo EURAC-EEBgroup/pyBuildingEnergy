@@ -1355,10 +1355,10 @@ for building in beat_buildings:
         f"Apartment size: {building['building']['area'] / n_apartments:.3f} m² (not used in building energy performance simulation, for cross-checking only)"
     )
     print(
-        f"Heating capacity derived from URBEM scorecards and fallback logic: {heating_capacity:.3f} kW"
+        f"Heating capacity derived from URBEM scorecards and fallback logic: {heating_capacity:.1f} kW"
     )
     print(
-        f"Cooling capacity derived from URBEM scorecards and fallback logic: {cooling_capacity:.3f} kW"
+        f"Cooling capacity derived from URBEM scorecards and fallback logic: {cooling_capacity:.1f} kW"
     )
 
     if building["building"]["type"] != "SFH":
@@ -1372,28 +1372,29 @@ for building in beat_buildings:
     else:
         classifier_result["classification"] = "building"
 
+    # NOTE: In the JSON file for pybuildingenergy, capacities are in W, while in the database they are in kW
     if classifier_result["classification"] in ["apartment", "uncertain_apartment"]:
         print("Heating and cooling capacities classified as at apartment level")
         beat_building["building_parameters"]["system_capacities"][
             "heating_capacity"
-        ] = (heating_capacity * n_apartments)
+        ] = (heating_capacity * n_apartments) * 1e3
         beat_building["building_parameters"]["system_capacities"][
             "cooling_capacity"
-        ] = (cooling_capacity * n_apartments)
+        ] = (cooling_capacity * n_apartments) * 1e3
     else:
         print("Heating and cooling capacities classified as at building level")
         beat_building["building_parameters"]["system_capacities"][
             "heating_capacity"
-        ] = heating_capacity
+        ] = (heating_capacity * 1e3)
         beat_building["building_parameters"]["system_capacities"][
             "cooling_capacity"
-        ] = cooling_capacity
+        ] = (cooling_capacity * 1e3)
 
     print(
-        f"Heating capacity: {beat_building['building_parameters']['system_capacities']['heating_capacity']:.3f} kW"
+        f"Heating capacity: {beat_building['building_parameters']['system_capacities']['heating_capacity'] / 1e3:.1f} kW"
     )
     print(
-        f"Cooling capacity: {beat_building['building_parameters']['system_capacities']['cooling_capacity']:.3f} kW"
+        f"Cooling capacity: {beat_building['building_parameters']['system_capacities']['cooling_capacity'] / 1e3:.1f} kW"
     )
 
     # Save BUI JSON

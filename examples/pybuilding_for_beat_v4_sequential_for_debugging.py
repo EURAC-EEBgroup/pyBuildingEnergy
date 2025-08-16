@@ -159,6 +159,8 @@ def main():
         }
 
         print(f"Processing building: {building_archetype['building']['name']}")
+        if building_archetype["building"]["name"] != 1288437:
+            continue
         result = process_building(building_archetype)
         results.append(result)
         # Mark the document as processed
