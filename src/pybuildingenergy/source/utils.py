@@ -843,16 +843,29 @@ class ISO52016:
         # Initialization of heat capacity of nodes
         kappa_pli_eli_ = np.zeros((5, len(el_type)))
 
-        #
         if isinstance(building_object, dict) or (
             building_object.__getattribute__("construction_class") == "class_i"
-        ):  # Mass concentrated at internal side
+        ):
+            # Mass concentrated at internal side
+            # OPAQUE: kpl5 = km_eli ; kpl1=kpl2=kpl3=kpl4=0
+            # GROUND: kpl5 = km_eli ; kpl3=kpl4=0
+            node = 1
+            for i in range(len(el_type)):
+                if el_type[i] == "GR":
+                    kappa_pli_eli_[node, i] = 1e6  # heat capacity of the ground
             node = 4
             for i in range(len(el_type)):
-                if el_type[i] != "W":
-                    kappa_pli_eli_[node, i] = list_kappa_el[
-                        i
-                    ]  # heat capacity of the ground
+                if el_type[i] == "OP":
+                    kappa_pli_eli_[node, i] = list_kappa_el[i]
+                elif el_type[i] == "GR":
+                    kappa_pli_eli_[node, i] = list_kappa_el[i]
+
+            # node = 4
+            # for i in range(len(el_type)):
+            #     if el_type[i] != "W":
+            #         kappa_pli_eli_[node, i] = list_kappa_el[
+            #             i
+            #         ]  # heat capacity of the ground
 
         elif (
             building_object.__getattribute__("construction_class") == "class_e"
@@ -1681,7 +1694,7 @@ class ISO52016:
 
             # Temperature (indoor and operative)
             Theta_int_air = np.zeros((Tstepn, 3))
-            Theta_int_r_mn = np.zeros((Tstepn, 3))  # <---
+            Theta_int_r_mn = np.zeros((Tstepn, 3))
             Theta_int_op = np.zeros((Tstepn, 3))
             Theta_op_act = np.zeros(Tstepn)
             #
@@ -1777,7 +1790,7 @@ class ISO52016:
             pbar.update(1)
 
             # External temperature ... (to be checked)
-            theta_sup = sim_df["T2m"]
+            theta_sup = sim_df["T2m"]  # Supply temperature
             # Internal capacity
             if isinstance(building_object, dict):
                 C_int = (
@@ -2059,16 +2072,21 @@ class ISO52016:
                             "sky_factor_elements"
                         )
                     for Eli in range(bui_eln):
-                        Pli = nodes.Pln[Eli]
-                        ci = nodes.PlnSum[Eli] + Pli
-                        if Pli == 0:  # adiabatic element
+                        n_nodes = nodes.Pln[Eli]
+                        if n_nodes == 0:  # adiabatic element
                             continue
-                        MatA[ri, ci] -= (
-                            area_elements[Eli] * heat_convective_elements_internal[Eli]
-                        )
+                        for Pli in range(n_nodes):
+                            ci = nodes.PlnSum[Eli] + Pli
+                            MatA[ri, ci] -= (
+                                area_elements[Eli]
+                                * heat_convective_elements_internal[Eli]
+                            )
 
                     for Eli in range(bui_eln):
-                        for Pli in range(nodes.Pln[Eli]):
+                        n_nodes = nodes.Pln[Eli]
+                        if n_nodes == 0:  # adiabatic element
+                            continue
+                        for Pli in range(n_nodes):
                             ri += 1
                             XTemp = (
                                 a_sol_pli_eli[Pli, Eli]
@@ -2078,7 +2096,7 @@ class ISO52016:
                             )
                             for cBi in range(nrHCmodes):
                                 VecB[ri, cBi] += XTemp
-                            if Pli == (nodes.Pln[Eli] - 1):
+                            if Pli == (n_nodes - 1):
                                 XTemp = (1 - f_int_c) * int_gains_vent.Phi_int.iloc[
                                     Tstepi
                                 ] + (1 - f_sol_c) * Phi_sol_zi
@@ -2113,7 +2131,7 @@ class ISO52016:
 
                             ci = 1 + nodes.PlnSum[Eli] + Pli
                             MatA[ri, ci] += kappa_pli_eli[Pli, Eli] / Dtime[Tstepi]
-                            if Pli == (nodes.Pln[Eli] - 1):
+                            if Pli == (n_nodes - 1):
                                 MatA[ri, ci] += (
                                     heat_convective_elements_internal[Eli]
                                     + heat_radiative_elements_internal_mn
@@ -2136,7 +2154,7 @@ class ISO52016:
                             if Pli > 0:
                                 MatA[ri, ci] += h_pli_eli[Pli - 1, Eli]
                                 MatA[ri, ci - 1] -= h_pli_eli[Pli - 1, Eli]
-                            if Pli < nodes.Pln[Eli] - 1:
+                            if Pli < n_nodes - 1:
                                 MatA[ri, ci] += h_pli_eli[Pli, Eli]
                                 MatA[ri, ci + 1] -= h_pli_eli[Pli, Eli]
 
@@ -2146,7 +2164,10 @@ class ISO52016:
                     Theta_int_air[Tstepi, :] = VecB[0, :]
                     Theta_int_r_mn[Tstepi, :] = 0
                     for Eli in range(bui_eln):
-                        ri = nodes.PlnSum[Eli] + nodes.Pln[Eli]
+                        n_nodes = nodes.Pln[Eli]
+                        if n_nodes == 0:  # adiabatic element
+                            continue
+                        ri = nodes.PlnSum[Eli] + n_nodes
                         Theta_int_r_mn[Tstepi, :] += area_elements[Eli] * VecB[ri, :]
                     Theta_int_r_mn[Tstepi, :] /= area_elements_tot
                     Theta_int_op[Tstepi, :] = 0.5 * (

@@ -115,6 +115,8 @@ def main():
     collection.update_many(
         {"status": {"$exists": True}}, {"$set": {"status": "unprocessed"}}
     )
+    # Remove the error field in all documents, if present
+    collection.update_many({"error": {"$exists": True}}, {"$unset": {"error": ""}})
 
     # Initialize the status field for documents that don't have it
     collection.update_many(
@@ -159,8 +161,6 @@ def main():
         }
 
         print(f"Processing building: {building_archetype['building']['name']}")
-        if building_archetype["building"]["name"] != 1288437:
-            continue
         result = process_building(building_archetype)
         results.append(result)
         # Mark the document as processed

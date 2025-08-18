@@ -96,9 +96,11 @@ def main():
     # Initialize worker (for database connection)
     # worker_init(db_name, collection_name)
 
-    # Get all unprocessed buildings
-    unprocessed_buildings = list(collection.find({"status": "unprocessed"}))
-    print(f"Total unprocessed buildings: {len(unprocessed_buildings)}")
+    # Get all unprocessed or failed buildings
+    unprocessed_buildings = list(
+        collection.find({"status": {"$in": ["unprocessed", "failed"]}})
+    )
+    print(f"Total unprocessed or failed buildings: {len(unprocessed_buildings)}")
 
     # Process internal gains for all buildings first
     for building in unprocessed_buildings:
