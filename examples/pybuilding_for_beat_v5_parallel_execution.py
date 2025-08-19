@@ -32,12 +32,8 @@ def process_building(building_archetype, output_dir="results"):
         # Generate unique filenames for each building
         building_id = building_archetype.get("_id", "unknown")
         building_name = building_archetype["building"].get("name", "unknown")
-        hourly_file = os.path.join(
-            output_dir, f"hourly_sim_{building_id}_{building_name}.csv"
-        )
-        annual_file = os.path.join(
-            output_dir, f"annual_results_{building_id}_{building_name}.csv"
-        )
+        hourly_file = os.path.join(output_dir, f"hourly_sim_{building_name}.csv")
+        annual_file = os.path.join(output_dir, f"annual_results_{building_name}.csv")
 
         # Save results with unique filenames
         hourly_sim.to_csv(hourly_file)
@@ -93,14 +89,10 @@ def main():
     output_dir = "simulation_results"
     os.makedirs(output_dir, exist_ok=True)
 
-    # Initialize worker (for database connection)
-    # worker_init(db_name, collection_name)
-
     # Get all unprocessed buildings
     unprocessed_buildings = list(collection.find({"status": "unprocessed"}))
     print(f"Total unprocessed buildings: {len(unprocessed_buildings)}")
 
-    # Process internal gains for all buildings first
     for building in unprocessed_buildings:
         # Internal gains calculation
         internal_gains_weekday_profile = [0] * 24
@@ -128,11 +120,10 @@ def main():
         {"$set": {"status": "processing"}},
     )
 
-    # Process buildings in parallel
+    # Process buildings
     num_workers = cpu_count()
-    print(f"Starting parallel processing with {num_workers} workers...")
+    print(f"Starting processing with {num_workers} workers...")
 
-    # Process buildings in parallel
     with Pool(processes=num_workers) as pool:
         results = list(
             tqdm(

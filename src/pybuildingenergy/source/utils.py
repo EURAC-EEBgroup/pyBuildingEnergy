@@ -574,8 +574,9 @@ class ISO52016:
     def Number_of_nodes_element(cls, building_object) -> numb_nodes_facade_elements:
         """
         Calculation of the number of nodes for each element.
-        If OPACQUE, or ADIABATIC -> n_nodes = 5
+        If OPACQUE -> n_nodes = 5
         If TRANSPARENT-> n_nodes = 2
+        If ADIABATIC -> n_nodes = 0
 
         :param building_object: Building object create according to the method ``Building``or ``Buildings_from_dictionary``
         :return:
@@ -608,7 +609,7 @@ class ISO52016:
 
         Rn = (
             PlnSum[-1] + Pln[-1] + 1
-        )  # value of last node to be used in the definition of the vector
+        )  # value of last node to be used in the definition of the matrix and vector dimensions
 
         return numb_nodes_facade_elements(Rn, Pln, PlnSum)
 
@@ -850,9 +851,7 @@ class ISO52016:
             node = 4
             for i in range(len(el_type)):
                 if el_type[i] != "W":
-                    kappa_pli_eli_[node, i] = list_kappa_el[
-                        i
-                    ]  # heat capacity of the ground
+                    kappa_pli_eli_[node, i] = list_kappa_el[i]
 
         elif (
             building_object.__getattribute__("construction_class") == "class_e"
@@ -1583,7 +1582,7 @@ class ISO52016:
         **kwargs,
     ):
         """
-        Calcualation fo energy needs according to the equation (37) of ISO 52016:2017. Page 60.
+        Calculation of energy needs according to the equation (37) of ISO 52016:2017. Page 60.
 
         [Matrix A] x [Node temperature vector X] = [State vector B]
 
@@ -1713,7 +1712,7 @@ class ISO52016:
                         if surf["sky_view_factor"] == 0:
                             typology_elements[i] = "GR"
                         else:
-                            if surf["adiabatic"]:
+                            if "adiabatic" in surf and surf["adiabatic"]:
                                 typology_elements[i] = "AD"
                             else:
                                 typology_elements[i] = "OP"
@@ -2060,9 +2059,9 @@ class ISO52016:
                         )
                     for Eli in range(bui_eln):
                         Pli = nodes.Pln[Eli]
-                        ci = nodes.PlnSum[Eli] + Pli
                         if Pli == 0:  # adiabatic element
                             continue
+                        ci = nodes.PlnSum[Eli] + Pli
                         MatA[ri, ci] -= (
                             area_elements[Eli] * heat_convective_elements_internal[Eli]
                         )
