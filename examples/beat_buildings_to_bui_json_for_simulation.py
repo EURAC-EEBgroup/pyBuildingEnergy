@@ -790,6 +790,9 @@ beat_to_urbem_regions = {
     "Campania": "Apulia",
 }
 
+# List to store building mapping data for CSV export
+building_mappings = []
+
 for building in beat_buildings:
 
     # Skip calculation if output JSON for this building already exists
@@ -823,6 +826,7 @@ for building in beat_buildings:
 
     # Calculate HDD and determine climate zone
     hdd = calculate_HDD_from_weather_data(weather_data)
+    cdd = calculate_CDD_from_weather_data(weather_data)
     climate_zone = italian_climate_zone_from_weather_file_hdd(hdd)
 
     # Filter URBEM scorecards for residential, building type, and climate zone
@@ -1003,8 +1007,6 @@ for building in beat_buildings:
         if surf["type"] == "opaque" and surf["orientation"]["tilt"] == 90:
             surf["u_value"] = wall_construction["u_value"]
             surf["thermal_capacity"] = wall_construction["thermal_capacity"]
-            surf["adiabatic"] = False
-            surf["name"] += " - non-adiabatic"
 
             # Finding exposed percentage of the wall with same azimuth
             exposed_surf = next(
@@ -1021,13 +1023,18 @@ for building in beat_buildings:
 
                 # Create corresponding adiabatic wall surface
                 adiabatic_surf = surf.copy()
+
                 adiabatic_surf["adiabatic"] = True
-                adiabatic_surf["name"] += " - adiabatic"
                 adiabatic_surf["area"] *= 1 - exposed_surf_percentage
                 new_adiabatic_surfaces.append(adiabatic_surf)
 
                 # Update the original surface
-                surf["area"] *= exposed_surf_percentage
+                if exposed_surf_percentage > 0:
+                    surf["area"] *= exposed_surf_percentage
+                    adiabatic_surf["name"] += " - adiabatic"
+                    surf["name"] += " - non-adiabatic"
+                else:  # The wall is fully adiabatic, remove the original non-adiabatic wall
+                    beat_building["building_surface"].remove(surf)
 
     # Add all new adiabatic surfaces
     if new_adiabatic_surfaces:
@@ -1044,8 +1051,6 @@ for building in beat_buildings:
         if surf["type"] == "opaque" and surf["sky_view_factor"] == 1:
             surf["u_value"] = roof_construction["u_value"]
             surf["thermal_capacity"] = roof_construction["thermal_capacity"]
-            surf["adiabatic"] = False
-            surf["name"] += " - non-adiabatic"
 
     def get_window_u_value(best_scorecard, all_scorecards, climate_zone, building):
         """
@@ -1403,3 +1408,47 @@ for building in beat_buildings:
 
     # Write with explicit UTF-8 encoding
     output_path.write_text(json_str, encoding="utf-8")
+
+    # Store building mapping data for CSV export using pre-calculated values
+    building_data = {
+        "building_id": building["building"]["name"],
+        "latitude": building["building"]["latitude"],
+        "longitude": building["building"]["longitude"],
+        "region": building["building"].get("region", ""),
+        "building_type": building["building"]["type"],
+        "building_age": building["building"].get("age", ""),
+        "height": building["building"]["height"],
+        "perimeter": building["building"]["perimeter"],
+        "urbem_location": urbem_scorecard["Location"].iloc[0],
+        "urbem_climate_zone": urbem_scorecard["Climate"].iloc[0],
+        "urbem_building_category": urbem_scorecard["Building category"].iloc[0],
+        "urbem_construction_period": urbem_scorecard["Construction period"].iloc[0],
+        "n_floors": n_floors,
+        "n_apartments": n_apartments,
+        "wall_u_value": wall_construction[
+            "u_value"
+        ],  # Using the variable from wall_construction
+        "wall_construction_name": wall_construction.get("construction_name", ""),
+        "wall_thickness": wall_construction.get("thickness", ""),
+        "roof_u_value": roof_construction[
+            "u_value"
+        ],  # Using the variable from roof_construction
+        "roof_construction_name": roof_construction.get("construction_name", ""),
+        "wwr_north": wwr_north,
+        "wwr_south": wwr_south,
+        "wwr_east": wwr_east,
+        "wwr_west": wwr_west,
+        "air_change_rate": air_change_rate,
+        "heating_capacity": heating_capacity,
+        "cooling_capacity": cooling_capacity,
+        "hdd": hdd,
+        "cdd": cdd,
+    }
+    building_mappings.append(building_data)
+
+# Save building mappings to CSV
+if building_mappings:
+    mappings_df = pd.DataFrame(building_mappings)
+    mappings_csv_path = output_folder / "building_mappings_summary.csv"
+    mappings_df.to_csv(mappings_csv_path, index=False, encoding="utf-8")
+    print(f"\nSaved building mappings summary to: {mappings_csv_path}")

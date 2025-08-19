@@ -57,12 +57,8 @@ def process_building(building_archetype, output_dir="results"):
         # Generate unique filenames for each building
         building_id = building_archetype.get("_id", "unknown")
         building_name = building_archetype["building"].get("name", "unknown")
-        hourly_file = os.path.join(
-            output_dir, f"hourly_sim_{building_id}_{building_name}.csv"
-        )
-        annual_file = os.path.join(
-            output_dir, f"annual_results_{building_id}_{building_name}.csv"
-        )
+        hourly_file = os.path.join(output_dir, f"hourly_sim_{building_name}.csv")
+        annual_file = os.path.join(output_dir, f"annual_results_{building_name}.csv")
 
         # Save results with unique filenames
         hourly_sim.to_csv(hourly_file)
