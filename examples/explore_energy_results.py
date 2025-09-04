@@ -15,8 +15,10 @@ except ImportError:
     IN_JUPYTER = False
 
 # Set paths
-mappings_path = r"C:\Users\ufilippi\PycharmProjects\pyBuildingEnergy\examples\archetypes\beat_buildings\building_mappings_summary.csv"
-results_dir = r"C:\Users\ufilippi\PycharmProjects\pyBuildingEnergy\results"
+mappings_path = r"C:\Users\ufilippi\PycharmProjects\pyBuildingEnergy\examples\archetypes\beat_buildings_batch_2\building_mappings_summary.csv"
+results_dir = (
+    r"C:\Users\ufilippi\PycharmProjects\pyBuildingEnergy\simulation_results_batch_2"
+)
 
 # Load building mappings
 try:
@@ -66,9 +68,23 @@ if energy_data:
     # Merge with building data
     merged_df = pd.merge(buildings_df, energy_df, on="building_id", how="left")
 
+    # Convert to Wh to kWh to avoid confusion with kWh/m²
+    merged_df["Q_H_annual"] = merged_df["Q_H_annual"] / 1000
+    merged_df["Q_C_annual"] = merged_df["Q_C_annual"] / 1000
+
     # Convert Wh/m² to kWh/m²
     merged_df["Q_H_annual_per_sqm"] = merged_df["Q_H_annual_per_sqm"] / 1000
     merged_df["Q_C_annual_per_sqm"] = merged_df["Q_C_annual_per_sqm"] / 1000
+
+    # Calculate treated floor area
+    merged_df["treated_floor_area"] = merged_df.apply(
+        lambda row: (
+            row["Q_H_annual"] / row["Q_H_annual_per_sqm"]
+            if row["Q_H_annual"] > 0
+            else row["Q_C_annual"] / row["Q_C_annual_per_sqm"]
+        ),
+        axis=1,
+    )
 
     # Save merged data
     output_path = os.path.join(

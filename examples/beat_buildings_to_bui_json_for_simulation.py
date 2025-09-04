@@ -5,6 +5,7 @@ from timezonefinder import TimezoneFinder
 import requests
 import datetime as dt
 from pytz import timezone
+import os
 
 
 def classify_hvac_capacity(
@@ -496,22 +497,25 @@ def get_period_years(period_str, default_start_year=1900, default_end_year=2024)
     if pd.isna(period_str) or period_str == "-":
         return default_start_year, default_end_year
 
-    period_str = str(period_str).strip()
+    period_str = period_str.replace(" ", "")
 
     # Handle periods before a certain year ("<1945" or "-1945")
     if period_str.startswith("<") or period_str.startswith("-"):
         try:
-            end_year = int(period_str[1:].strip())
+            end_year = int(period_str[1:])
             return default_start_year, end_year
         except (ValueError, IndexError):
             return default_start_year, default_end_year
 
-    # Handle periods after a certain year ("2001>" or "2001-")
-    if period_str.endswith(">") or period_str.endswith("-"):
+    # Handle periods after a certain year ("> 2001" or "2001-")
+    if period_str.startswith(">"):
+        period_str = period_str[1:]
+    if period_str.endswith("-"):
+        period_str = period_str[:-1]
         try:
-            start_year = int(period_str[:-1].strip())
+            start_year = int(period_str)
             return start_year, default_end_year
-        except (ValueError, IndexError):
+        except ValueError:
             return default_start_year, default_end_year
 
     # Handle ranges ("1946-1960")
@@ -546,6 +550,8 @@ def calculate_period_score(target_start, target_end, row_start, row_end):
     Returns:
         float: Score representing the match quality (lower is better)
     """
+    large_penalty = 300
+
     if row_start is None or row_end is None:
         return float("inf")
 
@@ -553,21 +559,23 @@ def calculate_period_score(target_start, target_end, row_start, row_end):
     if target_start >= row_start and target_end <= row_end:
         return 0
 
-    # If row is a '>year' period
-    if row_end == float("inf"):
-        return max(0, row_start - target_end)  # How many years after the period starts
+    # Calculate overlap between periods
+    overlap_start = max(target_start, row_start)
+    overlap_end = min(target_end, row_end)
 
-    # If row is a '<year' period
-    if row_end < float("inf") and row_start == 0:
-        return max(0, target_start - row_end)  # How many years before the period ends
+    # Periods with overlap
+    if overlap_start <= overlap_end:
+        # Score (penalty) is number of years in the target period not covered by the row period
+        target_length = target_end - target_start + 1
+        overlap_length = overlap_end - overlap_start + 1
+        non_overlap = target_length - overlap_length
+        return non_overlap
 
-    # For regular period ranges, calculate distance to the nearest edge
-    return min(
-        abs(target_start - row_start)
-        + abs(target_end - row_end),  # Distance between ranges
-        abs(target_start - row_end),  # Distance to end of row's period
-        abs(target_end - row_start),  # Distance to start of row's period
-    )
+    # Periods without overlap
+    if row_start > target_end:  # Row is completely after target
+        return large_penalty + (row_start - target_end)
+    elif row_end < target_start:  # Row is completely before target
+        return large_penalty + (target_start - row_end)
 
 
 def find_best_climate(climate_period_df, target_climate_zone):
@@ -752,11 +760,11 @@ def get_tmy_data(latitude, longitude):
 
 cwd = Path(__file__).parent  # Get the current working directory
 data_folder = cwd / "../src/pybuildingenergy/data"
-output_folder = cwd / "../examples/archetypes/beat_buildings"
+output_folder = cwd / "../examples/archetypes/beat_buildings_batch_2"
 
 LOCATION_CLIMATE_LAT_LONG = json.load(open(data_folder / "locations.json"))
 
-with open(data_folder / "json_building_sim.json", "r") as f:
+with open(data_folder / "json_building_sim_clst.json", "r") as f:
     beat_buildings = json.load(f)
 
 with open(data_folder / "construction_properties.json", "r") as f:
@@ -793,10 +801,36 @@ beat_to_urbem_regions = {
 # List to store building mapping data for CSV export
 building_mappings = []
 
+# Load already mapped buildings
+summary_file = output_folder / "building_mappings_summary.csv"
+if os.path.exists(summary_file):
+    existing_results = pd.read_csv(summary_file)
+    processed_buildings = set(existing_results["building_id"].tolist())
+    print(f"Found {len(processed_buildings)} previously processed buildings")
+else:
+    existing_results = None
+    processed_buildings = set()
+
+# Filter out already processed buildings
+unprocessed_buildings = [
+    b for b in beat_buildings if b["building"]["name"] not in processed_buildings
+]
+
+print(f"Found {len(unprocessed_buildings)} unprocessed buildings")
+
+# for building in unprocessed_buildings:
 for building in beat_buildings:
 
-    # Skip calculation if output JSON for this building already exists
+    # Skip buildings that have already been processed
+    # if building["building"]["name"] in processed_buildings:
+    #     continue
+
+    # Uncomment to debug specific building
+    if building["building"]["name"] != 9071808:
+        continue
+
     output_path = output_folder / f"beat_building_{building['building']['name']}.json"
+    # Skip calculation if output JSON for this building already exists
     # if output_path.exists():
     #     print(f"Skipping {output_path.name} because it already exists")
     #     continue
@@ -929,7 +963,7 @@ for building in beat_buildings:
             (urbem_scorecard["Variable"] == u_value_var)
             & (urbem_scorecard["Metric"] == "Mean value")
         ].Value
-        if u_value_series.empty:
+        if u_value_series.empty or u_value_series.iloc[0] == "":
             u_value = ""
         else:
             u_value = u_value_series.iloc[0]
@@ -948,14 +982,16 @@ for building in beat_buildings:
             return u_value, construction.to_dict()
 
         if construction_name != "no data available":
-            # Get the specified construction
             construction = construction_properties[
-                construction_properties["construction_name"] == construction_name
+                construction_properties["construction_name"].str.contains(
+                    construction_name, case=False
+                )
             ]
-            return (
-                float(construction["u_value"].iloc[0]),
-                construction.iloc[0].to_dict(),
-            )
+            if not construction.empty:
+                return (
+                    float(construction["u_value"].iloc[0]),
+                    construction.iloc[0].to_dict(),
+                )
 
         # If no direct U-value or construction data, find best matching period
         location_type_period = df.query(
@@ -1350,7 +1386,7 @@ for building in beat_buildings:
         n_apartments = 1  # By definition of SFH
     else:
         area_per_apartment = 80
-        n_apartments = round(building["building"]["area"] / area_per_apartment)
+        n_apartments = max(1, round(building["building"]["area"] / area_per_apartment))
 
     print(f"Estimated number of apartments: {n_apartments}")
     print(
@@ -1366,6 +1402,7 @@ for building in beat_buildings:
         f"Cooling capacity derived from URBEM scorecards and fallback logic: {cooling_capacity:.1f} kW"
     )
 
+    classifier_result = {}
     if building["building"]["type"] != "SFH":
         # Use HVAC classifier to determine whether heating and cooling capacities are per apartment or per building
         classifier_result = classify_hvac_capacity(
@@ -1446,9 +1483,28 @@ for building in beat_buildings:
     }
     building_mappings.append(building_data)
 
-# Save building mappings to CSV
+
+# Save building mappings to CSV (append to existing file or create new)
 if building_mappings:
     mappings_df = pd.DataFrame(building_mappings)
     mappings_csv_path = output_folder / "building_mappings_summary.csv"
-    mappings_df.to_csv(mappings_csv_path, index=False, encoding="utf-8")
-    print(f"\nSaved building mappings summary to: {mappings_csv_path}")
+
+    # Append to existing file or create new
+    if os.path.exists(mappings_csv_path):
+        # Read existing data
+        existing_df = pd.read_csv(mappings_csv_path)
+        # Combine with new data
+        combined_df = pd.concat([existing_df, mappings_df], ignore_index=True)
+        # Save combined data
+        combined_df.to_csv(mappings_csv_path, index=False, encoding="utf-8")
+        print(
+            f"\nAppended {len(building_mappings)} new building mappings to: {mappings_csv_path}"
+        )
+    else:
+        # Create new file
+        mappings_df.to_csv(mappings_csv_path, index=False, encoding="utf-8")
+        print(
+            f"\nCreated new building mappings summary with {len(building_mappings)} entries: {mappings_csv_path}"
+        )
+else:
+    print("\nNo new buildings were processed.")
