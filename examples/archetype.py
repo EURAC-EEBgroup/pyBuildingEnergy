@@ -5,11 +5,19 @@ For now, only single_family_house are available in Italy for the following perio
 'before 1900', '1901-1920','1921-1945','1946-1960','1961-1875','1976-1990','1991-2005','2006-today'
 '''
 
+# import numpy as np
+# from pybuildingenergy.source.utils import ISO52016
+# from pybuildingenergy.source.graphs import Graphs_and_report
+# from pybuildingenergy.data.building_archetype import Selected_bui_archetype
+# from pybuildingenergy.global_inputs import main_directory_
+# import os
+
+# debug
 import numpy as np
-from pybuildingenergy.source.utils import ISO52016
-from pybuildingenergy.source.graphs import Graphs_and_report
-from pybuildingenergy.data.building_archetype import Selected_bui_archetype
-from pybuildingenergy.global_inputs import main_directory_
+from source.utils import ISO52016
+from source.graphs import Graphs_and_report
+from data.building_archetype import Selected_bui_archetype
+from global_inputs import main_directory_
 import os
 
 '''

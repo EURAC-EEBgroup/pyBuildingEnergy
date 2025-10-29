@@ -15,7 +15,8 @@ Vedere test area edificio e area del solaio controterra differenti
 """
 
 import numpy as np
-from pybuildingenergy.source.functions import Perimeter_from_area, Area_roof, Check_area
+# from pybuildingenergy.source.functions import Perimeter_from_area, Area_roof, Check_area
+from source.functions import Perimeter_from_area, Area_roof, Check_area
 import pickle
 
 # ================================================================================================

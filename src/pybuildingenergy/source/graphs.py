@@ -5,7 +5,7 @@ import pandas as pd
 from pyecharts import options as opts
 from pyecharts.charts import Bar, Scatter, Line, Gauge
 from scipy.stats import linregress
-from pybuildingenergy.source.functions import (
+from source.functions import (
     capitalize_first_letter,
     Heating_Degree_days,
     Simple_regeression,
@@ -201,12 +201,12 @@ def energy_gauge_chart(
 
     :return: gauge chart in html format
     """
-    value_norm = (value * 100) / maxLimit
+    value_norm = value
     c = (
         Gauge()
         .add(
             series_name=name_series,
-            data_pair=[(f"{value}{unit}", value_norm)],
+            data_pair=[(f"{unit}", value_norm)],
             axisline_opts=opts.AxisLineOpts(
                 linestyle_opts=opts.LineStyleOpts(
                     color=[
@@ -348,9 +348,10 @@ def Scatter_with_regression(
 
 
 class Graphs_and_report:
-    def __init__(self, df, season: str):
+    def __init__(self, df, season: str, building_area:float):
         self.df = df
         self.season = season
+        self.area_bui = building_area
 
         if season in season_type:
             self.season = season
@@ -513,7 +514,6 @@ class Graphs_and_report:
 
     def annual_charts(
         self,
-        bui_area: float = 150,
         folder_directory: str = "",
         name_file: str = "Yearly_eNeed_gauge",
     ):
@@ -530,7 +530,7 @@ class Graphs_and_report:
         # Dataset
         df_HC = self.df.sort_index(axis=0)
         df_HC_energy = df_HC.loc[:, ["Q_H", "Q_HC", "Q_C"]].resample("YE").sum()
-        value = round(df_HC_energy["Q_H"].values[0] / (1000 * bui_area))
+        value = round(df_HC_energy["Q_H"].values[0] / (1000 * self.area_bui))
 
         Chart = energy_gauge_chart(
             "Heating",

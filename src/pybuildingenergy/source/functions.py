@@ -1,16 +1,47 @@
-__author__ = "Daniele Antonucci, Ulrich Filippi Oberegger, Olga Somova"
-__credits__ = ["Daniele Antonucci", "Ulrich FIlippi Oberegger", "Olga Somova"]
-__license__ = "MIT"
-__version__ = "0.1"
-__maintainer__ = "Daniele Antonucci"
+# __author__ = "Daniele Antonucci, Ulrich Filippi Oberegger, Olga Somova"
+# __credits__ = ["Daniele Antonucci", "Ulrich FIlippi Oberegger", "Olga Somova"]
+# __license__ = "MIT"
+# __version__ = "0.1"
+# __maintainer__ = "Daniele Antonucci"
 
 # Libraries
 import numpy as np
 import pandas as pd
 from sklearn.metrics import r2_score
 from sklearn.linear_model import LinearRegression
-from pybuildingenergy.global_inputs import main_directory_
+# from pybuildingenergy.global_inputs import main_directory_
+from global_inputs import main_directory_
 import pickle
+import plotly.graph_objects as go
+
+
+# ===== helper: restituisce (weekday, weekend) di 24 valori dal BUI o dai DEFAULT =====
+def _get_pair_from_bui_or_default(bui_pair_or_none, default_weekday_24, default_weekend_24, name):
+    """Ritorna due np.array(24): (weekday, weekend). Valida lunghezze e converte in float."""
+    if bui_pair_or_none is not None:
+        wd = np.asarray(bui_pair_or_none.get("weekday"), dtype=float)
+        hd = np.asarray(bui_pair_or_none.get("weekend"), dtype=float)
+    else:
+        wd = np.asarray(default_weekday_24, dtype=float)
+        hd = np.asarray(default_weekend_24, dtype=float)
+    if wd.shape != (24,) or hd.shape != (24,):
+        raise ValueError(f"{name}: profili devono essere 24 valori (weekday={wd.shape}, weekend={hd.shape})")
+    return wd, hd
+
+def _get_schedule_pair_for_bt(bt, workdays_map, weekend_map, name):
+    """Estrae (weekday, weekend) dai dizionari di default in base al building_type_class (bt)."""
+    if bt not in workdays_map or bt not in weekend_map:
+        raise KeyError(f"{name}: '{bt}' non presente nei profili di default.")
+    wd = np.asarray(workdays_map[bt], dtype=float)
+    hd = np.asarray(weekend_map[bt], dtype=float)
+    if wd.shape != (24,) or hd.shape != (24,):
+        raise ValueError(f"{name}: profili default devono avere 24 valori.")
+    return wd, hd
+
+def _nan_to_zero(x):
+    x = np.asarray(x, dtype=float)
+    x[~np.isfinite(x)] = 0.0
+    return x
 
 
 # ===========================================================================================
@@ -394,6 +425,54 @@ def Simple_regeression(x_data: list, y_data: list, x_data_name: str):
 
     return (round(r2, 2), equation)
 
+
+
+
+def shading_reduction_factor(alpha_sol_t, phi_sol_t, beta_k_t, gamma_k_t,
+                             D_k_ovh_q, L_k_ovh_q, elements_shading_type,
+                             H_k, W_k):
+    # confronti in gradi OK
+    if abs(gamma_k_t - phi_sol_t) > 90 or abs(beta_k_t - alpha_sol_t) > 90:
+        return 0.0, 0.0
+
+    # converti a radianti per le funzioni trig
+    alpha = np.radians(alpha_sol_t)
+    phi   = np.radians(phi_sol_t)
+    gamma = np.radians(gamma_k_t)
+
+    has_overhang  = elements_shading_type and "horizontal_overhang" in elements_shading_type or \
+                    elements_shading_type and "vertical_overhang"   in elements_shading_type
+    has_obstacles = elements_shading_type and "obstacles" in elements_shading_type
+
+    h_k_sun_t = 0.0
+
+    if has_overhang:
+        # protezioni su None
+        D = float(D_k_ovh_q or 0.0)
+        L = float(L_k_ovh_q or 0.0)
+        denom = np.cos(phi - gamma)
+        if abs(denom) < 1e-9:
+            denom = np.sign(denom) * 1e-9  # evita divisione per 0
+        h_k_ovh_q_t = D * np.tan(alpha) / denom - L
+        h_k_ovh_q_t = max(0.0, h_k_ovh_q_t)
+        h_k_sun_t   = max(0.0, float(H_k) - h_k_ovh_q_t)
+
+    if has_obstacles:
+        # ATTENZIONE: nel tuo codice usi h_k_obst_p_t senza averlo mai definito!
+        # Aggiungi qui il calcolo o un parametro d’ingresso; per ora assumo 0.
+        h_k_obst_p_t = 0.0
+        h_k_sun_t = max(0.0, float(H_k) - h_k_obst_p_t)
+
+    # larghezza “illuminata” — se non la calcoli, usa almeno la larghezza totale (niente 1 fisso)
+    w_k_sun_t = float(W_k)
+
+    if float(H_k) <= 0 or float(W_k) <= 0:
+        return 0.0, 0.0
+
+    F_sh_dir_k_ts = (h_k_sun_t * w_k_sun_t) / (float(H_k) * float(W_k))
+    F_sh_dir_k_ts = float(np.clip(F_sh_dir_k_ts, 0.0, 1.0))
+    return F_sh_dir_k_ts, h_k_sun_t
+
 # ====================================================================================================
 #                                       DHW Table of ISO 12831
 # ====================================================================================================
@@ -496,3 +575,55 @@ table_B_5_modified = pd.DataFrame({
         ],
     'liters/person_per_day':[25, 45, 60, 60, 80, 100, 40, 55, 70, 25, 27.5, 30]
 })
+
+
+def plot_sankey_building(sankey_data):
+    
+    inputs = sankey_data.get("inputs", {})
+    outputs = sankey_data.get("outputs", {})
+    storage = sankey_data.get("energy_accumulated_zone", 0.0)
+
+    def _finite_pos(x): 
+        try:
+            x = float(x)
+            return (np.isfinite(x) and x > 0.0)
+        except Exception:
+            return False
+
+    in_labels  = [k for k, v in inputs.items()  if _finite_pos(v)]
+    in_values  = [float(inputs[k])  for k in in_labels]
+    out_labels = [k for k, v in outputs.items() if _finite_pos(v)]
+    out_values = [float(outputs[k]) for k in out_labels]
+
+    # Fallback se tutto è zero
+    if len(in_labels) == 0:  in_labels, in_values   = ["Inputs (ε)"],  [1e-6]
+    if len(out_labels) == 0: out_labels, out_values = ["Outputs (ε)"], [1e-6]
+
+    # nodi: sorgenti + zona + uscite
+    node_labels = in_labels + ["Zone"] + out_labels
+    node_index  = {lab: i for i, lab in enumerate(node_labels)}
+
+    # link inputs -> Zone
+    sources = [node_index[lab] for lab in in_labels]
+    targets = [node_index["Zone"]] * len(in_labels)
+    values  = in_values[:]
+
+    # link Zone -> outputs
+    sources += [node_index["Zone"]] * len(out_labels)
+    targets += [node_index[lab] for lab in out_labels]
+    values  += out_values
+
+    # rimuovi eventuali valori non finiti
+    clean = [(s, t, v) for s, t, v in zip(sources, targets, values) if _finite_pos(v)]
+    if not clean:
+        clean = [(0, 1, 1e-6)]  # minimo assoluto per non far crashare plotly
+
+    sources, targets, values = zip(*clean)
+
+    fig = go.Figure(data=[go.Sankey(
+        arrangement="snap",
+        node=dict(label=node_labels, pad=15, thickness=18),
+        link=dict(source=list(sources), target=list(targets), value=list(values))
+    )])
+    fig.update_layout(title="Annual energy balance — Sankey", font_size=12)
+    return fig
