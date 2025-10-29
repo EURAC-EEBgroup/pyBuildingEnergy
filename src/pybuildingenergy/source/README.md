@@ -1,23 +1,15 @@
 # HeatingSystemCalculator
 
-A Python class for simulating **multi-block heating systems** (emission → distribution → generation) in hourly resolution, following the logic of **ISO 15316-1**.
+A Python class for simulating **multi-block heating systems** (control - emission → distribution → generation) in hourly resolution, following the logic of **ISO 15316-1**.
 
 The model supports:
-- 4 **emission circuit types** (C.2–C.5),
-- 3 **primary flow control strategies** (Type A–C),
+- 4 **emission circuit types** (C.2–C.5), Annex C of ISO 15316-1
+- 3 **primary flow control strategies** (Type A–C), Annex D of ISO 15316-1. Here we added the possibility to control the the primray flow setpoiint based on 3 additional control variables: 
+    - 'Type A - Based on outdoor temperature': uses primary's own weather curve
+    - 'Type B - Based on demand'            : follows the secondary demand (θH_dis_flw)
+    - 'Type C - Constant temperature'       : uses self.θHW_gen_flw_const
 - detailed **heat loss and recovery** accounting,
 - and full energy balance per time step.
-
----
-
-## 🔧 Installation
-
-```bash
-python >= 3.9
-pip install pandas numpy matplotlib
-```
-
----
 
 ## 🚀 Quick Start
 
@@ -177,9 +169,3 @@ print(f"Generator out: {generator_out:.1f} kWh")
 print(f"Overall efficiency: {eff_avg:.1f}%")
 ```
 
----
-
-## 🏗️ License
-
-MIT License — free to use, modify, and distribute for research or professional purposes.
-Please cite ISO 15316-1 when using in reports or publications.
