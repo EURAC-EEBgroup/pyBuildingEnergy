@@ -11,6 +11,7 @@ from source.functions import (
     Simple_regeression,
 )
 import json
+import plotly.graph_objects as go
 
 # ========================================================================================================
 #                                   FUNCTIONS GRAPHS
@@ -662,3 +663,5 @@ class Graphs_and_report:
 
         print("Report created!")
         return json.dumps({"report": "created"})
+
+

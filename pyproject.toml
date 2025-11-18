@@ -9,7 +9,7 @@ py-modules = []
 
 [project]
 name = "pybuildingenergy"
-version = "1.0.7"
+version = "2.0.0"
 description = "Energy Simulation of building usin ISO52016 and more"
 license = {file = "LICENSE.md"}
 readme = "README.rst"

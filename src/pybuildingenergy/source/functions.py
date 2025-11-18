@@ -395,7 +395,7 @@ def Simple_regeression(x_data: list, y_data: list, x_data_name: str):
     :param y_data: data on y-axes
 
     :return
-        * **R2**: coefficinet of determination
+        * **R2**: coefficient of determination
         * **equation**: linear regression equation
         * **residual**: residual !!! *Not yet included* !!!
     
@@ -426,52 +426,118 @@ def Simple_regeression(x_data: list, y_data: list, x_data_name: str):
     return (round(r2, 2), equation)
 
 
+import numpy as np
 
+def shading_reduction_factor(
+    alpha_sol_t,           # [deg] solar altitude angle at time t
+    phi_sol_t,             # [deg] solar azimuth angle at time t
+    beta_k_t,              # [deg] window tilt (90 = vertical)
+    gamma_k_t,             # [deg] window azimuth
+    D_k_ovh_q,             # [m] horizontal overhang depth
+    L_k_ovh_q,             # [m] setback/clear distance (or vertical element)
+    elements_shading_type, # str | list[str] | None – types of shading elements
+    H_k,                   # [m] window height
+    W_k                    # [m] window width
+):
+    """
+    Calculation of shading reduction factor
+    :param alpha_sol_t: solar altitude angle at time t
+    :param phi_sol_t: solar azimuth angle at time t
+    :param beta_k_t: window tilt (90 = vertical)
+    :param gamma_k_t: window azimuth
+    :param D_k_ovh_q: horizontal overhang depth
+    :param L_k_ovh_q: setback/clear distance (or vertical element)
+    :param elements_shading_type: types of shading elements
+    :param H_k: window height
+    :param W_k: window width
 
-def shading_reduction_factor(alpha_sol_t, phi_sol_t, beta_k_t, gamma_k_t,
-                             D_k_ovh_q, L_k_ovh_q, elements_shading_type,
-                             H_k, W_k):
-    # confronti in gradi OK
-    if abs(gamma_k_t - phi_sol_t) > 90 or abs(beta_k_t - alpha_sol_t) > 90:
+    :return: (F_sh_dir_k_ts, h_k_sun_t)
+      * **F_sh_dir_k_ts** in [0..1]: direct-beam shading reduction factor for the window at time t
+      * **h_k_sun_t** [m]: remaining 'sunlit' vertical height on the window at time t
+    """
+
+    # ---- helper for safe numeric conversion ----
+    def to_float(x, default=None):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return default
+
+    # ---- minimal validation for window dimensions ----
+    H = to_float(H_k, default=None)
+    W = to_float(W_k, default=None)
+    if H is None or W is None or H <= 0 or W <= 0:
+        # without valid window dimensions the calculation is not meaningful
         return 0.0, 0.0
 
-    # converti a radianti per le funzioni trig
-    alpha = np.radians(alpha_sol_t)
-    phi   = np.radians(phi_sol_t)
-    gamma = np.radians(gamma_k_t)
+    # ---- angle checks in degrees (as in your original logic) ----
+    a = to_float(alpha_sol_t, default=None)
+    p = to_float(phi_sol_t,   default=None)
+    b = to_float(beta_k_t,    default=None)
+    g = to_float(gamma_k_t,   default=None)
+    if None in (a, p, b, g):
+        return 0.0, 0.0
 
-    has_overhang  = elements_shading_type and "horizontal_overhang" in elements_shading_type or \
-                    elements_shading_type and "vertical_overhang"   in elements_shading_type
-    has_obstacles = elements_shading_type and "obstacles" in elements_shading_type
+    # if sun is far from the window normal/tilt, no direct sun on the pane
+    if abs(g - p) > 90 or abs(b - a) > 90:
+        return 0.0, 0.0
+
+    # ---- convert to radians for trigonometric functions ----
+    alpha = np.radians(a)
+    phi   = np.radians(p)
+    gamma = np.radians(g)
+
+    # ---- normalize shading types: str/list -> lowercase set ----
+    types = set()
+    if elements_shading_type:
+        if isinstance(elements_shading_type, str):
+            types = {elements_shading_type.lower()}
+        else:
+            try:
+                types = {str(t).lower() for t in elements_shading_type}
+            except TypeError:
+                types = {str(elements_shading_type).lower()}
+
+    has_overhang  = any(t in types for t in ("horizontal_overhang", "vertical_overhang"))
+    has_obstacles = "obstacles" in types
 
     h_k_sun_t = 0.0
 
+    # ---- overhangs (horizontal/vertical projections) ----
     if has_overhang:
-        # protezioni su None
-        D = float(D_k_ovh_q or 0.0)
-        L = float(L_k_ovh_q or 0.0)
+        D = to_float(D_k_ovh_q, default=0.0)
+        L = to_float(L_k_ovh_q, default=0.0)
+
+        # projection denominator; protect against ~0 to avoid division by zero
         denom = np.cos(phi - gamma)
-        if abs(denom) < 1e-9:
-            denom = np.sign(denom) * 1e-9  # evita divisione per 0
+        if abs(denom) < 1e-12:
+            denom = 1e-12 * np.sign(denom if denom != 0 else 1.0)
+
+        # geometric projection of the overhang shadow height on the window
         h_k_ovh_q_t = D * np.tan(alpha) / denom - L
         h_k_ovh_q_t = max(0.0, h_k_ovh_q_t)
-        h_k_sun_t   = max(0.0, float(H_k) - h_k_ovh_q_t)
 
+        # remaining sunlit height after overhang shadow
+        h_k_sun_t   = max(0.0, H - h_k_ovh_q_t)
+
+    # ---- external obstacles (if you have a model, replace the placeholder) ----
     if has_obstacles:
-        # ATTENZIONE: nel tuo codice usi h_k_obst_p_t senza averlo mai definito!
-        # Aggiungi qui il calcolo o un parametro d’ingresso; per ora assumo 0.
-        h_k_obst_p_t = 0.0
-        h_k_sun_t = max(0.0, float(H_k) - h_k_obst_p_t)
+        h_k_obst_p_t = 0.0  # TODO: replace with your obstacle-shadow calculation/parameter
+        h_k_sun_t = max(0.0, H - h_k_obst_p_t)
 
-    # larghezza “illuminata” — se non la calcoli, usa almeno la larghezza totale (niente 1 fisso)
-    w_k_sun_t = float(W_k)
+    # if no shading element affected the height, assume fully sunlit height
+    if not (has_overhang or has_obstacles):
+        h_k_sun_t = H
 
-    if float(H_k) <= 0 or float(W_k) <= 0:
-        return 0.0, 0.0
+    # sunlit width: if you do not model horizontal shading extent, use total width
+    w_k_sun_t = W
 
-    F_sh_dir_k_ts = (h_k_sun_t * w_k_sun_t) / (float(H_k) * float(W_k))
+    # shading reduction factor based on sunlit area over total area
+    F_sh_dir_k_ts = (h_k_sun_t * w_k_sun_t) / (H * W)
     F_sh_dir_k_ts = float(np.clip(F_sh_dir_k_ts, 0.0, 1.0))
+
     return F_sh_dir_k_ts, h_k_sun_t
+
 
 # ====================================================================================================
 #                                       DHW Table of ISO 12831
@@ -578,7 +644,13 @@ table_B_5_modified = pd.DataFrame({
 
 
 def plot_sankey_building(sankey_data):
-    
+    '''
+    Plot sankey graph of the energy balance
+
+    :param sankey_data:data set of energy balance
+    :return: sankey graph
+
+    '''
     inputs = sankey_data.get("inputs", {})
     outputs = sankey_data.get("outputs", {})
     storage = sankey_data.get("energy_accumulated_zone", 0.0)
@@ -586,7 +658,7 @@ def plot_sankey_building(sankey_data):
     def _finite_pos(x): 
         try:
             x = float(x)
-            return (np.isfinite(x) and x > 0.0)
+            return np.isfinite(x) and abs(x) > 0.0
         except Exception:
             return False
 
@@ -595,35 +667,36 @@ def plot_sankey_building(sankey_data):
     out_labels = [k for k, v in outputs.items() if _finite_pos(v)]
     out_values = [float(outputs[k]) for k in out_labels]
 
-    # Fallback se tutto è zero
-    if len(in_labels) == 0:  in_labels, in_values   = ["Inputs (ε)"],  [1e-6]
-    if len(out_labels) == 0: out_labels, out_values = ["Outputs (ε)"], [1e-6]
-
-    # nodi: sorgenti + zona + uscite
     node_labels = in_labels + ["Zone"] + out_labels
     node_index  = {lab: i for i, lab in enumerate(node_labels)}
 
-    # link inputs -> Zone
     sources = [node_index[lab] for lab in in_labels]
     targets = [node_index["Zone"]] * len(in_labels)
     values  = in_values[:]
 
-    # link Zone -> outputs
+    # Add storage flow if present
+    if _finite_pos(storage):
+        node_labels.append("Storage")
+        node_index["Storage"] = len(node_labels) - 1
+        if storage > 0:
+            # energy stored (Zone → Storage)
+            sources += [node_index["Zone"]]
+            targets += [node_index["Storage"]]
+            values  += [float(storage)]
+        else:
+            # energy released from storage (Storage → Zone)
+            sources += [node_index["Storage"]]
+            targets += [node_index["Zone"]]
+            values  += [abs(float(storage))]
+
     sources += [node_index["Zone"]] * len(out_labels)
     targets += [node_index[lab] for lab in out_labels]
     values  += out_values
 
-    # rimuovi eventuali valori non finiti
-    clean = [(s, t, v) for s, t, v in zip(sources, targets, values) if _finite_pos(v)]
-    if not clean:
-        clean = [(0, 1, 1e-6)]  # minimo assoluto per non far crashare plotly
-
-    sources, targets, values = zip(*clean)
-
     fig = go.Figure(data=[go.Sankey(
         arrangement="snap",
         node=dict(label=node_labels, pad=15, thickness=18),
-        link=dict(source=list(sources), target=list(targets), value=list(values))
+        link=dict(source=sources, target=targets, value=values)
     )])
     fig.update_layout(title="Annual energy balance — Sankey", font_size=12)
     return fig

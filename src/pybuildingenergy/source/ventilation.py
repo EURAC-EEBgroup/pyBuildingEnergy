@@ -1,5 +1,5 @@
 '''
-Valutazione dell'heatr transfer coefficent by ventilation using:
+Evaluation of heat transfer coefficent by ventilation using:
 - the iso 16798-7 based on natural ventilation through windows using wind velocity and temperature difference (internal - external) inputs
 - simplified method that take into account the occupancy profile
 
@@ -223,7 +223,7 @@ def transmission_heat_transfer_coefficient_ISO13789(adj_zone, n_ue=0.5, qui=0):
         Hd_zt_ztu = np.sum(area_eli_zt_ztu * transmittance_eli_zt_ztu)
             
         '''   
-        2. calcolare le perdite per trasmissione delle pareti verso l'esterno della zona non termica
+        2. Calculate the losses for transmission of the walls to the external environment of the non conditioned zone
         '''
         for orient_eli in orient_all_zones:
             area_eli_ztu_ext = np.array([a for a, t in zip(area_elements_zt, ori_type_zt) if t != orient_eli])
@@ -233,7 +233,7 @@ def transmission_heat_transfer_coefficient_ISO13789(adj_zone, n_ue=0.5, qui=0):
 
 
         '''
-        4. calcoalo perdite per ventilazione zona non termica Hve,iu e Hve,ue
+        4. Calculate the losses for ventilation of the non conditioned zone Hve,iu and Hve,ue
         
         1) Hve,iu = rho*cp*qiu
         2) Hve,ue = rho*cp*que

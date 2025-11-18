@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from datetime import datetime
+from global_inputs import TB14 as TB14_backup
 
 class HeatingSystemCalculator:
     """
@@ -21,13 +22,15 @@ class HeatingSystemCalculator:
         - TB14: ISO 15316-1 table with nominal deltas and exponents per emitter type.
         - c_w: Specific heat capacity of water in Wh/(kg·K).
         """
-        self.TB14 = pd.DataFrame({
-            "Emitters_nominale_deltaTeta_air_C": [50, 15, 25, 30, 50],
-            "Emitters_exponent_n": [1.3, 1.1, 1.0, 1.2, 1.3],
-            "Emitters_nominal_deltaTeta_Water_C": [20, 5, 10, 10, 10],
-        }, index=["Radiator", "Floor heating", "Fan coil", "Special option 1", "last option"])
+        # Use user-provided TB14 if available, otherwise fallback to global one
+        if "TB14" in self.input_data and isinstance(self.input_data["TB14"], pd.DataFrame):
+            self.TB14 = self.input_data["TB14"]
+            print("⚙️  Custom TB14 table loaded from input_data.")
+        else:
+            self.TB14 = TB14_backup
+            print("⚙️  Default TB14 table loaded from global_inputs.py.")
 
-        # Specific heat of water [Wh/(kg·K)]
+        # Specific heat capacity of water (Wh/kgK)
         self.c_w = 1.16
 
     def _load_input_parameters(self):
@@ -41,6 +44,9 @@ class HeatingSystemCalculator:
         self.EMitter_type = inp.get('emitter_type', 'Floor heating')
         self.ΦH_em_n = inp.get('nominal_power', 8)  # kW
         self.emission_efficiency = inp.get('emission_efficiency', 90)  # %
+        self.MIX_EM = inp.get('mixing_valve', True)
+        self.flow_temp_control_type = inp.get('flow_temp_control_type',
+                                              'Type 1 - Based on demand')
         self.auxiliars_power = inp.get('auxiliars_power', 0)  # W
         self.alpha_em_i_aux = inp.get('auxiliary_recovery_factor', 100)  # %
 
@@ -48,12 +54,7 @@ class HeatingSystemCalculator:
         self.tH_em_i_ON = inp.get('emission_operation_time', 1)
 
         # Mixing valve presence and offset (°C)
-        self.MIX_EM = inp.get('mixing_valve', True)
         self.ΔθH_em_mix_sahz_i = inp.get('mixing_valve_delta', 2)
-
-        # Flow temperature control for the secondary side
-        self.flow_temp_control_type = inp.get('flow_temp_control_type',
-                                              'Type 1 - Based on demand')
 
         # Emitter circuit type selector (0=C.2, 1=C.3, 2=C.4, 3=C.5)
         self.selected_emm_cont_circuit = inp.get('selected_emm_cont_circuit', 0)
@@ -297,37 +298,6 @@ class HeatingSystemCalculator:
             'ΔθH_em_air': ΔθH_em_air,
             'nH_em': nH_em
         }
-
-    def _generator_flow_setpoint(self, θext, θH_dis_flw_demand):
-        """
-        Compute the PRIMARY (generator-side) supply setpoint Tp_sup_set according to
-        the chosen primary control:
-
-        - 'Type A - Based on outdoor temperature': uses primary's own weather curve
-        - 'Type B - Based on demand'            : follows the secondary demand (θH_dis_flw)
-        - 'Type C - Constant temperature'       : uses self.θHW_gen_flw_const
-        """
-        row = self.df_gen_out_temp.iloc[0] if len(self.df_gen_out_temp) else {}
-        θext_min = float(row.get("θext_min_gen", -7))
-        θext_max = float(row.get("θext_max_gen", 15))
-        θflw_max = float(row.get("θflw_gen_max", 60))
-        θflw_min = float(row.get("θflw_gen_min", 35))
-
-        ctrl = str(self.gen_flow_temp_control_type)
-
-        # Type A: primary climatic curve
-        if ctrl.startswith('Type A'):
-            if θext_max != θext_min:
-                Tp = θflw_min + (θflw_max - θflw_min) * (θext_max - θext) / (θext_max - θext_min)
-                return max(min(Tp, θflw_max), θflw_min)
-            return θflw_min
-
-        # Type B: follow secondary demand (node/secondary supply)
-        if ctrl.startswith('Type B'):
-            return float(θH_dis_flw_demand)
-
-        # Type C: constant
-        return float(self.θHW_gen_flw_const)
 
     def calculate_type_C2(self, common_params, θint):
         """
@@ -816,35 +786,58 @@ class HeatingSystemCalculator:
             eff = 95.0
         return max(min(eff, 110.0), 1.0)
 
+    def _generator_flow_setpoint(self, θext, θH_dis_flw_demand):
+        """
+        Compute the PRIMARY (generator-side) supply setpoint Tp_sup_set according to
+        the chosen primary control:
+
+        - 'Type A - Based on outdoor temperature': uses primary's own weather curve
+        - 'Type B - Based on demand'            : follows the secondary demand (θH_dis_flw)
+        - 'Type C - Constant temperature'       : uses self.θHW_gen_flw_const
+        """
+        row = self.df_gen_out_temp.iloc[0] if len(self.df_gen_out_temp) else {}
+        θext_min = float(row.get("θext_min_gen", -7))
+        θext_max = float(row.get("θext_max_gen", 15))
+        θflw_max = float(row.get("θflw_gen_max", 60))
+        θflw_min = float(row.get("θflw_gen_min", 35))
+
+        ctrl = str(self.gen_flow_temp_control_type)
+
+        # Type A: primary climatic curve
+        if ctrl.startswith('Type A'):
+            if θext_max != θext_min:
+                Tp = θflw_min + (θflw_max - θflw_min) * (θext_max - θext) / (θext_max - θext_min)
+                return max(min(Tp, θflw_max), θflw_min)
+            return θflw_min
+
+        # Type B: follow secondary demand (node/secondary supply)
+        if ctrl.startswith('Type B'):
+            return float(θH_dis_flw_demand)
+
+        # Type C: constant
+        return float(self.θHW_gen_flw_const)
+
     def calculate_generation(self, θH_dis_flw, θH_dis_ret, V_H_dis, QH_dis_i_in):
-        """
-        Primary-side (generator) computation for a single zone.
-        Returns:
-          - QH_gen_out, max_output_g1
-          - θX_gen_cr_flw, θX_gen_cr_ret, V_H_gen
-          - efficiency, EHW_gen_in, EHW_gen_aux, QW_gen_i_ls_rbl_H
-          - QW_gen_out (0), QHW_gen_out, EH_gen_in, EWH_gen_in
-        """
         EPS = 1e-9
+        rho = getattr(self, "rho_w", 1000.0)        # kg/m3
+        cw  = self.c_w                               # Wh/(kg·K), e.g. 1.163
 
-        # Max hourly energy output (kWh) at full-load and given factor
+        # 1) Energy cap (kWh)
         max_output_g1 = self.full_load_power * (self.max_monthly_load_factor / 100.0) * self.tH_gen_i_ON
-
-        # Required energy from the primary to feed distribution
         QX_gen_j_out_req = float(QH_dis_i_in)
         QH_gen_out = min(max(QX_gen_j_out_req, 0.0), max_output_g1)
 
-        # If no load or no distribution flow, return a clean idle-like row
-        ms = float(max(V_H_dis, 0.0))
+        # 2) Convert distribution flow to MASS FLOW (kg/h) for balances
+        V_dis = max(float(V_H_dis), 0.0)             # m3/h
+        ms    = rho * V_dis                          # kg/h
+
         if QH_gen_out <= EPS or ms <= EPS:
-            θX_gen_cr_flw = float(θH_dis_flw)
-            θX_gen_cr_ret = float(θH_dis_ret)
             return {
                 'max_output_g1(kWh)': max_output_g1,
                 'QH_gen_out(kWh)': 0.0,
-                'θX_gen_cr_flw(°C)': θX_gen_cr_flw,
-                'θX_gen_cr_ret(°C)': θX_gen_cr_ret,
-                'V_H_gen(m3/h)': 0.0,
+                'θX_gen_cr_flw(°C)': float(θH_dis_flw),
+                'θX_gen_cr_ret(°C)': float(θH_dis_ret),
+                'V_H_gen(m3/h)': 0.0,                # zero volumetric flow
                 'efficiency_gen(%)': float('nan'),
                 'EHW_gen_in(kWh)': 0.0,
                 'EHW_gen_aux(kWh)': 0.0,
@@ -855,91 +848,79 @@ class HeatingSystemCalculator:
                 'EWH_gen_in(kWh)': 0.0,
             }
 
-        # Efficiency evaluation point (default: follow distribution unless setpoints are given)
+        # Initial efficiency guess from model (can be updated later with actual temps)
         θHW_gen_ret_eff = self.θHW_gen_ret_set if self.θHW_gen_ret_set is not None else float(θH_dis_ret)
         θHW_gen_flw_eff = self.θHW_gen_flw_set if self.θHW_gen_flw_set is not None else float(θH_dis_flw)
         efficiency = self._efficiency_from_model(θHW_gen_flw_eff, θHW_gen_ret_eff, load_frac=1.0)
 
-        cw = self.c_w
-
         if self.generator_circuit == "direct":
-            # Primary = secondary (no hydraulic separation)
-            V_H_gen       = ms
+            # Primary mass flow equals secondary mass flow
+            mp = ms                                   # kg/h
+            Vp = mp / rho                             # m3/h
             θX_gen_cr_flw = float(θH_dis_flw)
             θX_gen_cr_ret = float(θH_dis_ret)
 
         else:
-            # Independent primary (with hydraulic separator)
-            Ts_sup = float(θH_dis_flw)   # requested secondary supply at the node, before primary loss
-            Ts_ret = float(θH_dis_ret)
-            ms = float(V_H_dis)
+            # Independent circuit
+            Ts_sup_req = float(θH_dis_flw)
+            Ts_ret     = float(θH_dis_ret)
 
-            # Primary ΔT from pump control
+            # ΔT on primary
             if str(self.speed_control_generator_pump) == 'deltaT_constant':
                 dTp = float(self.generator_nominal_deltaT)
             else:
                 dTp = float(self.generator_nominal_deltaT) * (QH_gen_out / max(self.full_load_power, 1e-6))
                 dTp = max(dTp, 1.0)
 
-            # Primary supply setpoint priority:
-            # 1) explicit user setpoint wins
-            # 2) otherwise use primary control (weather curve or demand or constant)
+            # Primary supply setpoint
             if self.θHW_gen_flw_set is not None:
                 Tp_sup_set = float(self.θHW_gen_flw_set)
             else:
-                Ts_sup_target = float(θH_dis_flw)  # secondary demand proxy
-                Tp_sup_set = float(self._generator_flow_setpoint(
-                    θext=self.current_theta_ext,
-                    θH_dis_flw_demand=Ts_sup_target
-                ))
+                ext = getattr(self, "current_theta_ext", None)
+                Tp_sup_set = float(self._generator_flow_setpoint(θext=ext, θH_dis_flw_demand=Ts_sup_req))
 
-            Tp_sup = Tp_sup_set
+            Tp_sup = max(Tp_sup_set, Ts_sup_req)
 
-            # Optional: do not allow primary setpoint lower than secondary request
-            Tp_sup = max(Tp_sup, float(θH_dis_flw))
-
-            # Primary line loss (supply arriving at the node)
+            # Primary line loss in °C
             self.primary_line_loss = getattr(self, 'primary_line_loss', 1.0)
-            Ts_sup = max(Tp_sup - self.primary_line_loss, Ts_ret)
+            Ts_sup_eff = max(Tp_sup - self.primary_line_loss, Ts_ret)
 
-            # Primary mass flow from required energy and ΔT
-            mp = QH_gen_out / (cw * dTp)
+            # Primary MASS flow (kg/h) from requested energy
+            mp = QH_gen_out * 1000.0 / (cw * dTp)     # kWh → Wh (*1000) / (Wh/kgK * K) = kg
 
-            # Anti-dilution loop (optional): keep node supply close to primary supply when mp < ms
+            # Anti-dilution: compare mass flows (same unit now)
             if not getattr(self, 'allow_dilution', False):
-                TOL = 0.1
-                MAX_ITER = 20
+                TOL = 0.1; MAX_ITER = 20
                 for _ in range(MAX_ITER):
-                    Ts_sup_eff = Tp_sup if mp >= ms else (mp * Tp_sup + (ms - mp) * Ts_ret) / max(ms, 1e-9)
-                    if (Tp_sup - Ts_sup_eff) > TOL and mp < ms:
+                    mix_sup = Tp_sup if mp >= ms else (mp * Tp_sup + (ms - mp) * Ts_ret) / max(ms, 1e-9)
+                    if (Tp_sup - mix_sup) > TOL and mp < ms:
                         mp *= 1.10
                     else:
+                        Ts_sup_eff = mix_sup
                         break
             else:
                 Ts_sup_eff = Tp_sup if mp >= ms else (mp * Tp_sup + (ms - mp) * Ts_ret) / max(ms, 1e-9)
 
-            # Primary return from energy balance
-            Tp_ret = Tp_sup - (ms / mp) * (Ts_sup_eff - Ts_ret) if mp > 1e-9 else Tp_sup
+            # Primary return using mass flows
+            Tp_ret = Tp_sup - (ms / mp) * (Ts_sup_eff - Ts_ret) if mp > EPS else Tp_sup
 
-            # Primary outputs
-            V_H_gen       = max(mp, 0.0)
-            θX_gen_cr_flw = Tp_sup       # actual primary supply (can exceed secondary)
+            θX_gen_cr_flw = Tp_sup
             θX_gen_cr_ret = Tp_ret
+            Vp = mp / rho                              # m3/h
 
-            # Update efficiency using actual primary return if no explicit setpoint is given
-            θHW_gen_ret_eff = self.θHW_gen_ret_set if self.θHW_gen_ret_set is not None else float(θX_gen_cr_ret)
-            if θHW_gen_ret_eff < 50:
-                efficiency = 110 - (θHW_gen_ret_eff - 20) * 0.5
-            else:
-                efficiency = 95.0
-            efficiency = max(min(efficiency, 110.0), 1.0)
+            # Optional: re-evaluate efficiency with actual temps via the chosen model
+            efficiency = self._efficiency_from_model(θX_gen_cr_flw, θX_gen_cr_ret, load_frac=QH_gen_out/max(self.full_load_power, EPS))
 
-        # Energy inputs/outputs
-        EHW_gen_in = (QH_gen_out * 100.0) / efficiency if efficiency > 0 else 0.0
+        # Energy accounting
+        efficiency = max(min(efficiency, 110.0), 1.0)
+        EHW_gen_in  = (QH_gen_out * 100.0) / efficiency if efficiency > 0 else 0.0
         EHW_gen_aux = EHW_gen_in * (self.auxiliary_power_generator / 100.0)
-        QW_gen_i_ls_rbl_H = max(EHW_gen_in - QH_gen_out, 0.0) * (self.fraction_of_auxiliary_power_generator / 100.0)
 
-        QW_gen_out = 0.0
+        # If this is the “recoverable fraction of generator thermal losses”, rename accordingly
+        gen_losses = max(EHW_gen_in - QH_gen_out, 0.0)
+        QW_gen_i_ls_rbl_H = gen_losses * (self.fraction_of_auxiliary_power_generator / 100.0)
+
+        QW_gen_out  = 0.0
         QHW_gen_out = QH_gen_out + QW_gen_out
 
         EH_gen_in  = (EHW_gen_in * QH_gen_out / QHW_gen_out) if QHW_gen_out > EPS else 0.0
@@ -950,7 +931,7 @@ class HeatingSystemCalculator:
             'QH_gen_out(kWh)': QH_gen_out,
             'θX_gen_cr_flw(°C)': θX_gen_cr_flw,
             'θX_gen_cr_ret(°C)': θX_gen_cr_ret,
-            'V_H_gen(m3/h)': V_H_gen,
+            'V_H_gen(m3/h)': Vp,                     # volumetric primary flow (coherent unit)
             'efficiency_gen(%)': efficiency,
             'EHW_gen_in(kWh)': EHW_gen_in,
             'EHW_gen_aux(kWh)': EHW_gen_aux,

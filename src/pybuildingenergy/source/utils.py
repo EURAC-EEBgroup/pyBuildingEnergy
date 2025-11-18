@@ -14,12 +14,12 @@ import numpy as np
 from dataclasses import dataclass
 from tqdm import tqdm
 from pvlib.iotools import epw
-from source.table_iso_16798_1 import *
 from source.ventilation import VentilationInternalGains   
 from source.generate_profile import HourlyProfileGenerator
 from source.functions import *
 from source.generate_profile import get_country_code_from_latlon
 from source.table_iso_16798_1 import * 
+
 
 @dataclass
 class WeatherDataResult:
@@ -266,66 +266,6 @@ class ISO52010:
             longitude=longitude_,
         )
 
-    # GET DATA FROM PVGIS
-    @classmethod
-    def get_tmy_data_pvigs(cls, building_object) -> WeatherDataResult:
-        """
-        Get Wetaher data from pvgis API
-
-        :param building_object: Building object create according to the method ``Building``or ``Buildings_from_dictionary``.
-        
-        :return:
-            * *elevation*: altitude of specifici location (type: **float**)
-            * *weather_data*: dataframe with wetaher parameters (e.g. outdoor temperature, outdoor relative humidity, etc.) (type: **pd.DataFrame**)
-            * *utc_offset*: refers to the difference in time between Coordinated Universal Time (UTC) and the local time of a specific location (type: **int**)
-            * *latitude*: latitude of the building place (type: **float**)
-            * *longitude*: longitude of the building place (type: **float**)
-
-        .. note::
-            In case only weather data is desired, the ``building_object`` can only have the **latitude** and **longitude** parameters.
-
-        """
-
-        # Connection to PVGIS API to get weather data
-        latitude = building_object.__getattribute__("latitude")
-        longitude = building_object.__getattribute__("longitude")
-        url = f"https://re.jrc.ec.europa.eu/api/tmy?lat={latitude}&lon={longitude}&outputformat=json&browser=1"
-        response = ga
-        data = response.json()
-        df_weather = pd.DataFrame(data["outputs"]["tmy_hourly"])
-
-        # Time data into UTC
-        df_weather["time(UTC)"] = [
-            dt.datetime.strptime(x, "%Y%m%d:%H%M") for x in df_weather["time(UTC)"]
-        ]
-        # Order data in date ascending order
-        df_weather = df_weather.sort_values(by="time(UTC)")
-        df_weather.index = df_weather["time(UTC)"]
-        del df_weather["time(UTC)"]
-
-        # Elevation is not needed for the energy demand calculation, only for the PV optimization
-        loc_elevation = data["inputs"]["location"]["elevation"]
-        latitude_ = data["inputs"]["location"]["latitude"]
-        longitude_ = data["inputs"]["location"]["longitude"]
-        # TIMEZONE FINDER
-        tf = TimezoneFinder()
-        utcoffset_in_hours = int(
-            timezone(tf.timezone_at(lng=longitude, lat=latitude))
-            .localize(df_weather.index[0])
-            .utcoffset()
-            .total_seconds()
-            / 3600.0
-        )
-
-        return WeatherDataResult(
-            elevation=loc_elevation,
-            weather_data=df_weather,
-            utc_offset=utcoffset_in_hours,
-            latitude=latitude_,
-            longitude=longitude_,
-        )
-
-
     @classmethod
     def Shading_reduction_factor_window(
         cls,
@@ -339,53 +279,164 @@ class ISO52010:
         building_object
     ):
         """
+        calculate t
         Calcola il fattore di riduzione per ombreggiamento per ciascuna finestra.
+        Ritorna un oggetto Shading_Reduction_factor_window oppure None se non applicabile.
         """
-        orientation_df  =pd.DataFrame({
-            "name": ['NV', 'SV', 'EV', 'WV'],
-            "angle": [180,0,90,270]
-        })
-        try:
-            # Extract data from trasparent surfaces 
-            orientation_angle = orientation_df.loc[orientation_df['name'] == orientation,'angle'].values[0]
-            filtered_windows = [
-                s for s in building_object.get("building_surface", [])
-                if s.get("type") == "transparent"
-                and s.get("orientation", {}).get("azimuth") == orientation_angle
-            ]
-            F_sh_dir_df = pd.DataFrame(index=calendar.index)
-            for window in filtered_windows:
-                # orientation_angle = orientation_df.loc[orientation_df['name'] == orientation_w,'angle'].values[0]
-                F_sh_dir_k_ts_hour = pd.Series(np.zeros(n_timesteps), index=calendar.index)
-                h_k_sun_t_hour = pd.Series(np.zeros(n_timesteps), index=calendar.index)                    
 
-                for i in range(n_timesteps):
-                    F_sh_dir_k_t = shading_reduction_factor(
-                        alpha_sol_t=np.degrees(solar_altitude_angle.iloc[i]),
-                        phi_sol_t=np.degrees(solar_azimuth_angle.iloc[i]),
-                        beta_k_t=90,
-                        gamma_k_t=orientation_angle,
-                        D_k_ovh_q=window.get("overhang_proprieties", {}).get("width_of_horizontal_overhangs"),
-                        L_k_ovh_q=window.get("width_or_distance_of_shading_elements"),
-                        elements_shading_type=window.get("shading_type"),
-                        H_k=window.get("height"),
-                        W_k=window.get("width")
-                    )
-                    if F_sh_dir_k_t[0] > 0:
-                        if (I_dir_tot.iloc[i] + I_dif_tot.iloc[i]) == 0:
-                            F_sh_obst_k_t = 0
-                        else:       
-                            F_sh_obst_k_t = (F_sh_dir_k_t[0] * I_dir_tot.iloc[i] + I_dif_tot.iloc[i]) / (I_dir_tot.iloc[i] + I_dif_tot.iloc[i])
-                            # F_sh_obst_k_t = (F_sh_dir_k_t[0] * I_dir_tot[i] + I_dif_tot[i]) / (I_dir_tot[i] + I_dif_tot[i])
-                    else:
-                        F_sh_obst_k_t = 0
-                    F_sh_dir_k_ts_hour.iloc[i] = F_sh_obst_k_t
-                    h_k_sun_t_hour.iloc[i] = F_sh_dir_k_t[1]
-                F_sh_dir_df[f"W_{window.get('name')}"] = F_sh_dir_k_ts_hour
-                F_sh_dir_df[f"H_sun_{window.get('name')}"] = h_k_sun_t_hour
-            return Shading_Reduction_factor_window(shading_reduction_factor_window=F_sh_dir_df)
-        except:
-            pass
+        # 1) Casi banali / invalidi
+        if orientation is None:
+            # Nessuna orientazione specificata: o ritorna None, oppure potresti decidere di iterare su tutte.
+            return None
+
+        if orientation == "HOR":
+            # Orizzontale: nessuna finestra verticale da calcolare
+            return None
+
+        # 2) Mappatura coerente (come nella 1ª funzione)
+        orientation_lookup = {
+            "NV": 0.0,    # North-facing azimuth
+            "SV": 180.0,  # South
+            "EV": 90.0,   # East
+            "WV": 270.0,  # West
+        }
+        if orientation not in orientation_lookup:
+            raise ValueError(f"Unknown orientation '{orientation}' passed to shading calculation.")
+
+        orientation_angle = float(orientation_lookup[orientation]) % 360.0
+
+        # 3) Filtro finestre trasparenti con confronto robusto dell’azimut
+        def _matches_orientation(surface):
+            az = surface.get("orientation", {}).get("azimuth")
+            if az is None:
+                return False
+            try:
+                az_f = float(az) % 360.0
+            except (TypeError, ValueError):
+                return False
+            return np.isclose(az_f, orientation_angle, atol=1e-6)
+
+        filtered_windows = [
+            s for s in building_object.get("building_surface", [])
+            if s.get("type") == "transparent" and _matches_orientation(s)
+        ]
+        if not filtered_windows:
+            return None
+
+        # 4) Calcolo fattori per ciascuna finestra
+        F_sh_dir_df = pd.DataFrame(index=calendar.index)
+
+        for window in filtered_windows:
+            F_sh_dir_k_ts_hour = pd.Series(np.zeros(n_timesteps), index=calendar.index, dtype=float)
+            h_k_sun_t_hour     = pd.Series(np.zeros(n_timesteps), index=calendar.index, dtype=float)
+
+            for i in range(n_timesteps):
+                # Proteggi da NaN nei valori angolari
+                alpha_deg = float(np.degrees(solar_altitude_angle.iloc[i])) if pd.notna(solar_altitude_angle.iloc[i]) else 0.0
+                phi_deg   = float(np.degrees(solar_azimuth_angle.iloc[i]))  if pd.notna(solar_azimuth_angle.iloc[i])  else 0.0
+
+                F_sh_dir_k_t = shading_reduction_factor(
+                    alpha_sol_t=alpha_deg,
+                    phi_sol_t=phi_deg,
+                    beta_k_t=90,
+                    gamma_k_t=orientation_angle,
+                    D_k_ovh_q=window.get("overhang_proprieties", {}).get("width_of_horizontal_overhangs"),
+                    L_k_ovh_q=window.get("width_or_distance_of_shading_elements"),
+                    elements_shading_type=window.get("shading_type"),
+                    H_k=window.get("height"),
+                    W_k=window.get("width"),
+                )
+
+                # Attenzione: assumo F_sh_dir_k_t = (fattore_dir, altezza_sole)
+                fatt_dir = F_sh_dir_k_t[0] if F_sh_dir_k_t is not None else 0.0
+                if fatt_dir > 0:
+                    I_dir = float(I_dir_tot.iloc[i]) if pd.notna(I_dir_tot.iloc[i]) else 0.0
+                    I_dif = float(I_dif_tot.iloc[i]) if pd.notna(I_dif_tot.iloc[i]) else 0.0
+                    denom = I_dir + I_dif
+                    F_sh_obst_k_t = 0.0 if denom == 0 else (fatt_dir * I_dir + I_dif) / denom
+                else:
+                    F_sh_obst_k_t = 0.0
+
+                F_sh_dir_k_ts_hour.iat[i] = F_sh_obst_k_t
+                h_k_sun_t_hour.iat[i]     = F_sh_dir_k_t[1] if F_sh_dir_k_t is not None else 0.0
+
+            name = window.get('name', 'unknown')
+            F_sh_dir_df[f"W_{name}"]     = F_sh_dir_k_ts_hour
+            F_sh_dir_df[f"H_sun_{name}"] = h_k_sun_t_hour
+
+        return Shading_Reduction_factor_window(shading_reduction_factor_window=F_sh_dir_df)
+
+
+
+    # @classmethod
+    # def Shading_reduction_factor_window(
+    #     cls,
+    #     solar_altitude_angle,
+    #     solar_azimuth_angle,
+    #     I_dir_tot,
+    #     I_dif_tot,
+    #     calendar,
+    #     n_timesteps,
+    #     orientation,
+    #     building_object
+    # ) -> pd.DataFrame:
+    #     """
+    #     Calculate the shading reduction factor for each window.
+    #     :param solar_altitude_angle: Solar altitude angle
+    #     :param solar_azimuth_angle: Solar azimuth angle
+    #     :param I_dir_tot: Direct solar radiation
+    #     :param I_dif_tot: Diffuse solar radiation
+    #     :param calendar: Calendar
+    #     :param n_timesteps: Number of timesteps
+    #     :param orientation: Orientation of the window
+    #     :param building_object: Building object
+
+    #     :return: Shading reduction factor for each window
+    #     """
+    #     orientation_df  =pd.DataFrame({
+    #         "name": ['NV', 'SV', 'EV', 'WV'],
+    #         "angle": [0,180,90,270]
+    #     })
+    #     try:
+    #         # Extract data from trasparent surfaces 
+    #         orientation_angle = orientation_df.loc[orientation_df['name'] == orientation,'angle'].values[0]
+    #         filtered_windows = [
+    #             s for s in building_object.get("building_surface", [])
+    #             if s.get("type") == "transparent"
+    #             and s.get("orientation", {}).get("azimuth") == orientation_angle
+    #         ]
+    #         F_sh_dir_df = pd.DataFrame(index=calendar.index)
+    #         for window in filtered_windows:
+    #             # orientation_angle = orientation_df.loc[orientation_df['name'] == orientation_w,'angle'].values[0]
+    #             F_sh_dir_k_ts_hour = pd.Series(np.zeros(n_timesteps), index=calendar.index)
+    #             h_k_sun_t_hour = pd.Series(np.zeros(n_timesteps), index=calendar.index)                    
+    #             for i in range(n_timesteps):
+    #                 F_sh_dir_k_t = shading_reduction_factor(
+    #                     alpha_sol_t=np.degrees(solar_altitude_angle.iloc[i]),
+    #                     phi_sol_t=np.degrees(solar_azimuth_angle.iloc[i]),
+    #                     beta_k_t=90,
+    #                     gamma_k_t=orientation_angle,
+    #                     D_k_ovh_q=window.get("overhang_proprieties", {}).get("width_of_horizontal_overhangs"),
+    #                     L_k_ovh_q=window.get("width_or_distance_of_shading_elements"),
+    #                     elements_shading_type=window.get("shading_type"),
+    #                     H_k=window.get("height"),
+    #                     W_k=window.get("width")
+    #                 )
+    #                 if F_sh_dir_k_t[0] > 0:
+    #                     if (I_dir_tot.iloc[i] + I_dif_tot.iloc[i]) == 0:
+    #                         F_sh_obst_k_t = 0
+    #                     else:       
+    #                         F_sh_obst_k_t = (F_sh_dir_k_t[0] * I_dir_tot.iloc[i] + I_dif_tot.iloc[i]) / (I_dir_tot.iloc[i] + I_dif_tot.iloc[i])
+    #                         # F_sh_obst_k_t = (F_sh_dir_k_t[0] * I_dir_tot[i] + I_dif_tot[i]) / (I_dir_tot[i] + I_dif_tot[i])
+    #                 else:
+    #                     F_sh_obst_k_t = 0
+    #                 F_sh_dir_k_ts_hour.iloc[i] = F_sh_obst_k_t
+    #                 h_k_sun_t_hour.iloc[i] = F_sh_dir_k_t[1]
+    #             F_sh_dir_df[f"W_{window.get('name')}"] = F_sh_dir_k_ts_hour
+    #             F_sh_dir_df[f"H_sun_{window.get('name')}"] = h_k_sun_t_hour
+    #         return Shading_Reduction_factor_window(shading_reduction_factor_window=F_sh_dir_df)
+    #     except:
+    #         pass
 
  
 
@@ -577,65 +628,6 @@ class ISO52010:
         I_tot['I_sol_dif'] = I_dif_tot
         I_tot['I_sol_dir'] = I_dir_tot
         
-        # # Calculation of shading reduction factor for each window
-        # # List of elements that are windows
-        # elements = building_object.__getattribute__("typology_elements")
-        # # Window height
-        # H_k_all = building_object.__getattribute__("window_height")
-        # # Window width
-        # W_k_all = building_object.__getattribute__("window_width")
-        # # Window parapet height
-        # Ho_k = building_object.__getattribute__("window_parapet")
-        # # List of elemnts knowing if they have overhangs horizontal,vertical or obstacles
-        # elements_shading_type = building_object.__getattribute__("elements_shading_type")
-        # # Getting the depth or horizontal distance of obstacles or vertical overhang 
-        # D_k_ovh_q = building_object.__getattribute__('width_of_horizontal_overhangs')
-        # # Getting the depth or horizontal distance of obstacles or vertical overhang
-        # L_k_ovh_q = building_object.__getattribute__('width_or_distance_of_shading_elements')
-
-
-        # # Initialize result dataframe
-        # F_sh_obst_k_t_df = pd.DataFrame(index=calendar.index)
-
-        # # Loop over windows only (those labeled 'W')
-        # window_list = [el for el in elements if el.startswith('W')]
-        # for window_id, window_name in enumerate(window_list):
-            
-        #     F_sh_obst_k_t_hour = pd.Series(np.zeros(n_timesteps), index=calendar.index)
-
-        #     for i in range(n_timesteps):
-        #         F_sh_dir_k_t = shading_reduction_factor(
-        #             alpha_sol_t=np.degrees(solar_altitude_angle[i]),
-        #             phi_sol_t=np.degrees(solar_azimuth_angle[i]),
-        #             beta_k_t=beta_ic_deg,
-        #             gamma_k_t=gamma_ic_deg,
-        #             D_k_ovh_q = D_k_ovh_q[window_id], 
-        #             L_k_ovh_q = L_k_ovh_q[window_id], 
-        #             elements_shading_type = elements_shading_type[window_id],
-        #             H_k = H_k_all[window_id],
-        #             gamma_k_t_= 0,
-        #             W_k = W_k_all[window_id]
-        #         )
-        #         # calculation of the dimensionless shading reduction factor for external obstacles
-        #         # Check if F_sh_dir_k_ts is a scalar
-        #         if isinstance(F_sh_dir_k_t, (list, np.ndarray)):
-        #             F_sh_dir_k_ts = float(F_sh_dir_k_t[0])
-
-        #         '''
-        #         ANNEX F - F3.1 Shading redcution focator
-        #         F_sh_obst_st_k_t = (F_sh_dir_k_t * I_dir_to_k_t + I_dif_tot_k_t)/(I_dir_tot_k_t + I_dif_tot_k_t)
-        #         '''
-        #         if F_sh_dir_k_t>0:
-        #             F_sh_obst_k_t = (F_sh_dir_k_t * I_dir_tot[i] + I_dif_tot[i])/(I_dir_tot[i] + I_dif_tot[i])
-                    
-        #         else:
-        #             F_sh_obst_k_t=0
-
-        #         F_sh_obst_k_t_hour.iloc[i] = F_sh_obst_k_t
-
-        #     F_sh_obst_k_t_df[f"{window_name}_{window_id}"] = F_sh_obst_k_t_hour
-
-        # # pd.DataFrame(F_sh_dir_df).to_csv('F_sh_dir_df_1.csv')
         return Solar_irradiance(solar_irradiance=I_tot), solar_altitude_angle, solar_azimuth_angle, I_dir_tot, I_dif_tot
 
 
@@ -658,14 +650,6 @@ def Calculation_ISO_52010(building_object, path_weather_file, weather_source="pv
         weatherData = ISO52010.get_tmy_data_epw(path_weather_file)
     else:
         raise ValueError("select the right weather source: 'epw' or 'pvgis'")
-
-    # # Get weather dataframe
-    # if building_object.__getattribute__("weather_source") == "pvgis":
-    #     weatherData = ISO52010.get_tmy_data_pvigs(building_object)
-    # elif building_object.__getattribute__("weather_source") == "epw":
-    #     weatherData = ISO52010.get_tmy_data_epw(path_weather_file)
-    # else:
-    #     raise ValueError("select the right weather source: 'epw' or 'pvgis'")
 
     sim_df = weatherData.weather_data
     timezoneW = weatherData.utc_offset
@@ -760,17 +744,12 @@ class ISO52016:
         "WV": (90, -90),
     }  # dictionary mapping orientation in orientation_elements with (beta_ic_deg=elevation/tilt, gamma_ic_deg=azimuth), see util.util.ISO52010_calc()
 
-    # __slots__=("inputs","sim_df")
-
     def __init__(self):
         pass
 
         """
         Simulate the Final Energy consumption of the building using the ISO52016
         """
-
-
-
 
     @classmethod
     def Number_of_nodes_element(cls, building_object) -> numb_nodes_facade_elements:
@@ -821,7 +800,7 @@ class ISO52016:
 
         .. note:: Required parameters of building_object:
 
-            * type: type of building element OPAQUE -'OP', TRANSPARENT - 'W', GROUND -'GR'
+            * type: type of building element opaque, transparent or adiabatic
             * res: theraml ressistance of opaque building element
             * kappa_m: heat_capacity of the element in Table B.14
             * solar_absorption_coeff: solar absorption coefficient of element provided by user or using values of Table A.15 and B.15 of ISO 52016
@@ -882,10 +861,8 @@ class ISO52016:
         for i in range(len(el_type)):
             if R_c_eli[i] != 0:
                 if el_type[i] == "OP" or el_type[i] == "ADJ":
-                    # h_pli_eli[0, i] = 6 / BUI.__getattribute__('thermal_resistance_R_elements')[i]
                     h_pli_eli[0, i] = 6 / R_c_eli[i]
                 elif el_type[i] == "W":
-                    # h_pli_eli[0, i] = 1 / BUI.__getattribute__('thermal_resistance_R_elements')[i]
                     h_pli_eli[0, i] = 1 / R_c_eli[i]
                 elif el_type[i] == "GR":
                     h_pli_eli[0, i] = 2 / R_gr
@@ -894,11 +871,9 @@ class ISO52016:
         layer_no = 1
         for i in range(len(el_type)):
             if R_c_eli[i] != 0:
-                if el_type[i] == "OP" or el_type[i] == "ADJ":
-                    # h_pli_eli[layer_no, i] = 3 / building_object.__getattribute__('thermal_resistance_R_elements')[i]
+                if el_type[i] == "OP" or el_type[i] == "ADJ":                    
                     h_pli_eli[layer_no, i] = 3 / R_c_eli[i]
                 elif el_type[i] == "GR":
-                    # h_pli_eli[layer_no, i] = 1 / (building_object.__getattribute__('thermal_resistance_R_elements')[i] / 4 + R_gr / 2)
                     h_pli_eli[layer_no, i] = 1 / (R_c_eli[i] / 4 + R_gr / 2)
 
         # layer = 3
@@ -906,10 +881,8 @@ class ISO52016:
         for i in range(len(el_type)):
             if R_c_eli[i] != 0:
                 if el_type[i] == "OP" or el_type[i] == "ADJ":
-                    # h_pli_eli[layer_no, i] = 3 / building_object.__getattribute__('thermal_resistance_R_elements')[i]
                     h_pli_eli[layer_no, i] = 3 / R_c_eli[i]
                 elif el_type[i] == "GR":
-                    # h_pli_eli[layer_no, i] = 2 / building_object.__getattribute__('thermal_resistance_R_elements')[i]
                     h_pli_eli[layer_no, i] = 2 / R_c_eli[i]
 
         # layer = 4
@@ -917,10 +890,8 @@ class ISO52016:
         for i in range(len(el_type)):
             if R_c_eli[i] != 0:
                 if el_type[i] == "OP" or el_type[i] == "ADJ":
-                    # h_pli_eli[layer_no, i] = 6 / building_object.__getattribute__('thermal_resistance_R_elements')[i]
                     h_pli_eli[layer_no, i] = 6 / R_c_eli[i]
                 elif el_type[i] == "GR":
-                    # h_pli_eli[layer_no, i] = 4 / building_object.__getattribute__('thermal_resistance_R_elements')[i]
                     h_pli_eli[layer_no, i] = 4 / R_c_eli[i]
 
         return conduttance_elements(h_pli_eli=h_pli_eli)
@@ -930,18 +901,12 @@ class ISO52016:
         """
         Calculation of solar absorption for each single elements
 
-        :param type: list of elements type.
-        :param a_sol: coefficients of solar absorption for each elements
+        :param building_object: building object create according to the method ``Building``or ``Buildings_from_dictionary``.
 
         :return: a_sol_pli_eli: solar absorption of each single nodes (type: *np.array*)
 
         .. note:: 
             EXAMPLE:
-            
-            inputs = {
-                "type": ["GR", "OP", "OP", "OP", "OP", "OP", "W", "W", "W", "W"],
-                "a_sol": [0, 0.6, 0.6, 0.6, 0.6, 0.6, 0, 0, 0, 0],
-            }
 
             a_sol_pli_eli = array(
                 [
@@ -956,6 +921,7 @@ class ISO52016:
         """
         # Number of envelop building elements
         el_list = len(building_object["building_surface"])
+
         # Coefficient list of elements
         solar_abs_elements = [0.0] * el_list
         for i, surf in enumerate(building_object["building_surface"]):
@@ -1000,9 +966,7 @@ class ISO52016:
         # Initialization of heat capacity of nodes
         kappa_pli_eli_ = np.zeros((5, len(el_type)))
 
-        if isinstance(building_object, dict) or (
-            building_object.__getattribute__("construction_class") == "class_i"
-        ):
+        if building_object['building']['construction_class'] == "class_i":
             # Mass concentrated at internal side
             # OPAQUE: kpl5 = km_eli ; kpl1=kpl2=kpl3=kpl4=0
             # GROUND: kpl5 = km_eli ; kpl3=kpl4=0
@@ -1016,7 +980,7 @@ class ISO52016:
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
 
         elif (
-            building_object.__getattribute__("construction_class") == "class_e"
+            building_object['building']['construction_class'] == "class_e"
         ):  # mass concentrated at external side
             # OPAQUE: kpl1 = km_eli ; kpl2=kpl3=kpl4=kpl5=0
             # GROUND: kpl3 = km_eli ; kpl4=kpl5=0
@@ -1029,7 +993,7 @@ class ISO52016:
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
 
         elif (
-            building_object.__getattribute__("construction_class") == "class_ie"
+            building_object['building']['construction_class'] == "class_ie"
         ):  # mass divided over internal and external side)
             # OPAQUE: kpl1 = kpl5 = km_eli/2 ; kpl2=kpl3=kpl4=0
             # GROUND: kpl1 = kp5 =km_eli/2; kpl4=0
@@ -1047,7 +1011,7 @@ class ISO52016:
                     kappa_pli_eli_[node, i] = list_kappa_el[i] / 2
 
         elif (
-            building_object.__getattribute__("construction_class") == "class_d"
+            building_object['building']["construction_class"] == "class_d"
         ):  # (mass equally distributed)
             # OPAQUE: kpl2=kpl3=kpl4=km_eli/4
             # GROUND: kpl3=km_eli/4; kpl4=km_eli/2
@@ -1074,7 +1038,7 @@ class ISO52016:
                             kappa_pli_eli_[node, i] = list_kappa_el[i] / 4
 
         elif (
-            building_object.__getattribute__("construction_class") == "class_m"
+            building_object['building']["construction_class"] == "class_m"
         ):  # mass concentrated inside
             # OPAQUE: kpl1=kpl2=kpl4=kpl5=0; kpl3= km_eli
             # GROUND: kpl4=km_eli; kpl3=kpl5=0
@@ -1174,7 +1138,7 @@ class ISO52016:
         # ============================
 
         # ============================
-            # For the Grins Beat project, we assume active heating and cooling setpoints
+        # For the Grins Beat project, we assume active heating and cooling setpoints
         annual_mean_internal_temperature = (
             building_object["building_parameters"]["temperature_setpoints"][
                 "heating_setpoint"
@@ -1327,205 +1291,21 @@ class ISO52016:
     @classmethod
     def Weather_data_bui(cls, building_object, path_weather_file, weather_source="pvgis") -> simulation_df:
         """
-        Definition of occupancy profile for:
+        Get weather data for the building object.
 
-            #. Internal gains
-            #. temperature control and ventilation
-
-        The data is divided in weekend and workday
-
-        :param building_object: Building object create according to the method ``Building``or ``Buildings_from_dictionary``.
         :param path_weather_file: path of the .epw weather file. (e.g (../User/documents/epw/athens.epw))
-
-        .. note:: Required parameters of building_object:
-
-            * occ_level_wd: occupancy profile of workday for modification of internal gains
-            * occ_level_we: occupancy profile of weekend for modification of internal gains
-            * comf_level_wd: occupancy profile of workday for modification of ventilation
-            * comf_level_we: occupancy profile of weekend for modification of ventilation
-            * heating_setpoint: value of heating setpoint. e.g 20
-            * heating_setback: value of heating setback. eg.10
-            * cooling_setpoint: value of cooling setpoint. e.g 26
-            * cooling_setback: value of cooling setback. eg.20
 
         :retrun: sim_df: dataframe with inputs for simulation having information of weather, occupancy, heating and cooling setpoint and setback
         """
         # WEATHER DATA
         if weather_source == "pvgis":
-            sim_df = pd.DataFrame(
-                Calculation_ISO_52010(
-                    building_object, path_weather_file, weather_source=weather_source
-                ).sim_df
-            )
+            sim_df = pd.DataFrame(Calculation_ISO_52010(building_object, path_weather_file, weather_source=weather_source).sim_df)
+        
         elif weather_source == "epw":
-            sim_df = pd.DataFrame(
-                Calculation_ISO_52010(
-                    building_object, path_weather_file, weather_source=weather_source
-                ).sim_df
-            )
+            sim_df = pd.DataFrame(Calculation_ISO_52010(building_object, path_weather_file, weather_source=weather_source).sim_df)
+        
         sim_df.index = pd.DatetimeIndex(sim_df.index)
         
-        # # number of days of simulation (13 months)
-        # number_of_days_with_warmup_period = len(sim_df) // 24
-        # # Inizailization occupancy for Internal Gain
-        # sim_df["occupancy level"] = (np.nan)  # 9504 are the numbers of hours in one year + December month for warmup period
-        # # Inizialization occupancy for Indoor Temperature and Ventilation control
-        # sim_df["comfort level"] = np.nan
-
-        # # Occupation (both for gain and ventilation) workday and weekend according to schedule
-        # # Internal gains
-        # if isinstance(building_object, dict):
-        #     # internal_gains_wd = building_object["building_parameters"][
-        #     #     "internal_gains_total"
-        #     # ]["weekday"]
-        #     # internal_gains_we = building_object["building_parameters"][
-        #     #     "internal_gains_total"
-        #     # ]["weekend"]
-        #     heating_profile_wd = building_object["building_parameters"][
-        #         "heating_profile"
-        #     ]["weekday"]
-        #     heating_profile_we = building_object["building_parameters"][
-        #         "heating_profile"
-        #     ]["weekend"]
-        #     cooling_profile_wd = building_object["building_parameters"][
-        #         "cooling_profile"
-        #     ]["weekday"]
-        #     cooling_profile_we = building_object["building_parameters"][
-        #         "cooling_profile"
-        #     ]["weekend"]
-        #     ventilation_profile_wd = building_object["building_parameters"][
-        #         "ventilation_profile"
-        #     ]["weekday"]
-        #     ventilation_profile_we = building_object["building_parameters"][
-        #         "ventilation_profile"
-        #     ]["weekend"]
-        # else:
-        #     # internal_gains_wd = building_object.__getattribute__("internal_gains_wd")
-        #     # internal_gains_we = building_object.__getattribute__("internal_gains_we")
-        #     # Heating control
-        #     heating_profile_wd = building_object.__getattribute__("heating_profile_wd")
-        #     heating_profile_we = building_object.__getattribute__("heating_profile_we")
-        #     # Cooling control
-        #     cooling_profile_wd = building_object.__getattribute__("cooling_profile_wd")
-        #     cooling_profile_we = building_object.__getattribute__("cooling_profile_we")
-        #     # Ventilation control
-        #     # ventilation_profile_wd = building_object.__getattribute__("ventilation_profile_wd")
-        #     # ventilation_profile_we = building_object.__getattribute__("ventilation_profile_we")
-
-        # """ WORKDAY """
-        # # Number of workdays during the entire simulation period
-        # wd_mask = sim_df.index.weekday < 5
-        # # number of workdays for the entire period of simulation (year + warmup: 13 months)
-        # number_of_weekdays_with_warmup_period = sum(wd_mask) // 24
-        # # Associate the occupancy profile to simulation hourly time of workdays
-        # # sim_df.loc[wd_mask, "internal gains"] = np.tile(
-        # #     internal_gains_wd, number_of_weekdays_with_warmup_period
-        # # )
-        # sim_df.loc[wd_mask, "heating control"] = np.tile(
-        #     heating_profile_wd, number_of_weekdays_with_warmup_period
-        # )
-        # sim_df.loc[wd_mask, "cooling control"] = np.tile(
-        #     cooling_profile_wd, number_of_weekdays_with_warmup_period
-        # )
-        # # sim_df.loc[wd_mask, "ventilation control"] = np.tile(
-        # #     ventilation_profile_wd, number_of_weekdays_with_warmup_period
-        # # )
-
-        # # # Nnumber of workdays during the entire simulation period
-        # # wd_mask = sim_df.index.weekday < 5
-        # # # number of workdays for the entire period of simulation (year + warmup: 13 months)
-        # # number_of_weekdays_with_warmup_period = sum(wd_mask) // 24
-        # # # Associate the occupancy profile to simulation hourly time of workdays
-        # # sim_df.loc[wd_mask, "occupancy level"] = np.tile(
-        # #     occ_level_wd.astype(float), number_of_weekdays_with_warmup_period
-        # # )
-        # # sim_df.loc[wd_mask, "comfort level"] = np.tile(
-        # #     comf_level_wd.astype(float), number_of_weekdays_with_warmup_period
-        # # )
-
-        # """ WEEKEND """
-        # # # number of weekend days for the entire period of simulation (year + warmup: 13 months)
-        # # number_of_weekend_days_with_warmup_period = (
-        # #     number_of_days_with_warmup_period - number_of_weekdays_with_warmup_period
-        # # )
-        # # # Number of workdays during the entire simulation period
-        # # we_mask = sim_df.index.weekday >= 5
-        # # # Associate the occupancy profile to simulation hourly time of weekends
-        # # sim_df.loc[we_mask, "occupancy level"] = np.tile(
-        # #     occ_level_we.astype(float), number_of_weekend_days_with_warmup_period
-        # # )
-        # # sim_df.loc[we_mask, "comfort level"] = np.tile(
-        # #     comf_level_we.astype(float), number_of_weekend_days_with_warmup_period
-        # # )
-        # # number of weekend days for the entire period of simulation (year + warmup: 13 months)
-        # number_of_weekend_days_with_warmup_period = (
-        #     number_of_days_with_warmup_period - number_of_weekdays_with_warmup_period
-        # )
-        # # Number of workdays during the entire simulation period
-        # we_mask = sim_df.index.weekday >= 5
-        # # Associate the occupancy profile to simulation hourly time of weekends
-        # # sim_df.loc[we_mask, "internal gains"] = np.tile(
-        # #     internal_gains_we, number_of_weekend_days_with_warmup_period
-        # # )
-        # sim_df.loc[we_mask, "heating control"] = np.tile(
-        #     heating_profile_we, number_of_weekend_days_with_warmup_period
-        # )
-        # sim_df.loc[we_mask, "cooling control"] = np.tile(
-        #     cooling_profile_we, number_of_weekend_days_with_warmup_period
-        # )
-        # # sim_df.loc[we_mask, "ventilation control"] = np.tile(
-        # #     ventilation_profile_we, number_of_weekend_days_with_warmup_period
-        # # )
-
-        # """ HEATING AND COOLING """
-        # # # periods where occupancy is =1 and comfort is required and occupancy=0 comfort is not required
-        # # comfort_hi_mask = sim_df["comfort level"] == 1
-        # # comfort_lo_mask = sim_df["comfort level"] == 0
-
-        # """ HEATING """
-        # # Associate setback and setpoint of heating to occupancy profile for comfort
-        # if isinstance(building_object, dict):
-        #     sim_df["Heating"] = building_object["building_parameters"]["temperature_setpoints"]["heating_setback"]
-        #     sim_df.loc[sim_df["heating control"] > 0, "Heating"] = building_object["building_parameters"]["temperature_setpoints"]["heating_setpoint"]
-        # else:
-        #     # Associate setback and setpoint of heating to occupancy profile for comfort
-        #     sim_df["Heating"] = building_object.__getattribute__("heating_setback")
-        #     sim_df.loc[sim_df["heating control"] > 0, "Heating"] = (
-        #         building_object.__getattribute__("heating_setpoint")
-        #     )
-        # # # Associate setback and setpoint of heating to occupancy profile for comfort
-        # # sim_df["Heating"] = np.nan
-        # # sim_df.loc[comfort_hi_mask, "Heating"] = building_object.__getattribute__(
-        # #     "heating_setpoint"
-        # # )
-        # # sim_df.loc[comfort_lo_mask, "Heating"] = building_object.__getattribute__(
-        # #     "heating_setback"
-        # # )
-
-        # # """ COOLING """
-        # # # Associate setback and setpoint of cooling to occupancy profile for comfort
-        # # sim_df["Cooling"] = np.nan
-        # # sim_df.loc[comfort_hi_mask, "Cooling"] = building_object.__getattribute__(
-        # #     "cooling_setpoint"
-        # # )
-        # # sim_df.loc[comfort_lo_mask, "Cooling"] = building_object.__getattribute__(
-        # #     "cooling_setback"
-        # # )
-        # """ COOLING """
-        # # Associate setback and setpoint of cooling to occupancy profile for comfort
-        # if isinstance(building_object, dict):
-        #     sim_df["Cooling"] = building_object["building_parameters"][
-        #         "temperature_setpoints"
-        #     ]["cooling_setback"]
-        #     sim_df.loc[sim_df["cooling control"] > 0, "Cooling"] = building_object[
-        #         "building_parameters"
-        #     ]["temperature_setpoints"]["cooling_setpoint"]
-        # else:
-        #     sim_df["Cooling"] = building_object.__getattribute__("cooling_setback")
-        #     sim_df.loc[sim_df["cooling control"] > 0, "Cooling"] = (
-        #         building_object.__getattribute__("cooling_setpoint")
-        #     )
-
         return simulation_df(simulation_df=sim_df)
     
     @classmethod
@@ -1535,21 +1315,13 @@ class ISO52016:
         Htr = Hd + Hg + Hu + Ha
         where:
         Hd: direct transmission heat transfer coefficient between the heated and cooled space and exterior trough the building envelope in W/K
-        Hg:transmission trasnfer coefficient through the ground in W/K
-        Hu:transmission heat transfer coefficent through unconditioned space
+        Hg: transmission trasnfer coefficient through the ground in W/K
+        Hu: transmission heat transfer coefficent through unconditioned space
         Ha: transmision heat transfer coefficient to adjacent buildings
         '''
 
-        # list_adj_zones = list(building_object.adj_zones.keys())
-        # adj_zones = building_object.adj_zones
-        # volume_all_zones = [] 
-        # orient_all_zones= []
-        # for zones in list_adj_zones:
-        #     orient_all_zones.append(adj_zones[zones]['orientation'])    
-        #     volume_all_zones.append(adj_zones[zones]['volume'])    
-
         '''
-        1. Dalla lista della zona termica ottenre U e area della parete a contatto con la zona non termica
+        1. From the adj_zone dictionary, get the orientation, U and area of the facade elements
         '''
         orientation_df  =pd.DataFrame({
             "name": ['NV', 'SV', 'EV', 'WV'],
@@ -1563,10 +1335,13 @@ class ISO52016:
         # --- Step 2: Extract arrays
         areas = adj_zone["area_facade_elements"].astype(float)
         U_values = adj_zone["transmittance_U_elements"].astype(float)
+        orientations = np.asarray(adj_zone["orientation_elements"], dtype=object)
 
         # --- Step 3: Boolean masks
-        mask_selected = orientation_name == orientation_name
-        mask_others = orientation_name != orientation_name
+        # mask_selected = orientation_name == orientation_name
+        # mask_others = orientation_name != orientation_name
+        mask_selected = orientations == orientation_name
+        mask_others = orientations != orientation_name
 
         # --- Step 4: Calculate sums
         '''
@@ -1580,7 +1355,7 @@ class ISO52016:
         Hd_ztu_ext = np.sum(areas[mask_others] * U_values[mask_others])
 
         '''
-        4. calcoalo perdite per ventilazione zona non termica Hve,iu e Hve,ue
+        4. Calculate ventilation losses Hve,iu and Hve,ue
         
         1) Hve,iu = rho*cp*qiu
         2) Hve,ue = rho*cp*que
@@ -1625,7 +1400,7 @@ class ISO52016:
         b_ztu_m = float(round(Hue/(Hue + Hiu),3))
 
         '''
-        Calculation of the ditribution factor for the heat transfer between thermally conditioned zone i and the adjacent thermally unconditioned zone ztu, for month m
+        Calculation of the distribution factor for the heat transfer between thermally conditioned zone i and the adjacent thermally unconditioned zone ztu, for month m
     
         if multiple thermally conditioned zones:
             F_ztc_ztu_m = H_ztc_i_ztu_m / sum(j=1 to n)(H_ztc_j_ztu)
@@ -1764,10 +1539,18 @@ class ISO52016:
             lighting_schedule_weekend,
         ):
         """
-        Crea category_profiles usando i profili definiti nel BUI se presenti.
-        Se NON ci sono profili di ventilation/heating/cooling, usa i profili
-        di OCCUPANCY di DEFAULT (in base al building_type_class).
-        Ritorna: dict category_profiles
+        Generate category_profiles using the profiles defined in the BUI if present.
+        If there are NO ventilation/heating/cooling profiles, use the default
+        OCCUPANCY profiles (based on building_type_class).
+        :param building_object: building object
+        :param occupants_schedule_workdays: occupants schedule workdays
+        :param occupants_schedule_weekend: occupants schedule weekend
+        :param appliances_schedule_workdays: appliances schedule workdays
+        :param appliances_schedule_weekend: appliances schedule weekend
+        :param lighting_schedule_workdays: lighting schedule workdays
+        :param lighting_schedule_weekend: lighting schedule weekend
+
+        :return: dict category_profiles
         """
 
         import numpy as np
@@ -1776,18 +1559,18 @@ class ISO52016:
 
         # ---------------- helpers locali ----------------
         def _get_schedule_pair_for_bt(bt_key, workdays_map, weekend_map, name):
-            """Restituisce (weekday, weekend) da dizionari default per la tipologia bt_key."""
+            """Give (weekday, weekend) from default dictionaries for the type bt_key."""
             if bt_key not in workdays_map or bt_key not in weekend_map:
-                raise KeyError(f"{name}: '{bt_key}' non presente nei profili di default.")
+                raise KeyError(f"{name}: '{bt_key}' not present in default profiles.")
             wd = np.asarray(workdays_map[bt_key], dtype=float)
             hd = np.asarray(weekend_map[bt_key], dtype=float)
             if wd.shape != (24,) or hd.shape != (24,):
-                raise ValueError(f"{name}: i profili di default devono avere 24 valori.")
+                raise ValueError(f"{name}: default profiles must have 24 values.")
             return wd, hd
 
         def _pair_from_bui(profile_dict, name):
             """
-            Se profile_dict è presente e valido, ritorna (weekday, weekend) come np.array(24).
+            If profile_dict is present and valid, returns (weekday, weekend) as np.array(24).
             Altrimenti ritorna None.
             """
             if not profile_dict:
@@ -1802,7 +1585,7 @@ class ISO52016:
             return wd, hd
 
         # ---------- OCCUPANCY ----------
-        # 1) prova a leggere dal BUI (internal_gains -> 'occupants'); 2) altrimenti usa default per bt
+        # 1) try to read from BUI (internal_gains -> 'occupants'); 2) otherwise use default for bt
         occ_entry = None
         for g in building_object["building_parameters"].get("internal_gains", []):
             if g.get("name") == "occupants":
@@ -1854,7 +1637,7 @@ class ISO52016:
             )
 
         # ---------- VENTILATION / HEATING / COOLING ----------
-        # Regola richiesta: se non ci sono profili nel BUI → usa i profili di OCCUPANCY di DEFAULT (occ_wd/occ_hd)
+        # Rule: if no profiles in the BUI → use the OCCUPANCY default profiles (occ_wd/occ_hd)
         bp = building_object["building_parameters"]
 
         # ventilation
@@ -1878,7 +1661,7 @@ class ISO52016:
         else:
             cool_wd, cool_hd = pair
 
-        # ---------- COSTRUZIONE category_profiles ----------
+        # ---------- build category_profiles ----------
         category_profiles = {
             "ventilation": {"weekday": vent_wd, "holiday": vent_hd},
             "heating":     {"weekday": heat_wd, "holiday": heat_hd},
@@ -1971,6 +1754,7 @@ class ISO52016:
             * **h_pli_eli**: ... result of function ``Conduttance_node_of_element``
 
         """
+        
         i = 1
         with tqdm(total=13) as pbar:
 
@@ -1979,21 +1763,19 @@ class ISO52016:
             # INIZIALIZATION
             if kwargs["weather_source"] == "pvgis":
                 path_weather_file_ = None
+            
             elif kwargs["weather_source"] == "epw":
-                path_weather_file_ = (
-                    kwargs["path_weather_file"]
-                    if "path_weather_file" in kwargs
-                    else None
-                )
+                path_weather_file_ = (kwargs["path_weather_file"] if "path_weather_file" in kwargs else None)
 
             sim_df = ISO52016().Weather_data_bui(building_object, path_weather_file_, weather_source=kwargs["weather_source"]).simulation_df
-
-            # sim_df = int_gains_vent.sim_df_update
             Tstepn = len(sim_df)  # number of hours to perform the simulation
 
             # Heating and cooling Load
             Phi_HC_nd_calc = np.zeros(3)  # Load of Heating or Cooling needed to heat/cool the zone - calculated
             Phi_HC_nd_act = np.zeros(Tstepn)  # Load of Heating or Cooling needed to heat/cool the zone - actual
+
+            # Name adjacent zones
+            name_adjacent_zones = [surface["name_adj_zone"] for surface in building_object["building_surface"]]
 
             # Temperature (indoor and operative)
             '''
@@ -2052,39 +1834,39 @@ class ISO52016:
                 else:
                     Type_eli[i] = "EXT"
             
-            # --- HYDRATION: imposta i coefficienti per superficie se mancanti ---
+            # --- HYDRATION: set the coefficients for the surfaces if missing ---
             if isinstance(building_object, dict):
-                # Valori tipici (ok per default robusto)
-                hci_facade = 2.5   # convettivo interno pareti
-                hci_ground = 0.7   # convettivo interno verso terreno
-                hci_roof   = 5.0   # convettivo interno coperture
-                hce_facade = 20.0  # convettivo esterno pareti
-                hce_roof   = 25.0  # convettivo esterno coperture
-                hce_ground = 4.0   # convettivo esterno terreno/adiabatico ≈ trascurabile
-                hre_int    = 5.13  # radiativo interno medio
-                hre_ext    = 5.13  # radiativo esterno medio
+                # Typical values (ok for default robust)
+                hci_facade = 2.5   # convective internal walls
+                hci_ground = 0.7   # convective internal towards ground
+                hci_roof   = 5.0   # convective internal roofs
+                hce_facade = 20.0  # convective external walls
+                hce_roof   = 25.0  # convective external roofs
+                hce_ground = 4.0   # convective external ground/adiabatic ≈ negligible
+                hre_int    = 5.13  # radiative internal
+                hre_ext    = 5.13  # radiative external
 
                 for i, surf in enumerate(building_object["building_surface"]):
                     svf = surf.get("sky_view_factor", 1)
                     tstr = surf.get("ISO52016_type_string", "EXT")
 
-                    # --- convettivo interno ---
-                    if tstr == "AD":         # adiabatico: nessuno scambio con la zona
+                    # --- convective internal ---
+                    if tstr == "AD":         # adiabatic: no exchange with the zone
                         hci = 0.0
-                    elif svf == 0:           # verso terreno
+                    elif svf == 0:           # towards ground
                         hci = hci_ground
-                    elif svf == 1:           # copertura
+                    elif svf == 1:           # roof
                         hci = hci_roof
-                    else:                    # facciata
+                    else:                    # facade
                         hci = hci_facade
                     surf.setdefault("convective_heat_transfer_coefficient_internal", hci)
 
-                    # --- radiativo interno ---
+                    # --- radiative internal ---
                     surf.setdefault("radiative_heat_transfer_coefficient_internal", hre_int)
 
-                    # --- convettivo esterno ---
+                    # --- convective external ---
                     if tstr == "AD":
-                        hce = 0.0            # lato "esterno" non esiste per AD: annulliamo
+                        hce = 0.0            # external side does not exist for AD: we cancel it
                     elif Type_eli[i] == "GR":
                         hce = hce_ground
                     elif svf == 1:
@@ -2093,7 +1875,7 @@ class ISO52016:
                         hce = hce_facade
                     surf.setdefault("convective_heat_transfer_coefficient_external", hce)
 
-                    # --- radiativo esterno ---
+                    # --- radiative external ---
                     surf.setdefault("radiative_heat_transfer_coefficient_external", hre_ext)
 
             #
@@ -2119,90 +1901,83 @@ class ISO52016:
             pbar.update(1)
 
             # Orientation and tilt
-            if isinstance(building_object, dict):
-                # 1) Assign the orientation string to all surfaces (without aggregating here)
-                orientation_elements = np.empty(bui_eln, dtype=object)
-                for i, surf in enumerate(building_object["building_surface"]):
-                    azimuth = float(surf["orientation"]["azimuth"])
-                    tilt = float(surf["orientation"]["tilt"])
+        
+            # 1) Assign the orientation string to all surfaces (without aggregating here)
+            orientation_elements = np.empty(bui_eln, dtype=object)
+            for i, surf in enumerate(building_object["building_surface"]):
+                azimuth = float(surf["orientation"]["azimuth"])
+                tilt = float(surf["orientation"]["tilt"])
 
-                    # Tolerances for robustness
-                    def is_close(x, target, tol=1e-6):
-                        return abs(x - target) <= tol
+                # Tolerances for robustness
+                def is_close(x, target, tol=1e-6):
+                    return abs(x - target) <= tol
 
-                    if is_close(tilt, 0.0):
-                        orientation_elements[i] = "HOR"
-                    elif is_close(tilt, 90.0):
-                        # normalizza azimuth in [0, 360)
-                        az = azimuth % 360.0
-                        if is_close(az, 0.0) or is_close(az, 360.0):
-                            orientation_elements[i] = "NV"
-                        elif is_close(az, 90.0):
-                            orientation_elements[i] = "EV"
-                        elif is_close(az, 180.0):
-                            orientation_elements[i] = "SV"
-                        elif is_close(az, 270.0):
-                            orientation_elements[i] = "WV"
-                        else:
-                            # fallback: choose the closest cardinal point
-                            # (NV=0, EV=90, SV=180, WV=270)
-                            candidates = np.array([0.0, 90.0, 180.0, 270.0])
-                            labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
-                            orientation_elements[i] = labels[np.argmin(np.abs((az - candidates) % 360.0))]
+                if is_close(tilt, 0.0):
+                    orientation_elements[i] = "HOR"
+                elif is_close(tilt, 90.0):
+                    # normalizza azimuth in [0, 360)
+                    az = azimuth % 360.0
+                    if is_close(az, 0.0) or is_close(az, 360.0):
+                        orientation_elements[i] = "NV"
+                    elif is_close(az, 90.0):
+                        orientation_elements[i] = "EV"
+                    elif is_close(az, 180.0):
+                        orientation_elements[i] = "SV"
+                    elif is_close(az, 270.0):
+                        orientation_elements[i] = "WV"
                     else:
-                        # if tilt is not exactly 0 or 90, decide the logic (here we map for threshold)
-                        orientation_elements[i] = "HOR" if tilt < 45.0 else "NV"
+                        # fallback: choose the closest cardinal point
+                        # (NV=0, EV=90, SV=180, WV=270)
+                        candidates = np.array([0.0, 90.0, 180.0, 270.0])
+                        labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
+                        orientation_elements[i] = labels[np.argmin(np.abs((az - candidates) % 360.0))]
+                else:
+                    # if tilt is not exactly 0 or 90, decide the logic (here we map for threshold)
+                    orientation_elements[i] = "HOR" if tilt < 45.0 else "NV"
 
-                    surf["ISO52016_orientation_string"] = orientation_elements[i]
+                surf["ISO52016_orientation_string"] = orientation_elements[i]
 
-                # 2) Aggregate (once only) and recalculate helpers
-                building_object = ISO52016()._aggregate_surfaces_by_direction(building_object)
+            # 2) Aggregate (once only) and recalculate helpers
+            building_object = ISO52016()._aggregate_surfaces_by_direction(building_object)
 
-                # 3) Reconstruct helpers after aggregation
-                bui_eln = len(building_object["building_surface"])
-                typology_elements = np.array([s["ISO52016_type_string"] for s in building_object["building_surface"]], dtype=object)
-                Type_eli = ["EXT" if t not in ("GR", "ADJ", "AD") else t for t in typology_elements]
-                orientation_elements = np.array([s["ISO52016_orientation_string"] for s in building_object["building_surface"]], dtype=object)
-
-                area_elements = np.array([float(s["area"]) for s in building_object["building_surface"]], dtype=float)
-                area_elements_tot = float(np.sum(area_elements))
-
-                heat_convective_elements_internal = np.array(
+            # 3) Reconstruct helpers after aggregation
+            bui_eln = len(building_object["building_surface"])
+            typology_elements = np.array([s["ISO52016_type_string"] for s in building_object["building_surface"]], dtype=object)
+            Type_eli = ["EXT" if t not in ("GR", "ADJ", "AD") else t for t in typology_elements]
+            orientation_elements = np.array([s["ISO52016_orientation_string"] for s in building_object["building_surface"]], dtype=object)
+            heat_convective_elements_internal = np.array(
                     [s["convective_heat_transfer_coefficient_internal"] for s in building_object["building_surface"]],
                     dtype=float
-                )
-                heat_radiative_elements_internal = np.array(
-                    [s["radiative_heat_transfer_coefficient_internal"] for s in building_object["building_surface"]],
-                    dtype=float
-                )
-                heat_convective_elements_external = np.array(
-                    [s["convective_heat_transfer_coefficient_external"] for s in building_object["building_surface"]],
-                    dtype=float
-                )
-                heat_radiative_elements_external = np.array(
-                    [s["radiative_heat_transfer_coefficient_external"] for s in building_object["building_surface"]],
-                    dtype=float
-                )
+            )
+            heat_radiative_elements_internal = np.array(
+                [s["radiative_heat_transfer_coefficient_internal"] for s in building_object["building_surface"]],
+                dtype=float
+            )
+            heat_convective_elements_external = np.array(
+                [s["convective_heat_transfer_coefficient_external"] for s in building_object["building_surface"]],
+                dtype=float
+            )
+            heat_radiative_elements_external = np.array(
+                [s["radiative_heat_transfer_coefficient_external"] for s in building_object["building_surface"]],
+                dtype=float
+            )
 
-                g_gl_wi_t = np.array(
-                    [float(s.get("g_value", 0.0)) if s["type"] == "transparent" else 0.0
-                    for s in building_object["building_surface"]],
-                    dtype=float
-                )
+            g_gl_wi_t = np.array(
+                [float(s.get("g_value", 0.0)) if s["type"] == "transparent" else 0.0
+                for s in building_object["building_surface"]],
+                dtype=float
+            )
 
-                sky_factor_elements = np.array(
-                    [float(s.get("sky_view_factor", 0.0)) for s in building_object["building_surface"]],
-                    dtype=float
-                )
-            else:
-                orientation_elements = np.array(building_object.orientation_elements)
+            sky_factor_elements = np.array(
+                [float(s.get("sky_view_factor", 0.0)) for s in building_object["building_surface"]],
+                dtype=float
+            )    
+            area_elements = np.array([float(s["area"]) for s in building_object["building_surface"]], dtype=float)
+            area_elements_tot = float(np.sum(area_elements))
 
-            # orientation_elements = np.array(
-            #     building_object.__getattribute__("orientation_elements")
-            # )
             pbar.update(1)
 
-            # External temperature ... (to be cheked)
+            # External temperature ... (to be checked)
             theta_sup = sim_df["T2m"]
             
             # Thermal capacity of the internal environmnet of the thermal zone
@@ -2238,25 +2013,20 @@ class ISO52016:
             Theta_old = 20 * np.ones(nodes.Rn)
             VecB = 20 * np.ones((nodes.Rn, 3))
 
-            # mask_has_surface = np.array([nodes.Pln[Eli] > 0 for Eli in range(bui_eln)])
-            mask_has_surface = np.array([nodes.Pln[Eli] > 0 for Eli in range(bui_eln)])
-            # Total Area of internal surfaces
-            area_int_surfaces_tot = float(np.sum(np.array(area_elements)[mask_has_surface]))
-            if area_int_surfaces_tot == 0:
-                # fallback, avoid division by zero (should not happen in real cases)
-                area_int_surfaces_tot = 1.0
-            # Internal convective coefficients per surface (already assigned above)
-            heat_convective_elements_internal = [
-                surf["convective_heat_transfer_coefficient_internal"]
-                for surf in building_object["building_surface"]
-            ]
-            # Sum "macro" of the internal convective contributions ONLY on the surfaces with node
-            Ah_ci = float(
-                np.dot(
-                    np.array(area_elements)[mask_has_surface],
-                    np.array(heat_convective_elements_internal)[mask_has_surface],
-                )
-            )
+            surf_has_node = np.array([nodes.Pln[Eli] > 0 for Eli in range(bui_eln)], dtype=bool)
+            surf_int_row  = np.full(bui_eln, -1, dtype=int)
+            for Eli in range(bui_eln):
+                if surf_has_node[Eli]:
+                    # Index of internal node of surface Eli
+                    surf_int_row[Eli] = nodes.PlnSum[Eli] + nodes.Pln[Eli]
+
+            # Total area of internal surfaces
+            area_int_surfaces_tot = float(area_elements[surf_has_node].sum()) or 1.0
+
+            # Sum convective internal towards air (only surfaces with node)
+            Ah_ci = float((area_elements[surf_has_node] *
+                        heat_convective_elements_internal[surf_has_node]).sum())
+
             pbar.update(1)
 
             # Temperature ground and thermal bridges
@@ -2278,7 +2048,7 @@ class ISO52016:
             pbar.update(1)
 
         # ------------------------------------------------------------------
-        # LUMP CAPACITY: aggiungi una volta sola la capacità dei piani AD
+        # LUMP CAPACITY: add once only the capacity of the AD floors
         # ------------------------------------------------------------------
         if isinstance(building_object, dict):
             for _surf in building_object["building_surface"]:
@@ -2291,8 +2061,16 @@ class ISO52016:
         heating or cooling load, ΦHC;ld;ztc;t, is calculated using the following step-wise procedure: 
         """
         H_ve_nat_all = [0]
-        theta_ztu = np.zeros(Tstepn)
-        theta_ztu[0] = 15
+        # Time step for indoor temperature in adjacent zones
+        if building_object['building']['adj_zones_present']:
+            list_adj_zones = building_object['building']['number_adj_zone']
+            if list_adj_zones == 1:
+                theta_ztu = np.zeros(Tstepn)
+                theta_ztu[0] = 15
+            elif list_adj_zones > 1:
+                theta_ztu = np.zeros((Tstepn, list_adj_zones))
+                theta_ztu[:2] = 15
+                
         
         # Generate profiles
         category_profiles = ISO52016().generate_category_profile(
@@ -2335,9 +2113,9 @@ class ISO52016:
         #                                 title="Annual Profiles — Daily Average")
         # fig_day.show()
                             
-        # === ACCUMULATORI PER SANKEY (Wh) ===
-        dt_h = 1.0  # ore per timestep (Dtime è in s)
-        # NB: gli accumulatori verranno azzerati prima dell'indice di inizio analisi (dopo warm-up)
+        # === ACCUMULATORS FOR SANKEY (Wh) ===
+        dt_h = 1.0  # hours per timestep (Dtime is in s)
+        # NB: the accumulators will be reset before the start index of the analysis (after warm-up)
         E_solar_Wh = 0.0
         E_internal_Wh = 0.0
         E_heating_Wh = 0.0
@@ -2348,10 +2126,10 @@ class ISO52016:
         E_storage_Wh = 0.0
 
         # ------------------------------------------------------------------
-        # CAPACITÀ DI STATO (J/K) allineata ai nodi dell’equazione
+        # STATE CAPACITY (J/K) aligned to the nodes of the equation
         # ------------------------------------------------------------------
         C_state = np.zeros(nodes.Rn, dtype=float)
-        C_state[0] = float(C_int)  # nodo aria+arredi (+ AD già lumpati)
+        C_state[0] = float(C_int)  # node air+furniture (+ AD already lumped)
         for Eli in range(bui_eln):
             n_nodes = nodes.Pln[Eli]
             if n_nodes == 0:
@@ -2360,10 +2138,10 @@ class ISO52016:
                 ri_state = 1 + nodes.PlnSum[Eli] + Pli
                 C_state[ri_state] = float(kappa_pli_eli[Pli, Eli])
 
-        # Stato precedente per lo storage (°C): inizializzato UNA VOLTA SOLA
+        # Previous state for storage (°C): initialized ONCE
         Theta_prev_state = np.full(nodes.Rn, 20.0, dtype=float)
 
-        # --- nuove strutture per TRASMISSIONI per elemento (solo OP e W) ---
+        # --- new structures for TRASMISSIONS per element (only OP and W) ---
         surface_names = [surf["name"] for surf in building_object["building_surface"]]
         surface_types  = [surf["ISO52016_type_string"] for surf in building_object["building_surface"]]
         E_trans_loss_by_surface_Wh = {name: 0.0 for name in surface_names}  # riempiamo solo per OP/W
@@ -2379,8 +2157,7 @@ class ISO52016:
         # ------------------------------------------------------------------
         # ESCLUDI IL MESE DI WARM-UP DAL SANKEY
         # ------------------------------------------------------------------
-        start_idx = 0  # 31d * 24h = 744 (da 1 Gennaio, se Dicembre è warm-up)
-        # reset degli accumulatori per non includere il warm-up
+        start_idx = 0  # 31d * 24h = 744 (from 1 January, if December is warm-up)
         E_solar_Wh = 0.0
         E_internal_Wh = 0.0
         E_heating_Wh = 0.0
@@ -2470,8 +2247,8 @@ class ISO52016:
 
                     VecB = np.zeros((nodes.Rn, 3))
                     MatA = np.zeros((nodes.Rn, nodes.Rn))
-                    Phi_sol_dir_zt_t = 0
-
+                    Phi_sol_dir_zt_t = 0 # inizialize solar gain
+ 
                     # Solar  heat gain source inside the thermal zone 6.5.13.2
                     for Eli in range(bui_eln):
                         
@@ -2567,9 +2344,22 @@ class ISO52016:
                         phi_gn_dir_ztu = phi_int_gains_unc_zone + phi_solar_gains_unc_zone
                     
                         ## CASE OF SINGLE UNCONDITIONED ZONE
-                        adj_zone = building_object['adjacent_zones'][0]
-                        H_ztu, b_ztu, F_ztc_ztu_m =ISO52016().transmission_heat_transfer_coefficient_ISO13789(adj_zone)
-
+                        if list_adj_zones == 1:
+                            adj_zone = building_object['adjacent_zones'][0]
+                            H_ztu, b_ztu, F_ztc_ztu_m =ISO52016().transmission_heat_transfer_coefficient_ISO13789(adj_zone)
+                        else: 
+                            H_ztu_zones = np.zeros((4, list_adj_zones))
+                            name_zones = []
+                            for i in range(list_adj_zones):
+                                adj_zone = building_object['adjacent_zones'][i]
+                                H_ztu, b_ztu, F_ztc_ztu_m =ISO52016().transmission_heat_transfer_coefficient_ISO13789(adj_zone)
+                                H_ztu_zones[0, i] = H_ztu
+                                H_ztu_zones[1, i] = b_ztu
+                                H_ztu_zones[2, i] = F_ztc_ztu_m
+                                H_ztu_zones[3, i] = adj_zone['orientation_zone']['azimuth']
+                                name_zones.append(adj_zone['name'])
+                            H_ztu_zones_df = pd.DataFrame(H_ztu_zones, columns=name_zones, index = ['H_ztu', 'b_ztu', 'F_ztc_ztu_m', 'orientation'])
+                            
                     # ---------------------------------------------------------------------------
                     # Internal gains conditioned and unconditioned zones
                     if building_object['building']['adj_zones_present']:
@@ -2659,6 +2449,27 @@ class ISO52016:
                         MatA[ri, ci] -= (area_elements[Eli]* heat_convective_elements_internal[Eli])
                     # ==================================================================
 
+                    # ========================================
+                    # Temperature of unconditioned space (if any)
+                    # ========================================
+                    if building_object['building']['adj_zones_present']:
+                        c_ztu_h_max = 1 # from table B.16 
+                        if Tstepi >0:
+                            # Single zones
+                            if list_adj_zones == 1:
+                                theta_ztu_t = (Theta_int_op[Tstepi-1,0] - b_ztu*(Theta_int_op[Tstepi-1,0] - sim_df["T2m"].iloc[Tstepi]) + (phi_gn_dir_ztu/H_ztu))                        
+                                theta_ztu_t_checked =min(sim_df["T2m"].iloc[Tstepi] + c_ztu_h_max*(Theta_int_op[Tstepi-1,0] - sim_df["T2m"].iloc[Tstepi]), theta_ztu_t)
+                                theta_ztu[Tstepi] = theta_ztu_t_checked
+                            
+                            # Multiple zones
+                            elif list_adj_zones > 1:
+                                for z in range(list_adj_zones):
+                                    zone = building_object['adjacent_zones'][z]
+                                    H_ztu = H_ztu_zones_df.loc['H_ztu'][zone['name']]
+                                    theta_ztu_t = (Theta_int_op[Tstepi-1,0] - b_ztu*(Theta_int_op[Tstepi-1,0] - sim_df["T2m"].iloc[Tstepi]) + (phi_gn_dir_ztu/H_ztu))
+                                    theta_ztu_t_checked =min(sim_df["T2m"].iloc[Tstepi] + c_ztu_h_max*(Theta_int_op[Tstepi-1,0] - sim_df["T2m"].iloc[Tstepi]), theta_ztu_t)
+                                    theta_ztu[Tstepi,z] = theta_ztu_t_checked
+                        theta_ztu_df = pd.DataFrame(theta_ztu, columns=H_ztu_zones_df.columns.tolist())
 
                     for Eli in range(bui_eln):
                         n_nodes = nodes.Pln[Eli]
@@ -2710,7 +2521,13 @@ class ISO52016:
                                     phi_sky_eli_t = 0
                                     a_sol_pli_eli = 0
                                     '''
-                                    XTemp = ((heat_convective_elements_external[Eli]+ heat_radiative_elements_external[Eli]) * theta_ztu[Tstepi]) 
+                                    if building_object['building']['adj_zones_present']:
+                                        list_adj_zones = building_object['building']['number_adj_zone']
+                                        if list_adj_zones > 1:
+                                            name_adj_zone = name_adjacent_zones[Eli]
+                                            XTemp = ((heat_convective_elements_external[Eli]+ heat_radiative_elements_external[Eli]) * theta_ztu_df[name_adj_zone].iloc[Tstepi]) 
+                                        else:
+                                            XTemp = ((heat_convective_elements_external[Eli]+ heat_radiative_elements_external[Eli]) * theta_ztu[Tstepi]) 
                                     
                                     for cBi in range(nrHCmodes):
                                         VecB[ri, cBi] += XTemp                                    
@@ -2731,7 +2548,7 @@ class ISO52016:
                                 Area_ratio = 0.0
                                 for Elk in range(bui_eln):
                                     if nodes.Pln[Elk] == 0:
-                                        continue  # nessun nodo interno -> nessuno scambio radiativo con la zona
+                                        continue  # no internal node -> no radiative exchange with the zone
                                     Plk = nodes.Pln[Elk] - 1
                                     ck = 1 + nodes.PlnSum[Elk] + Plk
                                     Area_ratio += area_elements[Elk] / area_int_surfaces_tot
@@ -2785,65 +2602,36 @@ class ISO52016:
                         np.set_printoptions(precision=3, suppress=True)
                         print("MatA diagonal:", np.diag(MatA))
                     
-                    # Ridge on diagonal se mal condizionata
-                    diag_min = np.max([1e-6, 1e-9 * np.linalg.norm(MatA, ord=np.inf)])
-                    if np.linalg.matrix_rank(MatA) < MatA.shape[0]:
-                        for d in range(MatA.shape[0]):
-                            MatA[d, d] += diag_min
-
-                    # safety anche quando il rank sembra ok ma i valori sono piccoli
-                    if np.min(np.abs(np.diag(MatA))) < diag_min:
-                        for d in range(MatA.shape[0]):
-                            MatA[d, d] = max(MatA[d, d], diag_min)
-
+                    # --- Safe diagonal regularization (avoid read-only error) ---
+                    diag_min = max(1e-6, 1e-9 * np.linalg.norm(MatA, ord=np.inf))
+                    d = np.diag(MatA).copy()
+                    np.maximum(d, diag_min, out=d)
+                    np.fill_diagonal(MatA, d)
+                    # -------------------------------------------------------------
                     theta = np.linalg.solve(MatA, VecB)
                     VecB = theta
                     
                     # Air Temperature
                     Theta_int_air[Tstepi, :] = VecB[0, :]
                     
-                    # --- Mean Radiant Temperature (solo superfici con nodo interno) ---
+                    # --- Mean Radiant Temperature (only internal surfaces) ---
                     Theta_int_r_mn[Tstepi, :] = 0.0
                     A_sum = 0.0
                     for Eli in range(bui_eln):
                         n_nodes_Eli = nodes.Pln[Eli]
                         if n_nodes_Eli == 0:
-                            continue  # esclude AD e qualunque superficie senza nodo
-                        ri_surf = nodes.PlnSum[Eli] + n_nodes_Eli  # indice del nodo superficiale interno dell'elemento Eli
+                            continue  # exclude AD and any surface without node
+                        ri_surf = nodes.PlnSum[Eli] + n_nodes_Eli  # index of internal node of surface Eli
                         Theta_int_r_mn[Tstepi, :] += area_elements[Eli] * VecB[ri_surf, :]
                         A_sum += area_elements[Eli]
 
-                    # usa SOLO l’area delle superfici con nodo; fallback per sicurezza
+                    # uses ONLY the area of internal surfaces; fallback for safety
                     if A_sum == 0.0:
                         A_sum = 1.0
                     Theta_int_r_mn[Tstepi, :] /= A_sum
 
-                    # # Mean Radiant Temperature
-                    # Theta_int_r_mn[Tstepi, :] = 0
-                    # for Eli in range(bui_eln):
-                    #     ri = nodes.PlnSum[Eli] + n_nodes
-                    #     Theta_int_r_mn[Tstepi, :] += area_elements[Eli] * VecB[ri, :]
-                    # Theta_int_r_mn[Tstepi, :] /= area_elements_tot
-                    
                     # Operative Temperature
                     Theta_int_op[Tstepi, :] = 0.5 * (Theta_int_air[Tstepi, :] + Theta_int_r_mn[Tstepi, :])
-
-                    # ========================================
-                    # Temperature of unconditioned space (if any)
-                    # ========================================
-                    if building_object['building']['adj_zones_present']:
-                        if Tstepi >1:
-                            c_ztu_h_max = 1 # from table B.16 
-                            theta_ztu_t = (Theta_int_op[Tstepi-1,0] - b_ztu*(Theta_int_op[Tstepi-1,0] - sim_df["T2m"].iloc[Tstepi]) + (phi_gn_dir_ztu/H_ztu))                        
-                            theta_ztu_t_checked =min(sim_df["T2m"].iloc[Tstepi] + c_ztu_h_max*(Theta_int_op[Tstepi-1,0] - sim_df["T2m"].iloc[Tstepi]), theta_ztu_t)
-                            theta_ztu[Tstepi] = theta_ztu_t_checked
-                        
-                        # pd.DataFrame(theta_ztu).to_csv("theta_ztu.csv", index=False)
-                        # pd.DataFrame(sim_df["T2m"]).to_csv("T2m.csv", index=False)
-                        # df_ext_temp = pd.DataFrame(sim_df["T2m"])
-                        # pd.concat([df_ext_temp, pd.DataFrame(theta_ztu)], axis=1)
-                    
-                    
                                         
                     '''
                     STEP 2: ISO 
@@ -2912,43 +2700,43 @@ class ISO52016:
                 # =========================
                 dt_h = float(Dtime[Tstepi]) / 3600.0
 
-                # 1) Storage (aria + involucro)
+                # 1) Storage (air + envelope)
                 Theta_curr_state = VecB[:, colB_act]
                 dTheta_state = Theta_curr_state - Theta_prev_state
                 E_storage_Wh += float(np.dot(C_state, dTheta_state)) / 3600.0
                 Theta_prev_state = Theta_curr_state
 
-                # 2) Input diretti
+                # 2) Direct inputs
                 phi_solar = float(Phi_sol_dir_zt_t)
                 phi_int   = float(int_gains)
                 E_solar_Wh    += phi_solar * dt_h
                 E_internal_Wh += phi_int   * dt_h
 
-                # 3) Heating/Cooling (usa carico *attuale*)
+                # 3) Heating/Cooling (uses current load)
                 phi_hc = float(Phi_HC_nd_act[Tstepi])
                 if   phi_hc > 0: E_heating_Wh +=  phi_hc * dt_h
                 elif phi_hc < 0: E_cooling_Wh += (-phi_hc) * dt_h
 
-                # 4) Ventilazione
+                # 4) Ventilation
                 T_in  = float(Theta_int_air[Tstepi, 0])
                 T_out = float(sim_df["T2m"].iloc[Tstepi])
                 q_vent = float(H_ve_nat) * (T_in - T_out)
                 if q_vent > 0:  E_vent_loss_Wh += q_vent * dt_h
                 else:           E_solar_Wh     += (-q_vent) * dt_h
 
-                # 5) Ponti termici
+                # 5) Thermal bridges
                 q_tb = float(t_Th.thermal_bridge_heat) * (T_in - T_out)
                 if q_tb > 0:  E_tb_loss_Wh += q_tb * dt_h
                 else:         E_solar_Wh   += (-q_tb) * dt_h
 
-                # 6) Suolo
+                # 6) Ground
                 T_gr = float(t_Th.Theta_gr_ve[sim_df.index.month[Tstepi] - 1])
                 R_gr = float(t_Th.R_gr_ve) if float(t_Th.R_gr_ve) != 0 else 1e9
                 q_ground = (T_in - T_gr) / R_gr
                 if q_ground > 0:  E_ground_loss_Wh += q_ground * dt_h
                 else:             E_solar_Wh       += (-q_ground) * dt_h
 
-                # 7) Trasmissioni per elemento (OP, W)
+                # 7) Transmission for element (OP, W)
                 T_air = float(Theta_int_air[Tstepi, 0])
                 T_rad = float(Theta_int_r_mn[Tstepi, 0])
                 for Eli in range(bui_eln):
@@ -2973,39 +2761,39 @@ class ISO52016:
             n_w=n_w+1
 
         # =========================
-        #  CHIUSURA BILANCIO
+        #  Close balance
         # =========================
         Tstep_first_act = start_idx  # = 744 (dopo warm-up)
 
-        # clamp numerico per evitare -0.0 o microscopici negativi
+        # numeric clamp to avoid -0.0 or microscopically negative values
         def _clamp(x: float) -> float:
             return 0.0 if abs(x) < 1e-9 else x
 
-        # input totali (Wh)
+        # total inputs (Wh)
         inputs_Wh = _clamp(E_heating_Wh) + _clamp(E_internal_Wh) + _clamp(E_solar_Wh)
 
-        # perdite per trasmissione per elemento (Wh)
+        # total losses (Wh)
         E_transmission_surfaces_Wh = sum(max(0.0, v) for v in E_trans_loss_by_surface_Wh.values())
 
-        # output totali (Wh)
+        # total outputs (Wh)
         outputs_Wh = (
-            _clamp(E_cooling_Wh)      # energia estratta
-            + _clamp(E_vent_loss_Wh)  # ventilazione
-            + _clamp(E_tb_loss_Wh)    # ponti termici
-            + _clamp(E_ground_loss_Wh)# suolo
-            + _clamp(E_transmission_surfaces_Wh)  # trasmissioni OP/W
+            _clamp(E_cooling_Wh)      # extracted energy
+            + _clamp(E_vent_loss_Wh)  # ventilation
+            + _clamp(E_tb_loss_Wh)    # thermal bridges
+            + _clamp(E_ground_loss_Wh)# ground
+            + _clamp(E_transmission_surfaces_Wh)  # transmission OP/W
         )
 
-        # residuo di bilancio (Wh)
+        # balance residual (Wh)
         E_transmission_residual_Wh = inputs_Wh - outputs_Wh - _clamp(E_storage_Wh)
 
-        # se il residuo è piccolo (<1% degli input) lo assorbo nello storage per chiudere il bilancio
+        # if the residual is small (<1% of the input) I absorb it into the storage to close the balance
         if inputs_Wh > 0 and abs(E_transmission_residual_Wh) < 0.01 * inputs_Wh:
             E_storage_Wh += E_transmission_residual_Wh
             E_transmission_residual_Wh = 0.0
 
         # =========================
-        #  DATI PER SANKEY
+        #  DATA FOR SANKEY
         # =========================
         sankey_inputs = {
             "Heating": _clamp(E_heating_Wh),
@@ -3020,22 +2808,22 @@ class ISO52016:
             "Ground": _clamp(E_ground_loss_Wh),
         }
 
-        # aggiungi trasmissioni per ogni elemento (solo rami positivi)
+        # add transmission for each element (only positive branches)
         for name, E_Wh in E_trans_loss_by_surface_Wh.items():
             if E_Wh > 0:
                 sankey_outputs[f"Transmission - {name}"] = _clamp(E_Wh)
 
-        # se vuoi visualizzare un residuo non nullo (caso patologico)
+        # display a non-zero residual (pathological case)
         if E_transmission_residual_Wh > 0:
             sankey_outputs["Transmission (residual)"] = _clamp(E_transmission_residual_Wh)
 
         sankey_data = {
             "inputs": sankey_inputs,
             "outputs": sankey_outputs,
-            "energy_accumulated_zone": _clamp(E_storage_Wh),  # può non essere zero su base oraria, ~0 su base annua
+            "energy_accumulated_zone": _clamp(E_storage_Wh),  # can be non-zero on hourly basis, ~0 on annual basis
         }
 
-        # check numerico
+        # numeric check
         _inputs = inputs_Wh
         _outs_plus_storage = outputs_Wh + _clamp(E_storage_Wh)
         _res = _inputs - _outs_plus_storage
@@ -3043,7 +2831,7 @@ class ISO52016:
         print(f"SANKEY CHECK  inputs={_inputs:.1f}  outputs+storage={_outs_plus_storage:.1f}  residual={_res:.1f} Wh ({100*_rel:.3f}%)")
 
         # =========================
-        #  RISULTATI ORARI E ANNUI
+        #  HOURLY AND ANNUAL RESULTS
         # =========================
         hourly_results = pd.DataFrame(
             data=np.vstack(
@@ -3057,7 +2845,7 @@ class ISO52016:
             columns=["Q_HC", "T_op", "T_ext"],
         )
 
-        # separa H/C
+        # separate H/C
         hourly_results["Q_H"] = 0.0
         hourly_results.loc[hourly_results["Q_HC"] > 0, "Q_H"] = hourly_results.loc[hourly_results["Q_HC"] > 0, "Q_HC"]
 
@@ -3076,14 +2864,8 @@ class ISO52016:
         }
         annual_results_df = pd.DataFrame([annual_results_dic])
 
-        # (se vuoi esportare)
-        # hourly_results.to_csv("hourly_results.csv")
-        # annual_results_df.to_csv("annual_results_df_new.csv")
-
         # Sankey
         fig = plot_sankey_building(sankey_data)
         fig.show()
 
         return hourly_results, annual_results_df
-
-    

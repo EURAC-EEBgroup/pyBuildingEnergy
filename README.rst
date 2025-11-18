@@ -61,6 +61,27 @@ Domestic Hot Water - DHW
 - [] Assessment of thermal load based on the type of DHW system
 
 
+Primary Energy - Heating system
+--------------------------------
+
+The ISO EN 15316 series covers the calculation method for system energy requirements and system efficiencies. This family of standards is an integral part of the EPB set and covers:
+
+### **ISO EN 15316 Modular Structure:**
+
+- [x] ISO EN 15316-1**: General and expression of energy performance (Modules M3-1, M3-4, M3-9, M8-1, M8-4)
+- [ ] ISO EN 15316-2**: Emission systems (heating and cooling)
+- [ ] ISO EN 15316-3**: Distribution systems (DHW, heating, cooling)
+- [ ] ISO EN 15316-4-X**: Heat generation systems:
+    - 4-1: Combustion boilers
+    - 4-2: Heat pumps
+    - 4-3: Solar thermal and photovoltaic systems
+    - 4-4: Cogeneration systems
+    - 4-5: District heating
+    - 4-7: Biomass
+- [ ] ISO EN 15316-5**: Storage systems
+
+For space heating, applicable standards include ISO EN 15316-1, ISO EN 15316-2-1, ISO EN 15316-2-3 and the appropriate parts of ISO EN 15316-4 depending on the system type, including losses and control aspects.
+
 Limitations
 ------------
 The library is developed with the intent of demonstrating specific elements of calculation procedures in the relevant standards. It is not intended to replace the regulations but to complement them, as the latter are essential for understanding the calculation. 
@@ -78,305 +99,16 @@ The following command will install the latest pyBuildinEnergy library
 
     pip install pybuildingenergy
 
+::
 
-The tool allows you to evaluate the performance of buildings in different ways: 
-
-* by running simulations of buildings (archetypes) already preloaded in the archetypes.pickle file for different nations according to Tabula dataset (currently only Italian buildings are available, but buildings from different nations will be loaded), 
-
-  ::
-
-      python3 pybuildingenergy --archetype
-
-
-Here it is possible, to select two options:
-  
-
-  . Selection of archetype by providing
-  
-    * information on building type: single_family_house 
-    * period of construction: before 1900, 1901-1920,1921-1945,1946-1960,1961-1875,1976-1990,1991-2005,2006-today 
-    * location: 
-        **latitude** and **longitude**
-
-  . Demo Building having these features: 
-
-     * single_family_house
-     * before 1900,
-     * city: Turin
-     * lat: 45.071321703968124
-     * long: 7.642963669564985
-    
-
-* by running best_test600 demo:
-
-  ::
-
-      python3 pybuildingenergy --best_test
-
-
-* your own building.  For the latter, you can either upload the information from scratch or preload the information from a building archetype and then edit only the information you know.
-  
-  See `Examples <https://github.com/EURAC-EEBgroup/pyBuildingEnergy/tree/master/examples>`_ folder
-  
-
-
-Building Inputs
+Building - System Inputs
 ----------------
-
-.. list-table:: Building geometry data * general
-   :widths: 20 20 40 10 10 
-   :header-rows: 1
-
-   * - Parameter
-     - Key
-     - Description
-     - Unit
-     - Mandatory
-   * - **Latitude**
-     - latitude
-     - latitude of the building in [decimal] 
-     - [-]
-     - YES
-   * - **Longitude**
-     - longitude
-     - longitude of the building location [decimal]
-     - [-].
-     - YES
-   * - **Coldest month**
-     - coldest_month
-     - Define the coldest month of the building location. Value from 1 (January) to 12 (December)
-     - [-].
-     - YES. Default: 1
-   * - **Gross building area**
-     - a_use
-     - gross floor area of the building
-     - [m2]
-     - YES
-   * - **Slab on ground area** 
-     - slab_on_ground_area
-     - Ground floor gross area
-     - [m2]
-     - If not provided, the slab on ground are is calculated as useful area / number of floors
-   * - **Number of floors**
-     - number_of_floor
-     - Number of building floors 
-     - [-]
-     - YES/NO if number of floors is provided
-   * - **Building perimeter**
-     - exposed_perimeter
-     - perimeter of the building
-     - [m]
-     - YES/NO iIf not provided, the perimeter is calculated as if the building were rectangular with one side being 10 meters
-   * - **Building height**
-     - height
-     - external height of the building
-     - [m]
-     - YES
-   * - **Average thickness of wall**
-     - wall_thickness
-     - average thickness of building walls 
-     - [m]
-     - YES
-   * - **Surface of envelope**
-     - surface_envelope
-     - gross volume of the building 
-     - [m3]
-     - If not provided the volume is calcuated as the slab on ground area * building height
-   * - **Volume**
-     - volume
-     - gross volume of the building 
-     - [m3]
-     - If not provided the volume is calcuated as the slab on ground area * building height
-   * - **Annual mean internal temperature**
-     - annual_mean_internal_temperature
-     - the annual mean internal temperature is the average between Heating and Cooling setpoints
-     - [°C]
-     - NO: if not provided, it is calculated.
-   * - **Annual mean external temperature**
-     - annual_mean_external_temperature
-     - Annual mean axternal temperature of the building location
-     - [°C]
-     - NO: if not provided, it is calculated.
-   * - **Heating system**
-     - heating_mode
-     - True if heating system is installed, False if not.
-     - [True or False]
-     - YES
-   * - **Cooling system**
-     - cooling-mode
-     - True if heating system is installed, False if not.
-     - [True or False]
-     - YES 
-   * - **Heating setpoint**
-     - heating_setpoint
-     - Temperature set-point of the heating system
-     - [°C]
-     - YES. If `heating_mode` is True
-   * - **Cooling setpoint**
-     - cooling_setpoint
-     - Temperature set-point of the cooling system
-     - [°C]
-     - YES. If `cooling_mode` is True
-   * - **Heating setback**
-     - heating_setback
-     - Temperature set-back of the heating system
-     - [°C]
-     - YES. If `heating_mode` is True
-   * - **Cooling setback**
-     - cooling_setback
-     - Temperature set-back of the cooling system
-     - [°C]
-     - YES. If `cooling_mode` is True
-   * - **Max power of heating generator**
-     - power_heating_max
-     - max power of heating generator
-     - [W]
-     - YES. If `heating_mode` is True
-   * - **Max power of cooling generator**
-     - power_cooling_max
-     - max power of cooling generator
-     - [W]
-     - YES. If `cooling_mode` is True
-   * - **Air change rate**
-     - air_change_rate_base_value
-     - value of air chnage rate
-     - [m3/h*m2]
-     - Yes
-   * - **Air change rate extra**
-     - air_change_rate_extra
-     - extra value of air change rate, in specific period according to the occupancy profile
-     - [m3/h*m2]
-     - Yes
-   * - **Internal Gains**
-     - internal_gains_base_value
-     - power of internal gains 
-     - [W/m2] 
-     - YES
-   * - **Extra Internal Gains**
-     - internal_gains_base_value
-     - extra value of internal gains, in specific period according to the occupancy profile
-     - [W/m2] 
-     - YES
-   * - **Thermal bridges**
-     - thermal_bridge_heat
-     - Overall heat transfer coefficient for thermal bridges (without groud floor)
-     - [W/K] 
-     - YES
-   * - **Thermal resistance of floor**
-     - thermal_resistance_floor
-     - Average thermal resistance of internal floors
-     - [m2K/W] 
-     - YES
-   * - **Facade elements type**
-     - typology_elements
-     - List of all facade elements (Walls, Roof, Ground Floor, Windows).For:
-        * Wall, Roof use: "OP" (Opaque elements)
-        * Ground Floor: use "GF" (Ground Floor)
-        * Windows: use "W" (Windows)
-     - [-] 
-     - YES
-   * - **Orienation of facade elements**
-     - orientation_elements
-     - For each elements of the facade provide the orientation, according to the following abbreviations:
-        * NV: North Vertical
-        * SV: South Vertical
-        * EV: East Vertical
-        * WV: West Vertical
-        * HOR: Horizontal/Slope (for roof and ground floor)
-     - [-] 
-     - YES
-   * - **Solar absorption coefficients**
-     - solar_abs_elements
-     - Solar absorption coefficient of external (Opaque) facade elements (e.g. walls)
-     - [-] 
-     - YES
-   * - **Area of facade elements**
-     - area_elements
-     - Area of each facade element (e.g. Wall, Window, etc.)
-     - [m2] 
-     - YES
-   * - **Transmittance - U**
-     - transmittance_U_elements
-     - Transmiattance of each facade element.
-     - [W/m2K] 
-     - YES
-   * - **Resistance - U**
-     - thermal_resistance_R_elements
-     - Theraml Resistance of each facade element. 
-     - [W/m2K] 
-     - YES
-   * - **Thermal capacity - k**
-     - thermal_resistance_R_elements
-     - Addition of the heat capacity of each layer (i.e. calculated by multiplying the density times its thickness times the SHC of the material)
-     - [J/m2K] 
-     - YES
-   * - **g-value**
-     - g_factor_windows
-     - solar energy transmittance of windows
-     - [-] 
-     - YES
-   * - **Heat radiative transfer coefficient - internal**
-     - heat_convective_elements_internal
-     - convective heat transfer coefficient internal surface for each element
-     - [W/m2K] 
-     - YES
-   * - **Heat convective transfer coefficient - external**
-     - heat_convective_elements_external
-     - convective heat transfer coefficient external surface for each element
-     - [W/m2K] 
-     - YES
-   * - **Heat radiative transfer coefficient - internal**
-     - heat_radiative_elements_internal
-     - radiative heat transfer coefficient internal surface for each element
-     - [W/m2K] 
-     - YES
-   * - **Heat radiative transfer coefficient - external**
-     - heat_radiative_elements_external
-     - radiative heat transfer coefficient external surface for each element
-     - [W/m2K] 
-     - YES
-   * - **View factor**
-     - sky_factor_elements
-     - View factor between building element and the sky
-     - [-] 
-     - YES
-   * - **Occupancy profile workdays - internal_gains rate**
-     - comf_level_we
-     - Occupancy profile for workdays to evalaute the utilization of extra internal gains
-     - [-] 
-     - YES
-   * - **Occupancy profile weekends - internal_gains rate**
-     - comf_level_we
-     - Occupancy profile for weekdays to evalaute the utilization of extra internal gains
-     - [-] 
-     - YES
-   * - **Occupancy profile workdays - airflow rate**
-     - comf_level_we
-     - Occupancy profile for workdays to evalaute the utilization of extra air change rate
-     - [-] 
-     - YES
-   * - **Occupancy profile weekend - airflow rate**
-     - comf_level_we
-     - Occupancy profile for weekend to evalaute the utilization of extra air change rate
-     - [-] 
-     - YES
-   * - **Class of buidling construction**
-     - construction_class
-     - Distribution of the mass for opaque elements (vertical - walls and horizontal - floor/roof) as described in Table B.13 of ISO52016. Possible choices: class_i, class_e, class_ie, class_d
-     - [-] 
-     - YES
-   * - **Weather source**
-     - weather_source
-     - In English, it would be: "Select which type of source to use for weather data. Choose 'pvgis' for connecting to the `pvgis <https://re.jrc.ec.europa.eu/pvg_tools/en/>` or 'epw' file if using an epw file, to be download from `here <https://www.ladybug.tools/epwmap/>`
-     - [-] 
-     - YES
-   
-More information about coefficients are available `here <https://github.com/EURAC-EEBgroup/pyBuildingEnergy/tree/master/src/pybuildingenergy/data>`
-
+- for building inputs refer to `Building Inputs`: <https://eurac-eebgroup.github.io/pybuildingenergy-docs/iso_52016_input/>
+- for heating system input (ISO EN 15316-1) refer to `Heating System Input`: <https://eurac-eebgroup.github.io/pybuildingenergy-docs/iso_15316_input/>
 
 Documentation
 --------------
-Check our doc `here <https://pybuildingenergy.readthedocs.io/en/latest/>`
+Check our doc `here <https://eurac-eebgroup.github.io/pybuildingenergy-docs/>`
 
 Example
 -------
@@ -400,8 +132,8 @@ We welcome and deeply appreciate contributions! Every contribution, no matter ho
 
 License
 --------
-* Free software: MIT license
-* Documentation: https://pybuildingenergy.readthedocs.io.
+* Free software: BSD 3-Clause License
+* Documentation: https://eurac-eebgroup.github.io/pybuildingenergy-docs/
 
 Acknowledgment
 ---------------
@@ -415,10 +147,19 @@ The work was developed using the regulations and results obtained from the sprea
 
 Reference
 ----------
-- EN ISO 52010-1:2018 Energy performance of buildings - External climatic conditions - Part 1: Conversion of climatic data for energy calculations
-- EN ISO 52016-1:2018 Energy performance of buildings - Energy needs for heating and cooling, internal temperatures and sensible and latent heat loads 
-- EN ISO 12831-3:2018 Energy performance of buildings - Method for calculation of the design heat load - Part 3: Domestic hot water systems heat load and characterisation of needs, Module M8-2, M8-3
-
+- EPB Center - The Energy Performance of Buildings Directive (EPBD)  
+   https://epb.center/epb-standards/the-energy-performance-of-buildings-directive-epbd/
+- REHVA Journal - "The new EN ISO 52000 family of standards to assess the energy performance of buildings put in practice"  
+   https://www.rehva.eu/rehva-journal/chapter/the-new-en-iso-52000-family-of-standards-to-assess-the-energy-performance-of-buildings-put-in-practice
+- European Commission - Energy Performance of Buildings Directive  
+   https://energy.ec.europa.eu/topics/energy-efficiency/energy-performance-buildings/energy-performance-buildings-directive_en
+- Directive (EU) 2024/1275 - Official text published in the Official Journal of the EU on May 8, 2024
+- EN ISO 52010-1:2018 - Energy performance of buildings - External climatic conditions - Part 1: Conversion of climatic data for energy calculations
+- EN ISO 52016-1:2018 - Energy performance of buildings - Energy needs for heating and cooling, internal temperatures and sensible and latent heat loads 
+- EN ISO 12831-3:2018 - Energy performance of buildings - Method for calculation of the design heat load - Part 3: Domestic hot water systems heat load and characterisation of needs, Module M8-2, M8-3
+- EN ISO 15316-1:2018 - Energy performance of buildings – Method for calculation of system energy requirements and system efficiencies – Part 1: General and Energy performance expression, Module M3–1, M3–4, M3–9, M8–1
+- EN ISO 16798-7 - Energy performance of buildings – Ventilation for buildings – Part 7: Calculation methods for the determination of air flow rates in buildings including infiltration (Module M5–5)
+- EN ISO 16798-1 - Energy performance of buildings — Ventilation of buildings — Part 1: Indoor environmental input parameters for design and assessment of energy performance of buildings addressing indoor air quality, thermal environment, lighting and acoustics (Module M1–6)
 
 
 

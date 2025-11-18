@@ -34,3 +34,10 @@ df_n_ue = pd.DataFrame(
         'n_ue':[0.1, 0.5, 1, 3, 10]
     }
 )
+
+TB14 = pd.DataFrame({
+    "Emitters_nominale_deltaTeta_air_C": [50, 15, 25],
+    "Emitters_exponent_n": [1.3, 1.1, 1.0],
+    "Emitters_nominal_deltaTeta_Water_C": [20, 5, 10],
+}, index=["Radiator", "Floor heating", "Fan coil"])
+

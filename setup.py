@@ -21,13 +21,13 @@ if __name__ == "__main__":
         setup(
             author="Daniele Antonucci",
             author_email='daniele.antonucci@eurac.edu',
-            description="Energy simulation of the building using ISO52000",
+            description="Energy simulation of the building using ISO EN 52000, and other ",
             long_description=open('README.rst').read(),
             long_description_content_type='text/markdown',
             include_package_data=True,
             keywords='pybuildingenergy',
             url='https://github.com/EURAC-EEBgroup/pyBuildingEnergy',
-            version='1.0.7',
+            version='2.0.0',
         )
     except:  # noqa
         print(
