@@ -71,7 +71,7 @@ The ISO EN 15316 series covers the calculation method for system energy requirem
 - [x] ISO EN 15316-1**: General and expression of energy performance (Modules M3-1, M3-4, M3-9, M8-1, M8-4)
 - [ ] ISO EN 15316-2**: Emission systems (heating and cooling)
 - [ ] ISO EN 15316-3**: Distribution systems (DHW, heating, cooling)
-- [ ] ISO EN 15316-4-X**: Heat generation systems:
+- [ ] ISO EN 15316-4-X: Heat generation systems:
     - 4-1: Combustion boilers
     - 4-2: Heat pumps
     - 4-3: Solar thermal and photovoltaic systems
