@@ -66,11 +66,12 @@ Primary Energy - Heating system
 
 The ISO EN 15316 series covers the calculation method for system energy requirements and system efficiencies. This family of standards is an integral part of the EPB set and covers:
 
-### **ISO EN 15316 Modular Structure:**
+ISO EN 15316 Modular Structure:
+--------------------------------
 
-- [x] ISO EN 15316-1**: General and expression of energy performance (Modules M3-1, M3-4, M3-9, M8-1, M8-4)
-- [ ] ISO EN 15316-2**: Emission systems (heating and cooling)
-- [ ] ISO EN 15316-3**: Distribution systems (DHW, heating, cooling)
+- [x] ISO EN 15316-1: General and expression of energy performance (Modules M3-1, M3-4, M3-9, M8-1, M8-4)
+- [ ] ISO EN 15316-2: Emission systems (heating and cooling)
+- [ ] ISO EN 15316-3: Distribution systems (DHW, heating, cooling)
 - [ ] ISO EN 15316-4-X: Heat generation systems:
     - 4-1: Combustion boilers
     - 4-2: Heat pumps
@@ -78,7 +79,7 @@ The ISO EN 15316 series covers the calculation method for system energy requirem
     - 4-4: Cogeneration systems
     - 4-5: District heating
     - 4-7: Biomass
-- [ ] ISO EN 15316-5**: Storage systems
+- [ ] ISO EN 15316-5: Storage systems
 
 For space heating, applicable standards include ISO EN 15316-1, ISO EN 15316-2-1, ISO EN 15316-2-3 and the appropriate parts of ISO EN 15316-4 depending on the system type, including losses and control aspects.
 
