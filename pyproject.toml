@@ -1,81 +1,59 @@
-[build-system]
-# Minimum requirements for the build system to execute.
-requires = ["setuptools", "wheel"]  # PEP 508 specifications.
-build-backend = "setuptools.build_meta"
-
-# Ignore flat-layout.
-[tool.setuptools]
-py-modules = []
-
 [project]
 name = "pybuildingenergy"
-version = "2.0.0"
-description = "Energy Simulation of building usin ISO52016 and more"
-license = {file = "LICENSE.md"}
+version = "2.0.2"
+description = "Energy Simulation of buildings using ISO 52016 and more"
+license = { file = "LICENSE.md" }
 readme = "README.rst"
-requires-python = ">=3.8.0"
-authors = [{name = "Daniele Antonucci", email = "daniele.antonucci@eurac.edu"}]
-maintainers = [{name = "Daniele Antonucci", email = "daniele.antonucci@eurac.edu"}]
-keywords = [
-    "energy",
-    "building",
-    "heating and cooling",
-    "52016",
-    "EPBD",
-]
+requires-python = ">=3.8"
+authors = [{ name = "Daniele Antonucci", email = "daniele.antonucci@eurac.edu" }]
+maintainers = [{ name = "Daniele Antonucci", email = "daniele.antonucci@eurac.edu" }]
+keywords = ["energy", "building", "simulation", "ISO52016", "EPBD"]
 
 dependencies = [
-    "bump2version==0.5.11",
-    "coverage==4.5.4", 
-    "pandas>=2.0.3",
-    "numpy==1.23.2",
-    "DateTime==5.1", 
-    "timezonefinder==6.2.0",
-    "requests==2.31.0",
-    "tqdm==4.66.1",
-    "Pyarrow==13.0.0",
-    "pyecharts==2.0.4",
-    "geopy==2.4.1",
-    "pvlib==0.10.1",
-    "scikit-learn>=1.3.2",
-    "urllib3==1.26.18",
-    "pyswarms==1.3.0",
-    "workalendar==17.0.0",
-    "plotly==5.21.0"
+  "decorator==5.2.1",
+  "docutils==0.22.3",
+  "holidays==0.81",
+  "Jinja2==3.1.6",
+  "joblib==1.5.2",
+  "matplotlib==3.10.6",
+  "nbformat==5.10.4",
+  "numpy==2.3.3",
+  "openpyxl==3.1.5",
+  "packaging==25.0",
+  "pandas==2.3.2",
+  "parso==0.8.5",
+  "platformdirs==4.4.0",
+  "plotly==6.3.0",
+  "psutil==7.1.0",
+  "pvlib==0.13.0",
+  "pycparser==2.23",
+  "pyecharts==2.0.9",
+  "pyparsing==3.2.5",
+  "pyproject_hooks==1.2.0",
+  "python-dateutil==2.9.0.post0",
+  "pytz==2025.2",
+  "requests==2.32.5",
+  "rfc3986==2.0.0",
+  "rich==14.2.0",
+  "scikit-learn==1.7.2",
+  "scipy==1.16.2",
+  "setuptools==80.9.0",
+  "soupsieve==2.8",
+  "timezonefinder==8.1.0",
+  "tqdm==4.67.1",
+  "typing_extensions==4.15.0",
+  "tzdata==2025.2",
+  "urllib3==2.5.0",
+  "workalendar==17.0.0"
 ]
-
-classifiers = [
-  # How mature is this project? Common values are
-  #   3 - Alpha
-  #   4 - Beta
-  #   5 - Production/Stable
-  
-  "Development Status :: 4 - Beta",
-  # Indicate who your project is intended for
-  "Intended Audience :: Developers",
-  "Intended Audience :: Education",
-  "Intended Audience :: Science/Research",
-  "Operating System :: Unix",
-  "Operating System :: POSIX",
-  "Operating System :: Microsoft :: Windows",
-  "License :: OSI Approved :: MIT License",
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.8",
-  "Programming Language :: Python :: 3.9",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Topic :: Scientific/Engineering",
-  "Topic :: Software Development :: Build Tools"
-]
-
-
-[project.urls]
-Homepage = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy"
-Documentation = "https://pybuildingenergy.readthedocs.io/en/latest/Overview/overview.html"
-Repository = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy"
-Issues = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy/issues"
-Changelog = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy/CHANGELOG.md"
 
 [project.optional-dependencies]
-gui = []
-cli = []
+dev = [
+  "coverage>=7.5",
+  "bump2version>=1.0.1",
+  "pytest>=7.0",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel", "packaging"]
+build-backend = "setuptools.build_meta"

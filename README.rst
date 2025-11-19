@@ -73,12 +73,12 @@ ISO EN 15316 Modular Structure:
 - [ ] ISO EN 15316-2: Emission systems (heating and cooling)
 - [ ] ISO EN 15316-3: Distribution systems (DHW, heating, cooling)
 - [ ] ISO EN 15316-4-X: Heat generation systems:
-    - 4-1: Combustion boilers
-    - 4-2: Heat pumps
-    - 4-3: Solar thermal and photovoltaic systems
-    - 4-4: Cogeneration systems
-    - 4-5: District heating
-    - 4-7: Biomass
+      - 4-1: Combustion boilers
+      - 4-2: Heat pumps
+      - 4-3: Solar thermal and photovoltaic systems
+      - 4-4: Cogeneration systems
+      - 4-5: District heating
+      - 4-7: Biomass
 - [ ] ISO EN 15316-5: Storage systems
 
 For space heating, applicable standards include ISO EN 15316-1, ISO EN 15316-2-1, ISO EN 15316-2-3 and the appropriate parts of ISO EN 15316-4 depending on the system type, including losses and control aspects.
@@ -114,9 +114,7 @@ Check our doc `here <https://eurac-eebgroup.github.io/pybuildingenergy-docs/>`
 Example
 -------
 
-Here some `Examples <https://github.com/EURAC-EEBgroup/pyBuildingEnergy/tree/master/examples>` on pybuildingenergy application.
-For more information
-.....
+**New examples will follow soon..**
   
 
 Contributing and Support

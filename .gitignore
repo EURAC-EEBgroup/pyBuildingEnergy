@@ -2,6 +2,7 @@ examples
 src/pybuildingenergy/data
 create_archetype.py
 profiles.py
+test_lib.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
