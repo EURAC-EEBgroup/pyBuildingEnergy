@@ -1,10 +1,9 @@
-# __author__ = "Daniele Antonucci, Ulrich Filippi Oberegger, Olga Somova"
-# __credits__ = ["Daniele Antonucci", "Ulrich FIlippi Oberegger", "Olga Somova"]
-# __license__ = "MIT"
-# __version__ = "0.1"
-# __maintainer__ = "Daniele Antonucci"
+__author__ = "Daniele Antonucci, Ulrich Filippi Oberegger, Olga Somova"
+__credits__ = ["Daniele Antonucci", "Ulrich FIlippi Oberegger", "Olga Somova"]
+__license__ = "MIT"
+__version__ = "0.1"
+__maintainer__ = "Daniele Antonucci"
 
-from operator import pos
 import requests
 import pandas as pd
 import datetime as dt
@@ -14,11 +13,11 @@ import numpy as np
 from dataclasses import dataclass
 from tqdm import tqdm
 from pvlib.iotools import epw
-from source.ventilation import VentilationInternalGains   
-from source.generate_profile import HourlyProfileGenerator
-from source.functions import *
-from source.generate_profile import get_country_code_from_latlon
-from source.table_iso_16798_1 import * 
+from .ventilation import VentilationInternalGains   
+from .generate_profile import HourlyProfileGenerator
+from .functions import *
+from .generate_profile import get_country_code_from_latlon
+from .table_iso_16798_1 import * 
 
 
 @dataclass

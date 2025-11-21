@@ -1,6 +1,6 @@
 from copy import deepcopy
 import numpy as np
-from global_inputs import TB14 as TB14_backup
+from pybuildingenergy.global_inputs import TB14 as TB14_backup
 
 def _dir_from_orientation(azimuth: float, tilt: float) -> str:
     '''
@@ -42,8 +42,6 @@ def _adj_op_area_in_dir(adj_zone: dict, dir_code: str) -> float:
 # -------------------------------------------------------------------
 
 import pandas as pd
-from copy import deepcopy
-from global_inputs import TB14 as TB14_backup
 
 def check_heating_system_inputs(system_input: dict):
     """

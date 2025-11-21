@@ -1,5 +1,0 @@
-{'_is_copy': None, '_mgr': BlockManager
-Items: Index(['x', 'y'], dtype='object')
-Axis 1: RangeIndex(start=0, stop=24, step=1)
-NumpyBlock: slice(0, 1, 1), 1 x 24, dtype: int64
-NumpyBlock: slice(1, 2, 1), 1 x 24, dtype: float64, '_item_cache': {}, '_attrs': {}, '_flags': <Flags(allows_duplicate_labels=True)>}

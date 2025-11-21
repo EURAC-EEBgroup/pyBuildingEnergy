@@ -2,6 +2,11 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 import holidays
+# try:
+#     import holidays  # type: ignore
+# except ImportError:  # pragma: no cover - optional dependency
+#     holidays = None  # defer error to runtime with better message
+
 import requests
 import plotly.express as px
 import plotly.graph_objects as go
@@ -179,6 +184,12 @@ class HourlyProfileGenerator:
         df["hour"] = df["datetime"].dt.hour
         df["day_of_week"] = df["datetime"].dt.dayofweek  # 0=Mon ... 6=Sun
         df["day_name"] = df["datetime"].dt.day_name()
+
+        # if holidays is None:
+        #     raise ImportError(
+        #         "The 'holidays' package is required for HourlyProfileGenerator.generate(). "
+        #         "Install it via `pip install holidays`."
+        #     )
 
         # National holidays (including two years of margin)
         years_needed = list(range(self.start_year, self.start_year + 3))

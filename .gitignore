@@ -3,6 +3,7 @@ src/pybuildingenergy/data
 create_archetype.py
 profiles.py
 test_lib.py
+result_test
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

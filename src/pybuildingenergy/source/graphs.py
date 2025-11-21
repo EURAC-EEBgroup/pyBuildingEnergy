@@ -5,13 +5,12 @@ import pandas as pd
 from pyecharts import options as opts
 from pyecharts.charts import Bar, Scatter, Line, Gauge
 from scipy.stats import linregress
-from source.functions import (
+from .functions import (
     capitalize_first_letter,
     Heating_Degree_days,
     Simple_regeression,
 )
 import json
-import plotly.graph_objects as go
 
 # ========================================================================================================
 #                                   FUNCTIONS GRAPHS

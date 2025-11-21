@@ -12,7 +12,7 @@ Evaluation of heat transfer coefficent by ventilation using:
 from dataclasses import dataclass
 import numpy as np
 import warnings
-from source.table_iso_16798_1 import *
+from .table_iso_16798_1 import *
 
 @dataclass
 class h_natural_vent:
