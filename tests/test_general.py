@@ -2245,6 +2245,40 @@ def test_heat_pump_example_dhw_design_uses_annex_b8_standby_loss_by_default():
     assert calc.storage_standby_loss_kWh_d == pytest.approx(1.476)
 
 
+def test_heat_pump_example_dhw_profile_aligns_cross_year_index():
+    from examples.heat_pump_15316_4_2_example import make_dhw_profile
+
+    index = pd.date_range("2009-01-01 02:00:00", periods=8760, freq="h")
+
+    profile = make_dhw_profile(
+        pd.DatetimeIndex(index),
+        building_area=120.0,
+        country="Greece",
+        cold_water_temperature_C=11.2,
+    )
+
+    assert isinstance(profile, pd.Series)
+    assert profile.index.equals(index)
+    assert len(profile) == len(index)
+    assert profile.notna().all()
+    assert float(profile.sum()) > 0.0
+
+
+def test_heat_pump_example_dhw_profile_accepts_empty_index():
+    from examples.heat_pump_15316_4_2_example import make_dhw_profile
+
+    profile = make_dhw_profile(
+        pd.DatetimeIndex([]),
+        building_area=120.0,
+        country="Greece",
+        cold_water_temperature_C=11.2,
+    )
+
+    assert isinstance(profile, pd.Series)
+    assert profile.empty
+    assert profile.name == "Q_W_kWh"
+
+
 def test_heat_pump_example_dhw_annex_b_table_b2_profiles_are_normalized():
     from examples.heat_pump_15316_4_2_example import (
         DHW_ANNEX_B_TABLE_B2_VOLUME_PERCENT,

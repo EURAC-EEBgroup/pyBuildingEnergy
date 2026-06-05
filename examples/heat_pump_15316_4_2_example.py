@@ -500,13 +500,19 @@ def make_dhw_profile(
 ) -> pd.Series:
     """Calculate hourly DHW needs and align them to an ISO52016 hourly index."""
 
+    target_index = pd.DatetimeIndex(index)
+    if target_index.tz is not None:
+        target_index = target_index.tz_convert(None)
+    if target_index.empty:
+        return pd.Series(index=target_index, dtype=float, name="Q_W_kWh")
+
     hourly_fractions = dhw_annex_b_table_b2_hourly_fractions(
         annex_b_profile_key
     )
     sum_fractions = pd.DataFrame(hourly_fractions.sum(), columns=["fractions"])
 
     annual_profiles = []
-    for year in sorted(set(index.year)):
+    for year in sorted(set(target_index.year)):
         calendar = pybui.generate_calendar(country, int(year))
         n_workdays = int((calendar["values"] == "Working").sum())
         n_weekends = int((calendar["values"] == "Non-Working").sum())
@@ -540,10 +546,34 @@ def make_dhw_profile(
         annual_profiles.append(values)
 
     profile = pd.concat(annual_profiles).sort_index()
-    aligned = profile.reindex(index)
-    if aligned.isna().any():
-        aligned = aligned.ffill().bfill()
-    return aligned.astype(float)
+    if not profile.index.is_unique:
+        profile = profile.groupby(level=0).mean().sort_index()
+
+    reindexed = profile.reindex(target_index)
+    if reindexed is None:
+        lookup = profile.to_dict()
+        aligned_values = np.array([lookup.get(ts, np.nan) for ts in target_index], dtype=float)
+    else:
+        aligned_values = pd.to_numeric(reindexed, errors="coerce").to_numpy(dtype=float)
+
+    missing = np.isnan(aligned_values)
+    if missing.any():
+        valid_positions = np.flatnonzero(~missing)
+        if valid_positions.size == 0:
+            raise ValueError("DHW profile alignment produced only missing values.")
+
+        positions = np.arange(len(aligned_values))
+        last_valid = np.maximum.accumulate(np.where(~missing, positions, -1))
+        has_previous = last_valid >= 0
+        filled = aligned_values.copy()
+        filled[has_previous] = aligned_values[last_valid[has_previous]]
+
+        next_valid = np.minimum.accumulate(np.where(~missing, positions, len(aligned_values))[::-1])[::-1]
+        needs_backfill = np.isnan(filled) & (next_valid < len(aligned_values))
+        filled[needs_backfill] = aligned_values[next_valid[needs_backfill]]
+        aligned_values = filled
+
+    return pd.Series(aligned_values, index=target_index, name="Q_W_kWh", dtype=float)
 
 
 def _nearest_capacity_kW(

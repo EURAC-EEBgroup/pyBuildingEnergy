@@ -1254,6 +1254,7 @@ class ISO52010:
     # GET DATA FROM PVGIS
     @classmethod
     def get_tmy_data_pvgis(cls, building_object) -> WeatherDataResult:
+        from timezonefinder import TimezoneFinder  # lazy: avoids ~0.7s cold import
         """
         Get Weather data from pvgis API
 
@@ -1447,6 +1448,7 @@ class ISO52010:
     # GET WEATHER DATA FROM .epw FILE
     @classmethod
     def get_tmy_data_epw(cls, path_weather_file):
+        from pvlib.iotools import epw  # lazy: avoids ~1.9s cold import
         """
         Get Wetaher data from epw file
 
@@ -1965,7 +1967,8 @@ def Calculation_ISO_52010(building_object, path_weather_file, weather_source="pv
     # - PVGIS data are UTC -> convert to local civil time using site timezone.
     # - EPW read via pvlib is already in local weather-file time -> keep as-is.
     if weather_source == "pvgis":
-        from timezonefinder import TimezoneFinder  # lazy: avoids ~0.7s cold import
+        from timezonefinder import TimezoneFinder  # lazy: only needed for PVGIS timezone conversion
+
         tf = TimezoneFinder()
         tz_name = tf.timezone_at(lng=weatherData.longitude, lat=weatherData.latitude) or "UTC"
         idx = pd.DatetimeIndex(sim_df.index)
@@ -5990,6 +5993,7 @@ class ISO52016:
         sankey_graph=False,
         **kwargs,
     ):
+        from .generate_profile import HourlyProfileGenerator, get_country_code_from_latlon  # lazy
         """
         Calcualation fo energy needs according to the equation (37) of ISO 52016:2017. Page 60.
 
@@ -7401,6 +7405,7 @@ class ISO52016:
         sankey_graph=False,
         **kwargs,
     ):
+        from .generate_profile import HourlyProfileGenerator, get_country_code_from_latlon  # lazy
         """
         Calcualation fo energy needs according to the equation (37) of ISO 52016:2017. Page 60.
 
