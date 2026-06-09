@@ -6338,7 +6338,7 @@ class ISO52016:
             pbar.update(1)
 
             
-            # inizialiazation vectorB and temperature
+            # Initialization vectorB and temperature
             nodes = ISO52016().Number_of_nodes_element(building_object)
             Theta_old = 20 * np.ones(nodes.Rn)
             VecB = 20 * np.ones((nodes.Rn, 3))
@@ -7407,7 +7407,7 @@ class ISO52016:
     ):
         from .generate_profile import HourlyProfileGenerator, get_country_code_from_latlon  # lazy
         """
-        Calcualation fo energy needs according to the equation (37) of ISO 52016:2017. Page 60.
+        Calcualation of energy needs according to the equation (37) of ISO 52016:2017. Page 60.
 
         [Matrix A] x [Node temperature vector X] = [State vector B]
 

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>EN 15316-4-3 / 4-6 Renewables Audit</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 32px; color: #1f2933; line-height: 1.5; }
+    h1, h2 { color: #102a43; }
+    table { border-collapse: collapse; width: 100%; margin: 14px 0 24px; }
+    th, td { border: 1px solid #d7dde5; padding: 8px 10px; vertical-align: top; }
+    th { background: #eef2f7; text-align: left; }
+    code { background: #eef2f7; padding: 1px 4px; border-radius: 4px; }
+    pre { background: #f8fafc; border: 1px solid #d7dde5; padding: 12px 14px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>EN 15316-4-3 / 4-6 Renewables Audit</h1>
+  <p>
+    The renewable branch is implemented by
+    <code>RenewableEnergySystemCalculator</code>. It can be run before heating
+    generation to reduce heating/DHW loads with solar thermal useful heat and
+    after or alongside generation to account for PV self-consumption/export.
+  </p>
+
+  <h2>Calculation Boundary</h2>
+  <table>
+    <tr><th>Sub-system</th><th>Input Data</th><th>Implemented Output</th></tr>
+    <tr>
+      <td>Solar thermal</td>
+      <td>Collector area, annual useful yield, loop efficiency, priority <code>dhw_first</code>, <code>heating_first</code> or <code>proportional</code>.</td>
+      <td><code>Q_H_after_solar_kWh</code>, <code>Q_W_after_solar_kWh</code>, solar heat used and unused.</td>
+    </tr>
+    <tr>
+      <td>Photovoltaics</td>
+      <td>Capacity, annual yield, performance ratio and self-consumption fraction. If irradiance is present, it is used for timing; otherwise a deterministic daylight/month profile is used.</td>
+      <td><code>E_PV_gen_kWh</code>, <code>E_PV_self_consumed_kWh</code>, <code>E_PV_export_kWh</code>, <code>E_grid_after_PV_kWh</code>.</td>
+    </tr>
+  </table>
+
+  <h2>Run Commands</h2>
+  <pre><code>python examples/heat_pump_15316_4_2_example.py --scenario athens --calculation-path full-renewables --weather-source epw --path-weather-file examples/2020_Athens.epw
+python examples/heat_pump_15316_4_2_example.py --scenario bolzano --calculation-path full-renewables --weather-source epw --path-weather-file examples/2020_Milan.epw</code></pre>
+
+  <h2>Output Files</h2>
+  <table>
+    <tr><th>File</th><th>Audit Use</th></tr>
+    <tr><td><code>renewables_15316_4_3_4_6_hourly_results.csv</code></td><td>Hourly solar/PV balance and load reduction.</td></tr>
+    <tr><td><code>renewables_15316_4_3_4_6_summary.csv</code></td><td>Annual solar heat used, PV production, self-consumption and export.</td></tr>
+    <tr><td><code>visuals/12_renewables_15316_4_3_4_6.html</code></td><td>Daily renewable contribution plot.</td></tr>
+  </table>
+
+  <h2>Boundaries</h2>
+  <p>
+    The implementation is a simulation-ready accounting layer. Detailed
+    collector heat balance, inverter clipping, battery storage, shading and
+    formal national annex defaults are not embedded; use measured or
+    project-specific yield inputs where required.
+  </p>
+</body>
+</html>

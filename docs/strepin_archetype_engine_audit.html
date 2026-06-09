@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Italian STREPIN Archetype Engine Audit</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 32px; color: #1f2933; line-height: 1.5; }
+    h1, h2 { color: #102a43; }
+    table { border-collapse: collapse; width: 100%; margin: 14px 0 24px; }
+    th, td { border: 1px solid #d7dde5; padding: 8px 10px; vertical-align: top; }
+    th { background: #eef2f7; text-align: left; }
+    code { background: #eef2f7; padding: 1px 4px; border-radius: 4px; }
+    pre { background: #f8fafc; border: 1px solid #d7dde5; padding: 12px 14px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>Italian STREPIN Archetype Engine Audit</h1>
+  <p>
+    The STREPIN workbook is treated as input data. The runner builds
+    pyBuildingEnergy BUI objects for each archetype/package, runs ISO 52016 and
+    then applies the European generator standards to calculate pre- and
+    post-retrofit performance.
+  </p>
+
+  <h2>Data And Code</h2>
+  <table>
+    <tr><th>Step</th><th>Location</th><th>Role</th></tr>
+    <tr><td>Workbook parser</td><td><code>src/pybuildingenergy/data/italian_strepin.py</code></td><td>Reads archetypes, packages, measure levels and workbook reference estimates.</td></tr>
+    <tr><td>Simulation runner</td><td><code>examples/strepin_archetypes/run_italian_strepin_engine.py</code></td><td>Runs ISO 52016, EN heating/DHW generation, EN 16798-13 cooling and EN 15316-4-6 PV.</td></tr>
+    <tr><td>Climate zone B weather</td><td><code>examples/Palermo_PVGIS_TMY.epw</code></td><td>PVGIS TMY EPW for Palermo, normalized to parse with <code>pvlib.read_epw</code>.</td></tr>
+  </table>
+
+  <h2>Default EN-Standards Chain</h2>
+  <pre><code>STREPIN workbook archetype/package
+  -> BUI envelope and system metadata
+  -> ISO 52016 space heating/cooling demands
+  -> EN 15316-4-1 boiler generation for gas packages
+     or EN 15316-4-2 heat-pump generation for electric heat-pump packages
+  -> EN 16798-13 cooling generation
+  -> EN 15316-4-6 PV generation/self-consumption
+  -> final and non-renewable primary energy summary</code></pre>
+
+  <h2>Run Commands</h2>
+  <pre><code>python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes all --packages P00 --system-chain en-standards
+python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes RMF_E1_B --packages P00,P09 --system-chain en-standards --write-hourly
+python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes all --packages all --system-chain en-standards</code></pre>
+
+  <h2>Outputs</h2>
+  <table>
+    <tr><th>File</th><th>Meaning</th></tr>
+    <tr><td><code>examples/outputs/italian_strepin_engine/italian_strepin_engine_summary.csv</code></td><td>One row per archetype/package with useful loads, generator input, gas/electricity, PV, final energy and primary non-renewable energy.</td></tr>
+    <tr><td><code>examples/outputs/italian_strepin_engine/hourly/*.csv</code></td><td>Optional hourly ISO 52016 output when <code>--write-hourly</code> is set.</td></tr>
+  </table>
+
+  <h2>Boundaries</h2>
+  <p>
+    The current STREPIN chain uses European generator standards and the
+    workbook measure metadata. It does not yet add full emission, distribution,
+    DHW design sizing and storage standards to every archetype case; those
+    detailed standards are available in the Athens/Bolzano workflow and can be
+    threaded into STREPIN archetype batches once archetype-specific system
+    lengths, storage data and emitter data are available.
+  </p>
+</body>
+</html>

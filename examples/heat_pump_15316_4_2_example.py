@@ -1,4 +1,4 @@
-"""Run a heat-pump generation example from ISO52016 and DHW demands.
+"""Run European-standard system examples from ISO52016 and DHW demands.
 
 This script demonstrates the complete sequence:
 
@@ -10,8 +10,10 @@ This script demonstrates the complete sequence:
    EN 12831-3 DHW storage selection where enabled.
 6. Apply EN 16798-9, EN 16798-15 and EN 16798-13 to the cooling-side
    operating conditions, chilled storage and generation calculation.
-7. Run the EN 15316-4-2 heat-pump bin calculation for heating and DHW.
-8. Save the intermediate loads, bin balance and summary outputs.
+7. Optionally apply EN 15316-4-3/4-6 solar thermal and PV.
+8. Run EN 15316-4-2 heat-pump, EN 15316-4-1 boiler, EN 15316-4-4
+   cogeneration or EN 15316-4-5 district generation for heating and DHW.
+9. Save the intermediate loads, generation balances and summary outputs.
 
 Default weather uses PVGIS for the selected scenario. If network access is not
 available, run with ``--weather-source epw --path-weather-file path/to/weather.epw``.
@@ -64,8 +66,12 @@ def default_output_dir(
     cooling_generation_method: str = "en16798-13",
     performance_data_method: str = "en14511-14825",
     dhw_design_method: str = "en12831-3",
+    heating_generation_method: str = "en15316-4-2",
+    renewable_method: str = "simple",
 ) -> Path:
     suffix = f"heat_pump_15316_4_2_{scenario}"
+    if heating_generation_method != "en15316-4-2":
+        suffix = f"{scenario}_{heating_generation_method.replace('-', '_')}"
     if (
         emission_method == "simple"
         and distribution_method == "simple"
@@ -119,6 +125,8 @@ def default_output_dir(
         suffix = f"{suffix}_simple_performance"
     if dhw_design_method == "simple" and not suffix.endswith("_simple"):
         suffix = f"{suffix}_simple_dhw_design"
+    if renewable_method == "en15316-4-3-4-6":
+        suffix = f"{suffix}_renewables"
     return REPO_ROOT / "examples" / "outputs" / suffix
 
 
@@ -912,6 +920,127 @@ def heat_pump_config(
     return config
 
 
+def boiler_generation_config(scenario: str = "athens") -> dict:
+    """Scenario-specific EN 15316-4-1 combustion-generator assumptions."""
+
+    config = {
+        "demand_unit": "kWh",
+        "fuel": "natural_gas",
+        "condensing": True,
+        "nominal_power_kW": 18.0,
+        "full_load_efficiency": 0.94,
+        "part_load_efficiency": 0.98,
+        "efficiency_max": 1.08,
+        "minimum_part_load_ratio": 0.15,
+        "return_temperature_reference_C": 45.0,
+        "return_temperature_efficiency_slope_per_K": 0.0020,
+        "standby_loss_kWh_per_h": 0.010,
+        "auxiliary_power_kW": 0.035,
+        "standby_auxiliary_power_kW": 0.004,
+        "thermal_loss_room_fraction": 0.75,
+        "auxiliary_to_medium_fraction": 0.20,
+        "heating_supply_temperature_C": 45.0,
+        "heating_return_temperature_C": 35.0,
+        "dhw_sink_temperature_C": 55.0,
+        "dhw_return_temperature_C": 45.0,
+    }
+    if scenario == "bolzano":
+        config.update(
+            {
+                "nominal_power_kW": 22.0,
+                "full_load_efficiency": 0.95,
+                "part_load_efficiency": 1.00,
+                "standby_loss_kWh_per_h": 0.012,
+                "auxiliary_power_kW": 0.040,
+            }
+        )
+    return config
+
+
+def cogeneration_system_config(scenario: str = "athens") -> dict:
+    """Scenario-specific EN 15316-4-4 thermal-led CHP assumptions."""
+
+    config = {
+        "demand_unit": "kWh",
+        "fuel": "natural_gas",
+        "nominal_thermal_power_kW": 6.0,
+        "thermal_efficiency": 0.56,
+        "electrical_efficiency": 0.30,
+        "backup_efficiency": 0.94,
+        "minimum_part_load_ratio": 0.35,
+        "auxiliary_power_kW": 0.030,
+        "standby_auxiliary_power_kW": 0.004,
+        "loss_recoverable_fraction": 0.50,
+    }
+    if scenario == "bolzano":
+        config.update(
+            {
+                "nominal_thermal_power_kW": 8.0,
+                "thermal_efficiency": 0.57,
+                "electrical_efficiency": 0.29,
+                "backup_efficiency": 0.95,
+            }
+        )
+    return config
+
+
+def district_energy_system_config(scenario: str = "athens") -> dict:
+    """Scenario-specific EN 15316-4-5 district energy assumptions."""
+
+    config = {
+        "demand_unit": "kWh",
+        "heating_enabled": True,
+        "dhw_enabled": True,
+        "cooling_enabled": False,
+        "heating_substation_efficiency": 0.97,
+        "dhw_substation_efficiency": 0.96,
+        "heating_fixed_loss_kWh_per_h": 0.006,
+        "heating_auxiliary_power_kW": 0.025,
+        "loss_recoverable_fraction": 0.50,
+    }
+    if scenario == "bolzano":
+        config.update(
+            {
+                "heating_substation_efficiency": 0.98,
+                "dhw_substation_efficiency": 0.97,
+                "heating_fixed_loss_kWh_per_h": 0.008,
+                "heating_auxiliary_power_kW": 0.030,
+            }
+        )
+    return config
+
+
+def renewable_system_config(scenario: str, building: dict) -> dict:
+    """Scenario-specific EN 15316-4-3/4-6 renewable assumptions."""
+
+    area = float(building["building"]["net_floor_area"])
+    solar_area = max(2.0, min(6.0, area / 35.0))
+    pv_kWp = max(1.5, min(4.0, area / 35.0))
+    if scenario == "bolzano":
+        solar_yield = 410.0
+        pv_yield = 1120.0
+    else:
+        solar_yield = 560.0
+        pv_yield = 1500.0
+    return {
+        "demand_unit": "kWh",
+        "solar_thermal": {
+            "enabled": True,
+            "area_m2": solar_area,
+            "annual_yield_kWh_m2": solar_yield,
+            "collector_loop_efficiency": 0.85,
+            "priority": "dhw_first",
+        },
+        "pv": {
+            "enabled": True,
+            "capacity_kWp": pv_kWp,
+            "annual_yield_kWh_kWp": pv_yield,
+            "performance_ratio": 0.80,
+            "self_consumption_fraction": 0.70,
+        },
+    }
+
+
 def emission_system_config(scenario: str = "athens") -> dict:
     """Scenario-specific EN 15316-2 emission assumptions.
 
@@ -1565,6 +1694,64 @@ def combined_generation_summary(
     return summary
 
 
+def combined_system_summary(
+    heating_generation_summary: dict[str, float],
+    cooling_generation: pybui.CoolingGenerationSimulationResult | None,
+) -> dict[str, float]:
+    """Combine a non-heat-pump heating/DHW generator with optional cooling."""
+
+    summary = dict(heating_generation_summary)
+    if cooling_generation is None:
+        summary.setdefault("QC_gen_out_kWh", 0.0)
+        summary.setdefault("EC_gen_in_kWh", 0.0)
+        summary.setdefault("WC_gen_aux_kWh", 0.0)
+        summary.setdefault("SEER_C_gen", np.nan)
+    else:
+        cooling = cooling_generation.summary
+        summary.update(
+            {
+                "QC_gen_out_kWh": cooling.get("QC_gen_in_req_kWh", 0.0),
+                "QC_hp_out_kWh": cooling.get("QC_gen_in_kWh", 0.0),
+                "QC_backup_out_kWh": cooling.get("QC_gen_backup_in_kWh", 0.0),
+                "QC_unmet_kWh": cooling.get("QC_gen_unmet_kWh", 0.0),
+                "EC_hp_in_kWh": cooling.get("EC_gen_el_in_kWh", 0.0),
+                "EC_backup_in_kWh": cooling.get("EC_backup_in_kWh", 0.0),
+                "EC_gen_in_kWh": cooling.get("EC_gen_el_in_kWh", 0.0)
+                + cooling.get("EC_backup_in_kWh", 0.0),
+                "WC_gen_aux_kWh": cooling.get("WC_aux_gen_kWh", 0.0),
+                "QC_rejected_kWh": cooling.get("QC_gen_out_kWh", 0.0),
+                "SEER_C_gen": cooling.get("SEER_C_gen", np.nan),
+            }
+        )
+    summary["E_total_electricity_kWh"] = (
+        summary.get("E_total_electricity_kWh", 0.0)
+        + summary.get("EC_gen_in_kWh", 0.0)
+        + summary.get("WC_gen_aux_kWh", 0.0)
+    )
+    return summary
+
+
+def renewable_summary_with_electric_load(
+    renewable: pybui.RenewableEnergySimulationResult | None,
+    electricity_load_kWh: float,
+) -> dict[str, float] | None:
+    """Recalculate PV self-consumption against final site electricity."""
+
+    if renewable is None:
+        return None
+    summary = dict(renewable.summary)
+    pv_gen = float(summary.get("E_PV_gen_kWh", 0.0))
+    pv_cfg = dict(renewable.inputs.get("pv", renewable.inputs.get("photovoltaic", {})) or {})
+    self_fraction = float(pv_cfg.get("self_consumption_fraction", 1.0))
+    self_fraction = float(np.clip(self_fraction, 0.0, 1.0))
+    self_consumed = min(max(float(electricity_load_kWh), 0.0), pv_gen * self_fraction)
+    summary["E_PV_self_consumed_kWh"] = self_consumed
+    summary["E_PV_export_kWh"] = max(pv_gen - self_consumed, 0.0)
+    summary["E_grid_after_PV_kWh"] = max(float(electricity_load_kWh) - self_consumed, 0.0)
+    summary["f_PV_self_consumed"] = self_consumed / pv_gen if pv_gen > 0 else np.nan
+    return summary
+
+
 def _write_plot(fig: go.Figure, output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.update_layout(
@@ -1647,6 +1834,7 @@ def _relative_href(path: Path, base_dir: Path) -> str:
 
 
 PLOT_LINK_LABELS = {
+    "00_system_overview.html": "System overview",
     "00_user_overview.html": "System overview",
     "00_workflow_handoff.html": "Workflow handoff",
     "00_sanity_checks.html": "Sanity checks",
@@ -1663,6 +1851,10 @@ PLOT_LINK_LABELS = {
     "09_cooling_storage_16798_15.html": "EN 16798-15 cooling storage",
     "10_cooling_generation_16798_13_timeseries.html": "EN 16798-13 cooling generation time series",
     "11_cooling_generation_16798_13_bins.html": "EN 16798-13 cooling generation bins",
+    "12_renewables_15316_4_3_4_6.html": "EN 15316-4-3/4-6 renewables",
+    "13_en15316_4_1_generation.html": "EN 15316-4-1 boiler generation",
+    "13_en15316_4_4_generation.html": "EN 15316-4-4 cogeneration",
+    "13_en15316_4_5_generation.html": "EN 15316-4-5 district generation",
     "02_heat_pump_timeseries.html": "Heating/DHW heat-pump time series",
     "03_monthly_summary.html": "Monthly demand, electricity, SPF and SEER",
     "04_bin_energy_balance.html": "EN 15316-4-2 bin energy balance",
@@ -2953,6 +3145,273 @@ def plot_cooling_generation_16798_13(
     return [ts_path, bin_path]
 
 
+def plot_renewables_15316_4_3_4_6(
+    renewable: pybui.RenewableEnergySimulationResult,
+    output_dir: Path,
+) -> Path:
+    hourly = renewable.timeseries
+    daily = hourly[
+        [
+            "Q_H_solar_thermal_used_kWh",
+            "Q_W_solar_thermal_used_kWh",
+            "Q_solar_thermal_unused_kWh",
+            "E_PV_gen_kWh",
+            "E_PV_self_consumed_kWh",
+            "E_PV_export_kWh",
+        ]
+    ].resample("D").sum()
+    fig = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.09,
+        subplot_titles=[
+            "Daily solar thermal contribution",
+            "Daily PV generation and allocation",
+            "Cumulative renewable contribution",
+        ],
+    )
+    for col, name, color in [
+        ("Q_W_solar_thermal_used_kWh", "Solar thermal to DHW", "#e09f3e"),
+        ("Q_H_solar_thermal_used_kWh", "Solar thermal to heating", "#b23b3b"),
+        ("Q_solar_thermal_unused_kWh", "Unused solar thermal", "#b7b7b7"),
+    ]:
+        fig.add_trace(go.Bar(x=daily.index, y=daily[col], name=name, marker_color=color), row=1, col=1)
+    for col, name, color in [
+        ("E_PV_self_consumed_kWh", "PV self-consumed", "#70ad47"),
+        ("E_PV_export_kWh", "PV exported", "#9bbb59"),
+    ]:
+        fig.add_trace(go.Bar(x=daily.index, y=daily[col], name=name, marker_color=color), row=2, col=1)
+    cumulative = daily.cumsum()
+    fig.add_trace(
+        go.Scatter(
+            x=cumulative.index,
+            y=cumulative["Q_H_solar_thermal_used_kWh"]
+            + cumulative["Q_W_solar_thermal_used_kWh"],
+            mode="lines",
+            name="Cumulative solar thermal used",
+            line=dict(color="#e09f3e"),
+        ),
+        row=3,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=cumulative.index,
+            y=cumulative["E_PV_gen_kWh"],
+            mode="lines",
+            name="Cumulative PV generation",
+            line=dict(color="#70ad47"),
+        ),
+        row=3,
+        col=1,
+    )
+    fig.update_yaxes(title_text="kWh/day", row=1, col=1)
+    fig.update_yaxes(title_text="kWh/day", row=2, col=1)
+    fig.update_yaxes(title_text="kWh", row=3, col=1)
+    fig.update_layout(title="EN 15316-4-3 / EN 15316-4-6 Renewable Systems", barmode="relative")
+    return _write_plot(fig, output_dir / "visuals" / "12_renewables_15316_4_3_4_6.html")
+
+
+def plot_heating_generation_system(
+    generation,
+    output_dir: Path,
+    heating_generation_method: str,
+) -> Path:
+    hourly = generation.timeseries
+    daily_cols = [
+        col
+        for col in [
+            "Q_H_gen_out_kWh",
+            "Q_W_gen_out_kWh",
+            "EHW_gen_in_kWh",
+            "W_HW_gen_aux_kWh",
+            "Q_HW_gen_loss_kWh",
+            "E_chp_el_generated_kWh",
+            "E_chp_el_self_consumed_kWh",
+            "E_chp_el_export_kWh",
+        ]
+        if col in hourly
+    ]
+    daily = hourly[daily_cols].resample("D").sum()
+    perf_col = "eta_HW_gen" if "eta_HW_gen" in hourly else None
+    runtime_col = "t_chp_runtime_h" if "t_chp_runtime_h" in hourly else "t_HW_gen_runtime_h"
+    if runtime_col not in hourly:
+        runtime_col = None
+    perf = pd.DataFrame(index=daily.index)
+    if perf_col is not None:
+        perf["eta_HW_gen"] = hourly[perf_col].resample("D").mean()
+    if runtime_col is not None:
+        perf["runtime_h"] = hourly[runtime_col].resample("D").sum()
+
+    title_by_method = {
+        "en15316-4-1": "EN 15316-4-1 Combustion Boiler Generation",
+        "en15316-4-4": "EN 15316-4-4 Cogeneration",
+        "en15316-4-5": "EN 15316-4-5 District Heating",
+    }
+    fig = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.09,
+        subplot_titles=[
+            "Daily useful heat supplied",
+            "Daily input energy, auxiliaries and losses",
+            "Daily efficiency and runtime",
+        ],
+        specs=[[{}], [{}], [{"secondary_y": True}]],
+    )
+    for col, name, color in [
+        ("Q_H_gen_out_kWh", "Space heating supplied", "#b23b3b"),
+        ("Q_W_gen_out_kWh", "DHW supplied", "#e09f3e"),
+    ]:
+        if col in daily:
+            fig.add_trace(go.Bar(x=daily.index, y=daily[col], name=name, marker_color=color), row=1, col=1)
+    for col, name, color in [
+        ("EHW_gen_in_kWh", "Heating/DHW generator input", "#595959"),
+        ("W_HW_gen_aux_kWh", "Auxiliary electricity", "#808080"),
+        ("Q_HW_gen_loss_kWh", "Generator losses", "#a6a6a6"),
+        ("E_chp_el_generated_kWh", "CHP electricity generated", "#70ad47"),
+        ("E_chp_el_self_consumed_kWh", "CHP electricity self-consumed", "#548235"),
+        ("E_chp_el_export_kWh", "CHP electricity exported", "#9bbb59"),
+    ]:
+        if col in daily:
+            fig.add_trace(go.Bar(x=daily.index, y=daily[col], name=name, marker_color=color), row=2, col=1)
+    if "eta_HW_gen" in perf:
+        fig.add_trace(
+            go.Scatter(
+                x=perf.index,
+                y=perf["eta_HW_gen"],
+                mode="lines",
+                name="Generation efficiency",
+                line=dict(color="#1f4e79"),
+            ),
+            row=3,
+            col=1,
+            secondary_y=False,
+        )
+    if "runtime_h" in perf:
+        fig.add_trace(
+            go.Bar(
+                x=perf.index,
+                y=perf["runtime_h"],
+                name="Runtime",
+                marker_color="#b7b7b7",
+                opacity=0.65,
+            ),
+            row=3,
+            col=1,
+            secondary_y=True,
+        )
+    fig.update_yaxes(title_text="kWh/day", row=1, col=1)
+    fig.update_yaxes(title_text="kWh/day", row=2, col=1)
+    fig.update_yaxes(title_text="efficiency", row=3, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="h/day", row=3, col=1, secondary_y=True)
+    fig.update_layout(
+        title=title_by_method.get(heating_generation_method, "Heating/DHW Generation"),
+        barmode="group",
+        height=980,
+    )
+    filename = f"13_{heating_generation_method.replace('-', '_')}_generation.html"
+    return _write_plot(fig, output_dir / "visuals" / filename)
+
+
+def plot_generic_system_overview(
+    loads: pd.DataFrame,
+    summary: dict[str, float],
+    output_dir: Path,
+    heating_generation_method: str,
+    geometry_summary: dict[str, float] | None = None,
+    renewable_summary: dict[str, float] | None = None,
+) -> Path:
+    monthly_loads = loads[["Q_H_kWh", "Q_W_kWh", "Q_C_kWh"]].resample("ME").sum()
+    monthly_generation_input = pd.Series(
+        summary.get("EHW_gen_in_kWh", 0.0) / max(len(monthly_loads), 1),
+        index=monthly_loads.index,
+    )
+    floor_area = (
+        _summary_value(geometry_summary, "net_floor_area_m2", default=np.nan)
+        if geometry_summary
+        else np.nan
+    )
+    final_grid = (
+        renewable_summary.get("E_grid_after_PV_kWh", np.nan)
+        if renewable_summary
+        else np.nan
+    )
+    indicators = {
+        "Heating demand": summary.get("QH_gen_out_kWh", 0.0),
+        "DHW demand": summary.get("QW_gen_out_kWh", 0.0),
+        "Heating/DHW input": summary.get("EHW_gen_in_kWh", 0.0),
+        "Cooling electricity": summary.get("EC_gen_in_kWh", 0.0)
+        + summary.get("WC_gen_aux_kWh", 0.0),
+        "PV generation": renewable_summary.get("E_PV_gen_kWh", 0.0)
+        if renewable_summary
+        else 0.0,
+        "Grid electricity after PV": final_grid if np.isfinite(final_grid) else 0.0,
+    }
+    intensities = [
+        value / floor_area if np.isfinite(floor_area) and floor_area > 0 else np.nan
+        for value in indicators.values()
+    ]
+    fig = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=False,
+        vertical_spacing=0.12,
+        subplot_titles=[
+            "Monthly thermal requests after upstream standards",
+            "Annual generation and renewable balance",
+            "Useful-area intensities",
+        ],
+    )
+    for col, name, color in [
+        ("Q_H_kWh", "Heating request", "#b23b3b"),
+        ("Q_W_kWh", "DHW request", "#e09f3e"),
+        ("Q_C_kWh", "Cooling request", "#2f78b7"),
+    ]:
+        fig.add_trace(go.Bar(x=monthly_loads.index, y=monthly_loads[col], name=name, marker_color=color), row=1, col=1)
+    fig.add_trace(
+        go.Scatter(
+            x=monthly_generation_input.index,
+            y=monthly_generation_input,
+            mode="lines",
+            name="Mean monthly heating/DHW input",
+            line=dict(color="#595959"),
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Bar(
+            x=list(indicators.keys()),
+            y=list(indicators.values()),
+            name="Annual energy",
+            marker_color=["#b23b3b", "#e09f3e", "#595959", "#2f78b7", "#70ad47", "#4f6f8f"],
+        ),
+        row=2,
+        col=1,
+    )
+    fig.add_trace(
+        go.Bar(
+            x=list(indicators.keys()),
+            y=intensities,
+            name="kWh/m2",
+            marker_color=["#b23b3b", "#e09f3e", "#595959", "#2f78b7", "#70ad47", "#4f6f8f"],
+        ),
+        row=3,
+        col=1,
+    )
+    fig.update_yaxes(title_text="kWh/month", row=1, col=1)
+    fig.update_yaxes(title_text="kWh/year", row=2, col=1)
+    fig.update_yaxes(title_text="kWh/m2.year", row=3, col=1)
+    fig.update_layout(
+        title=f"System Overview: {heating_generation_method} Heating/DHW Generation",
+        height=980,
+    )
+    return _write_plot(fig, output_dir / "visuals" / "00_system_overview.html")
+
+
 def plot_performance_data_14511_14825(
     performance_data: pybui.HeatPumpPerformanceDataResult,
     output_dir: Path,
@@ -3415,12 +3874,14 @@ def create_inspection_index(
     cooling_system_summary: dict[str, float] | None = None,
     cooling_storage_summary: dict[str, float] | None = None,
     cooling_generation_summary: dict[str, float] | None = None,
+    renewable_summary: dict[str, float] | None = None,
+    heating_generation_input_label: str = "Heating+DHW electricity",
 ) -> Path:
     cards = {
         "Heating demand": summary.get("QH_gen_out_kWh", 0.0),
         "DHW demand": summary.get("QW_gen_out_kWh", 0.0),
         "Cooling demand": summary.get("QC_gen_out_kWh", 0.0),
-        "Heating+DHW electricity": summary.get("EHW_gen_in_kWh", 0.0) + summary.get("WHW_gen_aux_kWh", 0.0),
+        heating_generation_input_label: summary.get("EHW_gen_in_kWh", 0.0) + summary.get("WHW_gen_aux_kWh", 0.0),
         "Cooling electricity": summary.get("EC_gen_in_kWh", 0.0) + summary.get("WC_gen_aux_kWh", 0.0),
         "SPF heating+DHW": summary.get("SPF_HW_gen", np.nan),
         "SEER cooling": summary.get("SEER_C_gen", np.nan),
@@ -3504,6 +3965,17 @@ def create_inspection_index(
             {
                 "EN 16798-13 cooling electricity": cooling_generation_summary.get("EC_total_kWh", 0.0),
                 "EN 16798-13 cooling SEER": cooling_generation_summary.get("SEER_C_gen", np.nan),
+            }
+        )
+    if renewable_summary:
+        cards.update(
+            {
+                "EN 15316-4-3 solar thermal used": renewable_summary.get(
+                    "Q_solar_thermal_used_kWh", 0.0
+                ),
+                "EN 15316-4-6 PV generation": renewable_summary.get("E_PV_gen_kWh", 0.0),
+                "PV self-consumed": renewable_summary.get("E_PV_self_consumed_kWh", 0.0),
+                "Grid electricity after PV": renewable_summary.get("E_grid_after_PV_kWh", 0.0),
             }
         )
     plot_items = []
@@ -3655,6 +4127,7 @@ def create_visual_outputs(
     cooling_storage_result: pybui.CoolingStorageSimulationResult | None = None,
     cooling_generation_result: pybui.CoolingGenerationSimulationResult | None = None,
     performance_data_result: pybui.HeatPumpPerformanceDataResult | None = None,
+    renewable_result: pybui.RenewableEnergySimulationResult | None = None,
     geometry_summary: dict[str, float] | None = None,
 ) -> Path:
     iso_report = create_iso52016_visuals(hourly_sim, output_dir, building_area)
@@ -3693,6 +4166,8 @@ def create_visual_outputs(
         plot_paths.append(plot_dhw_design_12831_3(dhw_design_result, output_dir))
     if performance_data_result is not None:
         plot_paths.append(plot_performance_data_14511_14825(performance_data_result, output_dir))
+    if renewable_result is not None:
+        plot_paths.append(plot_renewables_15316_4_3_4_6(renewable_result, output_dir))
     plot_paths.append(plot_input_timeseries(loads, output_dir, title=input_title))
     if emission_result is not None:
         plot_paths.extend(
@@ -3744,6 +4219,10 @@ def create_visual_outputs(
     cooling_generation_summary = (
         cooling_generation_result.summary if cooling_generation_result is not None else None
     )
+    renewable_summary = renewable_summary_with_electric_load(
+        renewable_result,
+        combined_summary.get("E_total_electricity_kWh", 0.0),
+    )
     return create_inspection_index(
         output_dir,
         combined_summary,
@@ -3762,11 +4241,134 @@ def create_visual_outputs(
         cooling_system_summary=cooling_system_summary,
         cooling_storage_summary=cooling_storage_summary,
         cooling_generation_summary=cooling_generation_summary,
+        renewable_summary=renewable_summary,
+    )
+
+
+def create_non_heat_pump_visual_outputs(
+    hourly_sim: pd.DataFrame,
+    loads: pd.DataFrame,
+    heating_generation_result,
+    heating_generation_method: str,
+    output_dir: Path,
+    building_area: float,
+    dhw_design_result: pybui.DHWDesignSimulationResult | None = None,
+    emission_result: pybui.EmissionSimulationResult | None = None,
+    distribution_result: pybui.DistributionSimulationResult | None = None,
+    storage_result: pybui.StorageSimulationResult | None = None,
+    cooling_system_result: pybui.CoolingSystemSimulationResult | None = None,
+    cooling_storage_result: pybui.CoolingStorageSimulationResult | None = None,
+    cooling_generation_result: pybui.CoolingGenerationSimulationResult | None = None,
+    performance_data_result: pybui.HeatPumpPerformanceDataResult | None = None,
+    renewable_result: pybui.RenewableEnergySimulationResult | None = None,
+    geometry_summary: dict[str, float] | None = None,
+) -> Path:
+    iso_report = create_iso52016_visuals(hourly_sim, output_dir, building_area)
+    combined_summary = combined_system_summary(
+        heating_generation_result.summary,
+        cooling_generation_result,
+    )
+    renewable_summary = renewable_summary_with_electric_load(
+        renewable_result,
+        combined_summary.get("E_total_electricity_kWh", 0.0),
+    )
+    plot_paths = [
+        plot_generic_system_overview(
+            loads,
+            combined_summary,
+            output_dir,
+            heating_generation_method,
+            geometry_summary,
+            renewable_summary,
+        )
+    ]
+    if dhw_design_result is not None:
+        plot_paths.append(plot_dhw_design_12831_3(dhw_design_result, output_dir))
+    if performance_data_result is not None:
+        plot_paths.append(plot_performance_data_14511_14825(performance_data_result, output_dir))
+    if renewable_result is not None:
+        plot_paths.append(plot_renewables_15316_4_3_4_6(renewable_result, output_dir))
+    plot_paths.append(
+        plot_input_timeseries(
+            loads,
+            output_dir,
+            title="Final Loads Sent to Heating/DHW and Cooling Generators",
+        )
+    )
+    if emission_result is not None:
+        plot_paths.extend(
+            [
+                plot_emission_timeseries(emission_result, output_dir),
+                plot_emission_monthly(emission_result, output_dir),
+            ]
+        )
+    if distribution_result is not None:
+        plot_paths.extend(
+            [
+                plot_distribution_timeseries(distribution_result, output_dir),
+                plot_distribution_monthly(distribution_result, output_dir),
+            ]
+        )
+    if storage_result is not None:
+        plot_paths.extend(
+            [
+                plot_storage_timeseries(storage_result, output_dir),
+                plot_storage_monthly(storage_result, output_dir),
+            ]
+        )
+    if cooling_system_result is not None:
+        plot_paths.append(plot_cooling_system_16798_9(cooling_system_result, output_dir))
+    if cooling_storage_result is not None:
+        plot_paths.append(plot_cooling_storage_16798_15(cooling_storage_result, output_dir))
+    if cooling_generation_result is not None:
+        plot_paths.extend(plot_cooling_generation_16798_13(cooling_generation_result, output_dir))
+    plot_paths.append(
+        plot_heating_generation_system(
+            heating_generation_result,
+            output_dir,
+            heating_generation_method,
+        )
+    )
+
+    return create_inspection_index(
+        output_dir,
+        combined_summary,
+        plot_paths,
+        iso_report,
+        geometry_summary=geometry_summary,
+        dhw_design_summary=(
+            dhw_design_result.summary if dhw_design_result is not None else None
+        ),
+        performance_data_summary=(
+            performance_data_result.summary if performance_data_result is not None else None
+        ),
+        emission_summary=emission_result.summary if emission_result is not None else None,
+        distribution_summary=(
+            distribution_result.summary if distribution_result is not None else None
+        ),
+        storage_summary=storage_result.summary if storage_result is not None else None,
+        cooling_system_summary=(
+            cooling_system_result.summary if cooling_system_result is not None else None
+        ),
+        cooling_storage_summary=(
+            cooling_storage_result.summary if cooling_storage_result is not None else None
+        ),
+        cooling_generation_summary=(
+            cooling_generation_result.summary if cooling_generation_result is not None else None
+        ),
+        renewable_summary=renewable_summary,
+        heating_generation_input_label="Heating+DHW generation input",
     )
 
 
 def resolve_system_methods(args: argparse.Namespace) -> tuple[str, str, str, str, str, str]:
-    if args.calculation_path == "full" or args.calculation_path is None:
+    if args.calculation_path in {
+        "full",
+        "full-renewables",
+        "boiler-full",
+        "chp-full",
+        "district-full",
+    } or args.calculation_path is None:
         methods = ["en15316-2", "en15316-3", "en15316-5", "en16798-9", "en16798-15", "en16798-13"]
     elif args.calculation_path == "emission-distribution":
         methods = ["en15316-2", "en15316-3", "simple", "en16798-9", "simple", "en16798-13"]
@@ -3803,6 +4405,26 @@ def resolve_system_methods(args: argparse.Namespace) -> tuple[str, str, str, str
     return tuple(methods)  # type: ignore[return-value]
 
 
+def resolve_heating_generation_method(args: argparse.Namespace) -> str:
+    if args.heating_generation_method is not None:
+        return args.heating_generation_method
+    if args.calculation_path == "boiler-full":
+        return "en15316-4-1"
+    if args.calculation_path == "chp-full":
+        return "en15316-4-4"
+    if args.calculation_path == "district-full":
+        return "en15316-4-5"
+    return "en15316-4-2"
+
+
+def resolve_renewable_method(args: argparse.Namespace) -> str:
+    if args.renewable_method is not None:
+        return args.renewable_method
+    if args.calculation_path == "full-renewables":
+        return "en15316-4-3-4-6"
+    return "simple"
+
+
 def resolve_performance_data_method(args: argparse.Namespace) -> str:
     if args.performance_data_method is not None:
         return args.performance_data_method
@@ -3829,6 +4451,8 @@ def run_example(args: argparse.Namespace) -> None:
         cooling_storage_method,
         cooling_generation_method,
     ) = resolve_system_methods(args)
+    heating_generation_method = resolve_heating_generation_method(args)
+    renewable_method = resolve_renewable_method(args)
     performance_data_method = resolve_performance_data_method(args)
     dhw_design_method = resolve_dhw_design_method(args)
     building = example_building(scenario)
@@ -3846,6 +4470,8 @@ def run_example(args: argparse.Namespace) -> None:
             cooling_generation_method,
             performance_data_method,
             dhw_design_method,
+            heating_generation_method,
+            renewable_method,
         )
     )
     dhw_country = args.dhw_calendar_country or SCENARIO_DHW_COUNTRY[scenario]
@@ -4001,11 +4627,34 @@ def run_example(args: argparse.Namespace) -> None:
     elif cooling_storage_method != "simple":
         raise ValueError("--cooling-storage-method must be 'en16798-15' or 'simple'.")
 
+    renewable_result = None
+    if renewable_method == "en15316-4-3-4-6":
+        renewable_calc = pybui.RenewableEnergySystemCalculator(
+            renewable_system_config(scenario, building)
+        )
+        renewable_result = renewable_calc.run_timeseries(loads)
+        loads["Q_H_before_renewables_kWh"] = renewable_result.timeseries[
+            "Q_H_before_solar_kWh"
+        ]
+        loads["Q_W_before_renewables_kWh"] = renewable_result.timeseries[
+            "Q_W_before_solar_kWh"
+        ]
+        loads["Q_H_solar_thermal_used_kWh"] = renewable_result.timeseries[
+            "Q_H_solar_thermal_used_kWh"
+        ]
+        loads["Q_W_solar_thermal_used_kWh"] = renewable_result.timeseries[
+            "Q_W_solar_thermal_used_kWh"
+        ]
+        loads["E_PV_gen_kWh"] = renewable_result.timeseries["E_PV_gen_kWh"]
+        loads["Q_H_kWh"] = renewable_result.timeseries["Q_H_after_solar_kWh"]
+        loads["Q_W_kWh"] = renewable_result.timeseries["Q_W_after_solar_kWh"]
+    elif renewable_method != "simple":
+        raise ValueError("--renewable-method must be 'en15316-4-3-4-6' or 'simple'.")
+
     ensure_heating_and_cooling(loads)
 
     cooling_generation_result = None
-    hp_loads = loads.copy()
-    cooling_enabled_for_heat_pump = True
+    cooling_enabled_for_heat_pump = heating_generation_method == "en15316-4-2"
     if cooling_generation_method == "en16798-13":
         cooling_generation_calc = pybui.CoolingGenerationSystemCalculator(
             cooling_generation_system_config(
@@ -4015,24 +4664,72 @@ def run_example(args: argparse.Namespace) -> None:
             )
         )
         cooling_generation_result = cooling_generation_calc.run_timeseries(loads)
-        hp_loads["Q_C_kWh"] = 0.0
         cooling_enabled_for_heat_pump = False
     elif cooling_generation_method != "heat-pump-simple":
         raise ValueError(
             "--cooling-generation-method must be 'en16798-13' or 'heat-pump-simple'."
         )
-
-    calc = pybui.HeatPumpSystemCalculator(
-        heat_pump_config(
-            scenario,
-            heating_map,
-            cooling_map,
-            include_internal_storage_losses=storage_method == "simple",
-            cooling_enabled=cooling_enabled_for_heat_pump,
-            performance_data_method=performance_data_method,
+    elif heating_generation_method != "en15316-4-2":
+        raise ValueError(
+            "--cooling-generation-method heat-pump-simple requires "
+            "--heating-generation-method en15316-4-2."
         )
-    )
-    result = calc.run_timeseries(hp_loads)
+
+    result = None
+    heating_generation_result = None
+    if heating_generation_method == "en15316-4-2":
+        hp_loads = loads.copy()
+        if cooling_generation_result is not None:
+            hp_loads["Q_C_kWh"] = 0.0
+        calc = pybui.HeatPumpSystemCalculator(
+            heat_pump_config(
+                scenario,
+                heating_map,
+                cooling_map,
+                include_internal_storage_losses=storage_method == "simple",
+                cooling_enabled=cooling_enabled_for_heat_pump,
+                performance_data_method=performance_data_method,
+            )
+        )
+        result = calc.run_timeseries(hp_loads)
+        heating_generation_result = result
+    else:
+        generation_loads = loads.copy()
+        site_el_cols = [
+            "W_H_em_aux_kWh",
+            "W_C_em_aux_kWh",
+            "W_H_dis_aux_kWh",
+            "W_C_dis_aux_kWh",
+            "W_W_dis_aux_kWh",
+            "W_H_sto_aux_kWh",
+            "W_W_sto_aux_kWh",
+            "W_C_sto_aux_kWh",
+        ]
+        generation_loads["E_site_el_load_kWh"] = 0.0
+        for col in site_el_cols:
+            if col in generation_loads:
+                generation_loads["E_site_el_load_kWh"] += generation_loads[col].fillna(0.0)
+        if cooling_generation_result is not None:
+            generation_loads["E_site_el_load_kWh"] += cooling_generation_result.timeseries[
+                "E_C_total_kWh"
+            ].reindex(generation_loads.index).fillna(0.0)
+        if heating_generation_method == "en15316-4-1":
+            heating_generation_result = pybui.CombustionBoilerSystemCalculator(
+                boiler_generation_config(scenario)
+            ).run_timeseries(generation_loads)
+        elif heating_generation_method == "en15316-4-4":
+            heating_generation_result = pybui.CogenerationSystemCalculator(
+                cogeneration_system_config(scenario)
+            ).run_timeseries(generation_loads)
+        elif heating_generation_method == "en15316-4-5":
+            heating_generation_result = pybui.DistrictEnergySystemCalculator(
+                district_energy_system_config(scenario)
+            ).run_timeseries(generation_loads)
+        else:
+            raise ValueError(
+                "--heating-generation-method must be en15316-4-2, en15316-4-1, "
+                "en15316-4-4 or en15316-4-5."
+            )
 
     loads.to_csv(output_dir / "iso52016_loads_with_dhw.csv")
     if dhw_design_result is not None:
@@ -4087,6 +4784,14 @@ def run_example(args: argparse.Namespace) -> None:
             output_dir / "cooling_generation_16798_13_summary.csv",
             index=False,
         )
+    if renewable_result is not None:
+        renewable_result.timeseries.to_csv(
+            output_dir / "renewables_15316_4_3_4_6_hourly_results.csv"
+        )
+        pd.DataFrame([renewable_result.summary]).to_csv(
+            output_dir / "renewables_15316_4_3_4_6_summary.csv",
+            index=False,
+        )
     if performance_data_result is not None:
         performance_data_result.rating_points.to_csv(
             output_dir / "performance_14511_14825_rating_points.csv",
@@ -4104,37 +4809,74 @@ def run_example(args: argparse.Namespace) -> None:
             output_dir / "performance_14511_14825_summary.csv",
             index=False,
         )
-    result.bins.to_csv(output_dir / "heat_pump_bin_results.csv", index=False)
-    pd.DataFrame([result.summary]).to_csv(output_dir / "heat_pump_summary.csv", index=False)
-    combined_summary = combined_generation_summary(result.summary, cooling_generation_result)
+    if heating_generation_method == "en15316-4-2":
+        result.bins.to_csv(output_dir / "heat_pump_bin_results.csv", index=False)
+        pd.DataFrame([result.summary]).to_csv(output_dir / "heat_pump_summary.csv", index=False)
+        combined_summary = combined_generation_summary(result.summary, cooling_generation_result)
+    else:
+        generation_slug = heating_generation_method.replace("-", "_")
+        heating_generation_result.timeseries.to_csv(
+            output_dir / f"heating_generation_{generation_slug}_hourly_results.csv"
+        )
+        pd.DataFrame([heating_generation_result.summary]).to_csv(
+            output_dir / f"heating_generation_{generation_slug}_summary.csv",
+            index=False,
+        )
+        combined_summary = combined_system_summary(
+            heating_generation_result.summary,
+            cooling_generation_result,
+        )
     pd.DataFrame([combined_summary]).to_csv(
         output_dir / "combined_generation_summary.csv",
         index=False,
     )
-    inspection_index = create_visual_outputs(
-        hourly_sim=hourly_sim,
-        loads=loads,
-        result=result,
-        output_dir=output_dir,
-        building_area=float(building["building"]["net_floor_area"]),
-        dhw_design_result=dhw_design_result,
-        emission_result=emission_result,
-        distribution_result=distribution_result,
-        storage_result=storage_result,
-        cooling_system_result=cooling_system_result,
-        cooling_storage_result=cooling_storage_result,
-        cooling_generation_result=cooling_generation_result,
-        performance_data_result=performance_data_result,
-        geometry_summary=geometry_summary,
-    )
+    if heating_generation_method == "en15316-4-2":
+        inspection_index = create_visual_outputs(
+            hourly_sim=hourly_sim,
+            loads=loads,
+            result=result,
+            output_dir=output_dir,
+            building_area=float(building["building"]["net_floor_area"]),
+            dhw_design_result=dhw_design_result,
+            emission_result=emission_result,
+            distribution_result=distribution_result,
+            storage_result=storage_result,
+            cooling_system_result=cooling_system_result,
+            cooling_storage_result=cooling_storage_result,
+            cooling_generation_result=cooling_generation_result,
+            performance_data_result=performance_data_result,
+            renewable_result=renewable_result,
+            geometry_summary=geometry_summary,
+        )
+    else:
+        inspection_index = create_non_heat_pump_visual_outputs(
+            hourly_sim=hourly_sim,
+            loads=loads,
+            heating_generation_result=heating_generation_result,
+            heating_generation_method=heating_generation_method,
+            output_dir=output_dir,
+            building_area=float(building["building"]["net_floor_area"]),
+            dhw_design_result=dhw_design_result,
+            emission_result=emission_result,
+            distribution_result=distribution_result,
+            storage_result=storage_result,
+            cooling_system_result=cooling_system_result,
+            cooling_storage_result=cooling_storage_result,
+            cooling_generation_result=cooling_generation_result,
+            performance_data_result=performance_data_result,
+            renewable_result=renewable_result,
+            geometry_summary=geometry_summary,
+        )
 
-    print(f"\nHeat pump example completed for scenario: {scenario}")
+    print(f"\nSystem example completed for scenario: {scenario}")
     print(f"Emission calculation mode: {emission_method}")
     print(f"Distribution calculation mode: {distribution_method}")
     print(f"Storage calculation mode: {storage_method}")
     print(f"Cooling operating-condition mode: {cooling_system_method}")
     print(f"Cooling storage mode: {cooling_storage_method}")
     print(f"Cooling generation mode: {cooling_generation_method}")
+    print(f"Heating/DHW generation mode: {heating_generation_method}")
+    print(f"Renewable mode: {renewable_method}")
     print(f"Performance data mode: {performance_data_method}")
     print(f"DHW design mode: {dhw_design_method}")
     if dhw_design_result is not None:
@@ -4163,9 +4905,14 @@ def run_example(args: argparse.Namespace) -> None:
             if cooling_generation_result is not None
             else "Heat-pump space cooling input load"
         )
+        heating_input_label = (
+            "Heat-pump space heating input load"
+            if heating_generation_method == "en15316-4-2"
+            else "Heating generator space heating input load"
+        )
         print(f"ISO52016 space heating need: {emission_result.summary['QH_em_out_kWh']:,.1f} kWh")
         print(f"EN 15316-2 heating emission losses: {emission_result.summary['QH_em_ls_kWh']:,.1f} kWh")
-        print(f"Heat-pump space heating input load: {loads['Q_H_kWh'].sum():,.1f} kWh")
+        print(f"{heating_input_label}: {loads['Q_H_kWh'].sum():,.1f} kWh")
         print(f"ISO52016 space cooling need: {emission_result.summary['QC_em_out_kWh']:,.1f} kWh")
         print(f"EN 15316-2 cooling emission losses: {emission_result.summary['QC_em_ls_kWh']:,.1f} kWh")
         print(f"{cooling_input_label}: {loads['Q_C_kWh'].sum():,.1f} kWh")
@@ -4176,6 +4923,8 @@ def run_example(args: argparse.Namespace) -> None:
             if distribution_result is not None or storage_result is not None
             else "Demand"
         )
+        if heating_generation_method != "en15316-4-2" and load_label == "Heat-pump input load":
+            load_label = "Generator input load"
         print(f"Space heating {load_label.lower()}: {loads['Q_H_kWh'].sum():,.1f} kWh")
         print(f"Space cooling {load_label.lower()}: {loads['Q_C_kWh'].sum():,.1f} kWh")
     if distribution_result is not None:
@@ -4188,7 +4937,7 @@ def run_example(args: argparse.Namespace) -> None:
         print(f"EN 15316-5 DHW storage losses: {storage_result.summary['QW_sto_ls_kWh']:,.1f} kWh")
         print(f"EN 15316-5 storage pump auxiliaries: {storage_result.summary['W_sto_aux_kWh']:,.1f} kWh")
         print(f"DHW storage output demand: {storage_result.summary['QW_sto_out_kWh']:,.1f} kWh")
-        print(f"Heat-pump DHW input load: {loads['Q_W_kWh'].sum():,.1f} kWh")
+        print(f"Heating/DHW generator DHW input load: {loads['Q_W_kWh'].sum():,.1f} kWh")
     else:
         print(f"DHW demand: {loads['Q_W_kWh'].sum():,.1f} kWh")
     print(
@@ -4204,8 +4953,24 @@ def run_example(args: argparse.Namespace) -> None:
         print(f"EN 16798-15 cooling storage heat gains: {cooling_storage_result.summary['QC_sto_ls_tot_kWh']:,.1f} kWh")
         print(f"EN 16798-15 cooling storage auxiliaries: {cooling_storage_result.summary['WC_sto_aux_kWh']:,.1f} kWh")
         print(f"Cooling generator input after storage: {loads['Q_C_kWh'].sum():,.1f} kWh")
-    print(f"Heating and DHW electricity, including backup: {combined_summary['EHW_gen_in_kWh']:,.1f} kWh")
-    print(f"Heating and DHW auxiliaries: {result.summary['WHW_gen_aux_kWh']:,.1f} kWh")
+    if renewable_result is not None:
+        renewable_summary = renewable_summary_with_electric_load(
+            renewable_result,
+            combined_summary.get("E_total_electricity_kWh", 0.0),
+        )
+        print(f"EN 15316-4-3 solar thermal used: {renewable_summary['Q_solar_thermal_used_kWh']:,.1f} kWh")
+        print(f"EN 15316-4-6 PV generation: {renewable_summary['E_PV_gen_kWh']:,.1f} kWh")
+        print(f"Grid electricity after PV: {renewable_summary['E_grid_after_PV_kWh']:,.1f} kWh")
+    gen_input_label = (
+        "Heating and DHW electricity, including backup"
+        if heating_generation_method == "en15316-4-2"
+        else "Heating and DHW generation input"
+    )
+    print(f"{gen_input_label}: {combined_summary['EHW_gen_in_kWh']:,.1f} kWh")
+    print(
+        "Heating and DHW auxiliaries: "
+        f"{heating_generation_result.summary['WHW_gen_aux_kWh']:,.1f} kWh"
+    )
     if cooling_generation_result is not None:
         print(f"EN 16798-13 cooling electricity: {cooling_generation_result.summary['EC_total_kWh']:,.1f} kWh")
         print(f"EN 16798-13 cooling rejected heat: {cooling_generation_result.summary['QC_gen_out_kWh']:,.1f} kWh")
@@ -4267,6 +5032,10 @@ def parse_args(default_scenario: str = "athens") -> argparse.Namespace:
         "--calculation-path",
         choices=[
             "full",
+            "full-renewables",
+            "boiler-full",
+            "chp-full",
+            "district-full",
             "emission-distribution",
             "emission-storage",
             "distribution-storage",
@@ -4280,6 +5049,10 @@ def parse_args(default_scenario: str = "athens") -> argparse.Namespace:
         help=(
             "Shortcut for the subsystem chain. 'full' applies EN 15316-2, "
             "EN 15316-3, EN 15316-5 and the EN 16798 cooling-side modules; "
+            "'full-renewables' also applies EN 15316-4-3/4-6 solar/PV; "
+            "'boiler-full', 'chp-full' and 'district-full' keep the same "
+            "upstream/cooling chain but switch heating/DHW generation to "
+            "EN 15316-4-1, EN 15316-4-4 or EN 15316-4-5; "
             "'emission-distribution' applies EN 15316-2 and EN 15316-3 but "
             "uses simple storage; "
             "'emission-storage', 'distribution-storage' and 'storage-only' "
@@ -4288,6 +5061,28 @@ def parse_args(default_scenario: str = "athens") -> argparse.Namespace:
             "'heat-pump-cooling' keeps the older reversible heat-pump cooling "
             "branch instead of EN 16798-13; 'simple' uses the earlier direct "
             "ISO52016/DHW loads and simple heat-pump storage losses. Default: full."
+        ),
+    )
+    parser.add_argument(
+        "--heating-generation-method",
+        choices=["en15316-4-2", "en15316-4-1", "en15316-4-4", "en15316-4-5"],
+        default=None,
+        help=(
+            "Heating/DHW generation standard. EN 15316-4-2 is the heat-pump "
+            "bin method; EN 15316-4-1 is combustion boiler generation; "
+            "EN 15316-4-4 is thermal-led CHP; EN 15316-4-5 is district heat. "
+            "Default follows --calculation-path."
+        ),
+    )
+    parser.add_argument(
+        "--renewable-method",
+        choices=["en15316-4-3-4-6", "simple"],
+        default=None,
+        help=(
+            "Solar thermal/PV mode. EN 15316-4-3/4-6 applies the renewable "
+            "calculator before heating/DHW generation and reports PV balance; "
+            "'simple' bypasses renewables. Default is simple except "
+            "--calculation-path full-renewables."
         ),
     )
     parser.add_argument(
