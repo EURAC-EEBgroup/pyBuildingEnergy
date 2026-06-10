@@ -64,6 +64,18 @@ class RenewableEnergySystemCalculator:
             solar.get("collector_loop_efficiency", solar.get("efficiency", 1.0)),
             "solar_thermal.efficiency",
         )
+        self.solar_thermal_shading_loss_fraction = _fraction(
+            solar.get("shading_loss_fraction", solar.get("collector_shading_loss_fraction", 0.0)),
+            "solar_thermal.shading_loss_fraction",
+        )
+        self.solar_thermal_storage_loss_fraction = _fraction(
+            solar.get("storage_loss_fraction", 0.0),
+            "solar_thermal.storage_loss_fraction",
+        )
+        self.solar_thermal_usable_fraction = _fraction(
+            solar.get("usable_fraction", 1.0),
+            "solar_thermal.usable_fraction",
+        )
         self.solar_priority = str(solar.get("priority", "dhw_first")).lower()
         if self.solar_priority not in {"dhw_first", "heating_first", "proportional"}:
             raise ValueError("solar_thermal.priority must be dhw_first, heating_first or proportional.")
@@ -81,8 +93,47 @@ class RenewableEnergySystemCalculator:
         self.pv_performance_ratio = _fraction(
             pv.get("performance_ratio", 0.80), "pv.performance_ratio"
         )
+        self.pv_shading_loss_fraction = _fraction(
+            pv.get("shading_loss_fraction", pv.get("pv_shading_loss_fraction", 0.0)),
+            "pv.shading_loss_fraction",
+        )
+        self.pv_orientation_loss_fraction = _fraction(
+            pv.get("orientation_loss_fraction", 0.0),
+            "pv.orientation_loss_fraction",
+        )
+        self.pv_degradation_loss_fraction = _fraction(
+            pv.get("degradation_loss_fraction", 0.0),
+            "pv.degradation_loss_fraction",
+        )
         self.pv_self_consumption_fraction = _fraction(
             pv.get("self_consumption_fraction", 1.0), "pv.self_consumption_fraction"
+        )
+        self.pv_self_consumption_mode = str(
+            pv.get("self_consumption_mode", "fixed_fraction")
+        ).lower()
+        if self.pv_self_consumption_mode not in {"fixed_fraction", "dispatch"}:
+            raise ValueError("pv.self_consumption_mode must be fixed_fraction or dispatch.")
+        battery = dict(pv.get("battery", cfg.get("battery", {})) or {})
+        self.battery_capacity_kWh = max(float(battery.get("capacity_kWh", 0.0)), 0.0)
+        self.battery_roundtrip_efficiency = _fraction(
+            battery.get("roundtrip_efficiency", 0.90),
+            "battery.roundtrip_efficiency",
+        )
+        self.battery_initial_soc_fraction = _fraction(
+            battery.get("initial_soc_fraction", 0.50),
+            "battery.initial_soc_fraction",
+        )
+        self.battery_min_soc_fraction = _fraction(
+            battery.get("min_soc_fraction", 0.0),
+            "battery.min_soc_fraction",
+        )
+        self.battery_max_charge_power_kW = max(
+            float(battery.get("max_charge_power_kW", self.battery_capacity_kWh)),
+            0.0,
+        )
+        self.battery_max_discharge_power_kW = max(
+            float(battery.get("max_discharge_power_kW", self.battery_capacity_kWh)),
+            0.0,
         )
 
     def _prepare_timeseries(self, data: pd.DataFrame) -> pd.DataFrame:
@@ -177,6 +228,9 @@ class RenewableEnergySystemCalculator:
                 self.solar_thermal_area_m2
                 * self.solar_thermal_yield_kWh_m2_a
                 * self.solar_thermal_efficiency
+                * (1.0 - self.solar_thermal_shading_loss_fraction)
+                * (1.0 - self.solar_thermal_storage_loss_fraction)
+                * self.solar_thermal_usable_fraction
             )
             q_solar_available = profile * annual
         out.loc[:, "Q_solar_thermal_available_kWh"] = q_solar_available
@@ -207,24 +261,117 @@ class RenewableEnergySystemCalculator:
 
         pv_generation = pd.Series(0.0, index=out.index)
         if self.pv_enabled and self.pv_capacity_kWp > 0.0:
+            expected = (
+                self.pv_capacity_kWp
+                * self.pv_yield_kWh_kWp_a
+                * (1.0 - self.pv_shading_loss_fraction)
+                * (1.0 - self.pv_orientation_loss_fraction)
+                * (1.0 - self.pv_degradation_loss_fraction)
+            )
             if out["GHI_W_m2"].notna().any() and out["GHI_W_m2"].clip(lower=0.0).sum() > 0:
                 raw = out["GHI_W_m2"].fillna(0.0).clip(lower=0.0) / 1000.0
                 raw = raw * out["hours"] * self.pv_capacity_kWp * self.pv_performance_ratio
-                expected = self.pv_capacity_kWp * self.pv_yield_kWh_kWp_a
                 scale = expected / max(float(raw.sum()), _KWH_EPS)
                 pv_generation = raw * scale
             else:
-                pv_generation = profile * self.pv_capacity_kWp * self.pv_yield_kWh_kWp_a
+                pv_generation = profile * expected
         out.loc[:, "E_PV_gen_kWh"] = pv_generation
-        self_consumption_limit = pv_generation * self.pv_self_consumption_fraction
-        out.loc[:, "E_PV_self_consumed_kWh"] = np.minimum(
-            out["E_site_el_load_kWh"], self_consumption_limit
-        )
-        out.loc[:, "E_PV_export_kWh"] = (pv_generation - out["E_PV_self_consumed_kWh"]).clip(lower=0.0)
-        out.loc[:, "E_grid_after_PV_kWh"] = (
-            out["E_site_el_load_kWh"] - out["E_PV_self_consumed_kWh"]
-        ).clip(lower=0.0)
+        if self.battery_capacity_kWh > _KWH_EPS or self.pv_self_consumption_mode == "dispatch":
+            dispatch = self._dispatch_pv_with_battery(out)
+            for col in dispatch.columns:
+                out.loc[:, col] = dispatch[col]
+        else:
+            self_consumption_limit = pv_generation * self.pv_self_consumption_fraction
+            out.loc[:, "E_PV_direct_self_consumed_kWh"] = np.minimum(
+                out["E_site_el_load_kWh"], self_consumption_limit
+            )
+            out.loc[:, "E_battery_charge_kWh"] = 0.0
+            out.loc[:, "E_battery_discharge_to_load_kWh"] = 0.0
+            out.loc[:, "E_battery_losses_kWh"] = 0.0
+            out.loc[:, "E_battery_state_of_charge_kWh"] = 0.0
+            out.loc[:, "E_PV_self_consumed_kWh"] = out["E_PV_direct_self_consumed_kWh"]
+            out.loc[:, "E_PV_export_kWh"] = (
+                pv_generation - out["E_PV_self_consumed_kWh"]
+            ).clip(lower=0.0)
+            out.loc[:, "E_grid_after_PV_kWh"] = (
+                out["E_site_el_load_kWh"] - out["E_PV_self_consumed_kWh"]
+            ).clip(lower=0.0)
         return out
+
+    def _dispatch_pv_with_battery(self, out: pd.DataFrame) -> pd.DataFrame:
+        result = pd.DataFrame(index=out.index)
+        charge_eff = self.battery_roundtrip_efficiency**0.5
+        discharge_eff = self.battery_roundtrip_efficiency**0.5
+        capacity = self.battery_capacity_kWh
+        min_soc = capacity * self.battery_min_soc_fraction
+        soc = capacity * self.battery_initial_soc_fraction
+
+        direct_values: list[float] = []
+        charge_values: list[float] = []
+        discharge_to_load_values: list[float] = []
+        losses_values: list[float] = []
+        export_values: list[float] = []
+        grid_values: list[float] = []
+        soc_values: list[float] = []
+
+        for _, row in out.iterrows():
+            pv = max(float(row["E_PV_gen_kWh"]), 0.0)
+            load = max(float(row["E_site_el_load_kWh"]), 0.0)
+            hours = max(float(row["hours"]), 0.0)
+            direct = min(load, pv)
+            surplus = max(pv - direct, 0.0)
+            remaining_load = max(load - direct, 0.0)
+
+            charge_from_pv = 0.0
+            charge_loss = 0.0
+            if capacity > _KWH_EPS and surplus > _KWH_EPS:
+                charge_power_limit = (
+                    self.battery_max_charge_power_kW * hours
+                    if self.battery_max_charge_power_kW > _KWH_EPS
+                    else surplus
+                )
+                room_from_pv = max((capacity - soc) / max(charge_eff, _KWH_EPS), 0.0)
+                charge_from_pv = min(surplus, charge_power_limit, room_from_pv)
+                stored = charge_from_pv * charge_eff
+                charge_loss = charge_from_pv - stored
+                soc += stored
+                surplus -= charge_from_pv
+
+            discharge_to_load = 0.0
+            discharge_loss = 0.0
+            if capacity > _KWH_EPS and remaining_load > _KWH_EPS:
+                discharge_power_limit = (
+                    self.battery_max_discharge_power_kW * hours
+                    if self.battery_max_discharge_power_kW > _KWH_EPS
+                    else remaining_load
+                )
+                available_to_load = max(soc - min_soc, 0.0) * discharge_eff
+                discharge_to_load = min(remaining_load, discharge_power_limit, available_to_load)
+                soc_decrease = discharge_to_load / max(discharge_eff, _KWH_EPS)
+                discharge_loss = soc_decrease - discharge_to_load
+                soc -= soc_decrease
+                remaining_load -= discharge_to_load
+
+            direct_values.append(direct)
+            charge_values.append(charge_from_pv)
+            discharge_to_load_values.append(discharge_to_load)
+            losses_values.append(charge_loss + discharge_loss)
+            export_values.append(max(surplus, 0.0))
+            grid_values.append(max(remaining_load, 0.0))
+            soc_values.append(soc)
+
+        result.loc[:, "E_PV_direct_self_consumed_kWh"] = direct_values
+        result.loc[:, "E_battery_charge_kWh"] = charge_values
+        result.loc[:, "E_battery_discharge_to_load_kWh"] = discharge_to_load_values
+        result.loc[:, "E_battery_losses_kWh"] = losses_values
+        result.loc[:, "E_battery_state_of_charge_kWh"] = soc_values
+        result.loc[:, "E_PV_self_consumed_kWh"] = (
+            result["E_PV_direct_self_consumed_kWh"]
+            + result["E_battery_discharge_to_load_kWh"]
+        )
+        result.loc[:, "E_PV_export_kWh"] = export_values
+        result.loc[:, "E_grid_after_PV_kWh"] = grid_values
+        return result
 
     def _solar_profile(self, out: pd.DataFrame) -> pd.Series:
         ghi = out["GHI_W_m2"].fillna(0.0).clip(lower=0.0)
@@ -272,9 +419,13 @@ class RenewableEnergySystemCalculator:
             if thermal_available > _KWH_EPS
             else float("nan"),
             "E_PV_gen_kWh": pv_gen,
+            "E_PV_direct_self_consumed_kWh": s("E_PV_direct_self_consumed_kWh"),
             "E_PV_self_consumed_kWh": s("E_PV_self_consumed_kWh"),
             "E_PV_export_kWh": s("E_PV_export_kWh"),
             "E_grid_after_PV_kWh": s("E_grid_after_PV_kWh"),
+            "E_battery_charge_kWh": s("E_battery_charge_kWh"),
+            "E_battery_discharge_to_load_kWh": s("E_battery_discharge_to_load_kWh"),
+            "E_battery_losses_kWh": s("E_battery_losses_kWh"),
             "f_PV_self_consumed": s("E_PV_self_consumed_kWh") / pv_gen
             if pv_gen > _KWH_EPS
             else float("nan"),

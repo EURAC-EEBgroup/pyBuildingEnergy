@@ -387,6 +387,74 @@ class ItalianStrepinTables:
             workbook_reference=self.result_row(archetype_id, package_id),
         )
 
+    def make_measure_case(
+        self,
+        archetype_id: str,
+        measure_levels: dict[str, int],
+        *,
+        package_id: str = "CUSTOM",
+        climate_locations: dict[str, dict[str, Any]] | None = None,
+        window_orientation_split: dict[str, float] | None = None,
+        floor_height_m: float = 3.0,
+        air_change_rate_h: float = 0.30,
+        ideal_hvac_capacity: bool = True,
+    ) -> StrepinCase:
+        """Build a case from arbitrary STREPIN workbook measure levels.
+
+        Missing measures default to baseline level 1. Supported workbook measure
+        codes are ``wall``, ``roof_floor``, ``windows``, ``heating`` and ``pv``.
+        Engine-side overlays such as BACS or HRV are applied separately.
+        """
+
+        levels = {
+            "wall": 1,
+            "roof_floor": 1,
+            "windows": 1,
+            "heating": 1,
+            "pv": 1,
+            **{str(k): int(v) for k, v in measure_levels.items()},
+        }
+        unknown = sorted(set(levels) - {"wall", "roof_floor", "windows", "heating", "pv"})
+        if unknown:
+            raise ValueError(f"Unknown STREPIN measure code(s): {', '.join(unknown)}")
+
+        bui = self.make_base_bui(
+            archetype_id,
+            climate_locations=climate_locations,
+            window_orientation_split=window_orientation_split,
+            floor_height_m=floor_height_m,
+            air_change_rate_h=air_change_rate_h,
+            ideal_hvac_capacity=ideal_hvac_capacity,
+        )
+        measures = [
+            self.measure_row(archetype_id, measure_code, level)
+            for measure_code, level in levels.items()
+        ]
+        bui = apply_measure_rows_to_bui(bui, measures)
+        package = {
+            "Package_ID": package_id,
+            "Package_Name": "Custom measure combination",
+            "Wall_Level": levels["wall"],
+            "RoofFloor_Level": levels["roof_floor"],
+            "Windows_Level": levels["windows"],
+            "Heating_Level": levels["heating"],
+            "PV_Level": levels["pv"],
+            "Active_Measures": ", ".join(
+                f"{code} L{level}" for code, level in levels.items() if level > 1
+            )
+            or "none",
+            "Package_Type": "Custom measure combination",
+        }
+        return StrepinCase(
+            archetype_id=str(archetype_id),
+            package_id=str(package_id),
+            bui=bui,
+            archetype=_row_to_dict(self.archetype_row(archetype_id)),
+            package=package,
+            measures=[_row_to_dict(row) for row in measures],
+            workbook_reference=None,
+        )
+
 
 def find_default_workbook() -> Path:
     """Return the repository-local STREPIN workbook path when available."""
@@ -480,6 +548,207 @@ def apply_measure_rows_to_bui(
         applied.append(applied_row)
 
     metadata["applied_measures"] = applied
+    return updated
+
+
+def apply_extra_measure_specs_to_bui(
+    bui: dict[str, Any],
+    measure_specs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Apply engine-side renovation overlays not present in the workbook.
+
+    Specs are dictionaries with ``measure_code`` and optional ``parameters``.
+    The function keeps metadata under ``bui["strepin"]`` so the simulation
+    runner can activate the corresponding European-standard modules.
+    """
+
+    updated = copy.deepcopy(bui)
+    metadata = updated.setdefault("strepin", {})
+    extra: list[dict[str, Any]] = list(metadata.get("extra_measures", []))
+
+    for spec in measure_specs:
+        measure_code = str(spec.get("measure_code", spec.get("code", ""))).strip().lower()
+        params = dict(spec.get("parameters", spec.get("params", {})) or {})
+        if not measure_code:
+            continue
+
+        if measure_code == "lighting":
+            lighting = {
+                "installed_power_density_W_m2": _to_float(
+                    params.get("installed_power_density_W_m2", params.get("lpd_W_m2")),
+                    4.0,
+                ),
+                "daylight_dependency_factor": _to_float(
+                    params.get("daylight_dependency_factor", 0.85),
+                    0.85,
+                ),
+                "occupancy_dependency_factor": _to_float(
+                    params.get("occupancy_dependency_factor", 0.90),
+                    0.90,
+                ),
+                "daylight_control_fraction": _to_float(
+                    params.get("daylight_control_fraction", 0.30),
+                    0.30,
+                ),
+                "occupancy_control_fraction": _to_float(
+                    params.get("occupancy_control_fraction", 0.20),
+                    0.20,
+                ),
+                "investment_EUR": _to_float(params.get("investment_EUR"), 20.0)
+                * _building_area(updated),
+                "annual_maintenance_EUR": _to_float(params.get("annual_maintenance_EUR"), 0.0),
+                "lifetime_years": _to_int(params.get("lifetime_years"), 15),
+            }
+            _set_internal_gain_full_load(
+                updated,
+                "lighting",
+                lighting["installed_power_density_W_m2"],
+            )
+            metadata["lighting_system"] = lighting
+            extra.append({"measure_code": "lighting", **lighting})
+
+        elif measure_code == "ventilation":
+            volume_m3 = _building_volume(updated)
+            ach = _to_float(params.get("air_change_rate_h"), metadata.get("air_change_rate_h", 0.30))
+            heat_recovery = max(
+                0.0,
+                min(1.0, _to_float(params.get("heat_recovery_efficiency"), 0.75)),
+            )
+            mechanical_fraction = max(
+                0.0,
+                min(1.0, _to_float(params.get("mechanical_fraction"), 1.0)),
+            )
+            flow_m3_h = _to_float(params.get("nominal_flow_m3_h"), volume_m3 * ach)
+            hve_base = 0.33 * flow_m3_h
+            hve_effective = hve_base * (1.0 - heat_recovery * mechanical_fraction)
+            ventilation = {
+                "air_change_rate_h": ach,
+                "nominal_flow_m3_h": flow_m3_h,
+                "heat_recovery_efficiency": heat_recovery,
+                "mechanical_fraction": mechanical_fraction,
+                "specific_fan_power_W_s_m3": _to_float(
+                    params.get("specific_fan_power_W_s_m3"),
+                    900.0,
+                ),
+                "investment_EUR": _to_float(params.get("investment_EUR"), 35.0)
+                * _building_area(updated),
+                "annual_maintenance_EUR": _to_float(params.get("annual_maintenance_EUR"), 150.0),
+                "lifetime_years": _to_int(params.get("lifetime_years"), 20),
+            }
+            bp_vent = updated.setdefault("building_parameters", {}).setdefault("ventilation", {})
+            bp_vent["ventilation_type"] = "custom"
+            bp_vent["custom_heat_transfer_coefficient_ventilation"] = hve_effective
+            bp_vent["units"] = "W/K"
+            metadata["ventilation_system"] = ventilation
+            extra.append({"measure_code": "ventilation", **ventilation})
+
+        elif measure_code == "bacs":
+            bacs = {
+                "bacs_class": str(params.get("bacs_class", params.get("class", "B"))).upper(),
+                "investment_EUR": _to_float(params.get("investment_EUR"), 12.0)
+                * _building_area(updated),
+                "annual_maintenance_EUR": _to_float(params.get("annual_maintenance_EUR"), 50.0),
+                "lifetime_years": _to_int(params.get("lifetime_years"), 15),
+            }
+            metadata["bacs"] = bacs
+            extra.append({"measure_code": "bacs", **bacs})
+
+        elif measure_code in {"biomass", "biomass_boiler"}:
+            heating_system = {
+                "level": 99,
+                "level_label": "Biomass boiler",
+                "system_type": "biomass_pellet_boiler",
+                "carrier": "biomass",
+                "seasonal_efficiency_or_scop": _to_float(params.get("efficiency"), 0.84),
+                "investment_EUR": _to_float(params.get("investment_EUR"), 550.0)
+                * max(_to_float(_building(updated).get("design_heating_capacity_kW"), 1.0), 1.0),
+                "annual_maintenance_EUR": _to_float(params.get("annual_maintenance_EUR"), 300.0),
+                "lifetime_years": _to_int(params.get("lifetime_years"), 18),
+            }
+            metadata["heating_system"] = heating_system
+            extra.append({"measure_code": "biomass", **heating_system})
+
+        elif measure_code == "district_heat":
+            heating_system = {
+                "level": 98,
+                "level_label": "District heating",
+                "system_type": "district_heat_substation",
+                "carrier": "district_heat",
+                "seasonal_efficiency_or_scop": _to_float(params.get("efficiency"), 0.97),
+                "investment_EUR": _to_float(params.get("investment_EUR"), 180.0)
+                * max(_to_float(_building(updated).get("design_heating_capacity_kW"), 1.0), 1.0),
+                "annual_maintenance_EUR": _to_float(params.get("annual_maintenance_EUR"), 120.0),
+                "lifetime_years": _to_int(params.get("lifetime_years"), 25),
+            }
+            metadata["heating_system"] = heating_system
+            extra.append({"measure_code": "district_heat", **heating_system})
+
+        elif measure_code == "chp":
+            heating_system = {
+                "level": 97,
+                "level_label": "Cogeneration",
+                "system_type": "cogeneration",
+                "carrier": "gas",
+                "seasonal_efficiency_or_scop": _to_float(params.get("thermal_efficiency"), 0.55),
+                "electrical_efficiency": _to_float(params.get("electrical_efficiency"), 0.30),
+                "investment_EUR": _to_float(params.get("investment_EUR"), 1200.0)
+                * max(_to_float(_building(updated).get("design_heating_capacity_kW"), 1.0), 1.0),
+                "annual_maintenance_EUR": _to_float(params.get("annual_maintenance_EUR"), 450.0),
+                "lifetime_years": _to_int(params.get("lifetime_years"), 15),
+            }
+            metadata["heating_system"] = heating_system
+            extra.append({"measure_code": "chp", **heating_system})
+
+        elif measure_code == "solar_thermal":
+            roof_area = sum(
+                _to_float(surface.get("area"))
+                for surface in updated.get("building_surface", [])
+                if _surface_matches_kind(surface, "roof")
+            )
+            solar = {
+                "enabled": True,
+                "area_m2": _to_float(params.get("area_m2"), max(2.0, 0.12 * roof_area)),
+                "annual_yield_kWh_m2": _to_float(params.get("annual_yield_kWh_m2"), 450.0),
+                "storage_loss_fraction": _to_float(params.get("storage_loss_fraction"), 0.12),
+                "shading_loss_fraction": _to_float(params.get("shading_loss_fraction"), 0.0),
+                "priority": str(params.get("priority", "dhw_first")),
+                "investment_EUR": _to_float(params.get("investment_EUR"), 850.0)
+                * _to_float(params.get("area_m2"), max(2.0, 0.12 * roof_area)),
+                "annual_maintenance_EUR": _to_float(params.get("annual_maintenance_EUR"), 60.0),
+                "lifetime_years": _to_int(params.get("lifetime_years"), 25),
+            }
+            metadata["solar_thermal"] = solar
+            extra.append({"measure_code": "solar_thermal", **solar})
+
+        elif measure_code == "battery":
+            battery = {
+                "capacity_kWh": _to_float(params.get("capacity_kWh"), 5.0),
+                "roundtrip_efficiency": _to_float(params.get("roundtrip_efficiency"), 0.90),
+                "investment_EUR": _to_float(params.get("investment_EUR"), 550.0)
+                * _to_float(params.get("capacity_kWh"), 5.0),
+                "annual_maintenance_EUR": _to_float(params.get("annual_maintenance_EUR"), 25.0),
+                "lifetime_years": _to_int(params.get("lifetime_years"), 12),
+            }
+            metadata["battery"] = battery
+            extra.append({"measure_code": "battery", **battery})
+
+        elif measure_code == "pv_shading":
+            pv = metadata.setdefault("pv_system", {})
+            shading = max(0.0, min(1.0, _to_float(params.get("shading_loss_fraction"), 0.10)))
+            pv["shading_loss_fraction"] = shading
+            extra.append(
+                {
+                    "measure_code": "pv_shading",
+                    "shading_loss_fraction": shading,
+                    "investment_EUR": _to_float(params.get("investment_EUR"), 0.0),
+                    "annual_maintenance_EUR": _to_float(params.get("annual_maintenance_EUR"), 0.0),
+                    "lifetime_years": _to_int(params.get("lifetime_years"), 25),
+                }
+            )
+        else:
+            raise ValueError(f"Unknown extra STREPIN measure {measure_code!r}.")
+
+    metadata["extra_measures"] = extra
     return updated
 
 
@@ -905,6 +1174,30 @@ def _set_window_g_value(bui: dict[str, Any], target_u: float) -> None:
             surface["g_value"] = g_value
 
 
+def _set_internal_gain_full_load(
+    bui: dict[str, Any],
+    name: str,
+    full_load_W_m2: float,
+) -> None:
+    gains = (
+        bui.setdefault("building_parameters", {})
+        .setdefault("internal_gains", [])
+    )
+    for gain in gains:
+        if str(gain.get("name", "")).lower() == str(name).lower():
+            gain.setdefault("strepin_pre_retrofit", {})["full_load"] = gain.get("full_load")
+            gain["full_load"] = float(full_load_W_m2)
+            return
+    gains.append(
+        {
+            "name": str(name),
+            "full_load": float(full_load_W_m2),
+            "weekday": [1.0] * 24,
+            "weekend": [1.0] * 24,
+        }
+    )
+
+
 def _surface_matches_kind(surface: dict[str, Any], kind: str) -> bool:
     boundary = str(surface.get("boundary", "OUTDOORS")).upper()
     surface_type = str(surface.get("type", "")).lower()
@@ -961,6 +1254,26 @@ def _normalize_split(split: dict[str, float]) -> dict[str, float]:
 def _exposed_perimeter_from_area(area_m2: float) -> float:
     side = max(float(area_m2), 1.0) ** 0.5
     return 4.0 * side
+
+
+def _building(bui: dict[str, Any]) -> dict[str, Any]:
+    return dict(bui.get("building", {}))
+
+
+def _building_area(bui: dict[str, Any]) -> float:
+    building = _building(bui)
+    return _to_float(
+        building.get("net_floor_area", building.get("treated_floor_area")),
+        0.0,
+    )
+
+
+def _building_volume(bui: dict[str, Any]) -> float:
+    building = _building(bui)
+    volume = _to_float(building.get("volume"), 0.0)
+    if volume > 0.0:
+        return volume
+    return _building_area(bui) * _to_float(building.get("floor_height"), 3.0)
 
 
 def _annual_dict(annual_results: pd.DataFrame | dict[str, Any]) -> dict[str, Any]:

@@ -167,8 +167,36 @@
       <td>Solar/PV renewables</td>
       <td>EN 15316-4-3 / EN 15316-4-6</td>
       <td><code>RenewableEnergySystemCalculator.run_timeseries()</code></td>
-      <td>Solar thermal useful heat allocated to DHW/heating and PV generation/self-consumption/export on the simulation time axis.</td>
+      <td>Solar thermal useful heat allocated to DHW/heating and PV generation/self-consumption/export on the simulation time axis, with optional shading/loss and battery dispatch parameters.</td>
       <td><span class="ok">Implemented</span></td>
+    </tr>
+    <tr>
+      <td>Lighting</td>
+      <td>EN 15193-1</td>
+      <td><code>LightingSystemCalculator.run_timeseries()</code></td>
+      <td>Installed lighting power, schedules, daylight/occupancy controls, LENI-style indicator and internal heat gains.</td>
+      <td><span class="ok">Implemented for STREPIN overlays</span></td>
+    </tr>
+    <tr>
+      <td>Ventilation and heat recovery</td>
+      <td>EN 16798-5 / EN 16798-7</td>
+      <td><code>VentilationSystemCalculator.run_timeseries()</code></td>
+      <td>Mechanical/natural flow, heat recovery, effective ventilation heat-transfer coefficient and fan electricity.</td>
+      <td><span class="ok">Implemented for STREPIN overlays</span></td>
+    </tr>
+    <tr>
+      <td>BACS</td>
+      <td>EN 15232-1 / EN ISO 52120-1</td>
+      <td><code>BACSControlFactorCalculator.run_timeseries()</code></td>
+      <td>Service-specific automation/control factors for heating, cooling, DHW, lighting, ventilation and auxiliaries.</td>
+      <td><span class="ok">Implemented for STREPIN overlays</span></td>
+    </tr>
+    <tr>
+      <td>Primary energy and economics</td>
+      <td>EN ISO 52000-1 / EN 15459-1</td>
+      <td><code>PrimaryEnergyAccountingCalculator</code>, <code>CostOptimalityCalculator</code></td>
+      <td>Delivered/exported primary-energy accounting plus global cost, annual running cost and annualized cost.</td>
+      <td><span class="ok">Implemented for STREPIN outputs</span></td>
     </tr>
     <tr>
       <td>Cooling generation</td>

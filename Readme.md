@@ -354,13 +354,32 @@ python examples/heat_pump_15316_4_2_example.py --scenario athens --weather-sourc
 
 The STREPIN workbook in `examples/strepin_archetypes/` can be converted into
 pyBuildingEnergy BUI cases and simulated with the European-standard generator
-chain:
+chain. Package IDs reproduce the workbook's pre/post cases:
 
 ```bash
 python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes all --packages P00 --system-chain en-standards
 python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes RMF_E1_B --packages P00,P09 --system-chain en-standards --write-hourly
 python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes all --packages all --system-chain en-standards
 ```
+
+Arbitrary combinations of the workbook measure levels can also be simulated
+without adding a new workbook package:
+
+```bash
+python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes RMF_E1_B --measure-levels wall=2,roof_floor=2,windows=2,heating=3,pv=2 --system-chain en-standards
+```
+
+Additional renovation overlays that are considered in the European EPB suite
+but are not explicit STREPIN workbook package levels can be layered on top:
+
+```bash
+python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes RMF_E1_B --measure-levels wall=2,roof_floor=2,windows=2,heating=3,pv=2 --extra-measures lighting-controls,ventilation-hrv,bacs-b,solar-thermal,battery-5 --system-chain en-standards
+```
+
+The STREPIN runner now reports EN ISO 52000-1 delivered/exported primary
+energy, EN 15193-1 lighting, EN 16798-5/7 ventilation and heat recovery,
+EN 15232-1 / EN ISO 52120-1 BACS factors, EN 15459-1 global cost, and deeper
+EN 15316-4 options for biomass, CHP and district heat where selected.
 
 Climate zone B now defaults to `examples/Palermo_PVGIS_TMY.epw`, downloaded from
 PVGIS and normalized for `pvlib.read_epw`. Open
@@ -379,14 +398,22 @@ The EN 15316 series covers the calculation method for system energy requirements
 - [x] EN 15316-1: General and expression of energy performance (Modules M3-1, M3-4, M3-9, M8-1, M8-4)
 - [x] EN 15316-2: Emission systems (heating and cooling)
 - [x] EN 15316-3: Distribution systems (DHW, heating, cooling)
-- [ ] EN 15316-4-X: Heat generation systems:
-  - 4-1: Combustion boilers
+- [x] EN 15316-4-X: Heat generation systems:
+  - [x] 4-1: Combustion boilers
   - [x] 4-2: Heat pumps
-  - 4-3: Solar thermal and photovoltaic systems
-  - 4-4: Cogeneration systems
-  - 4-5: District heating
-  - 4-7: Biomass
+  - [x] 4-3: Solar thermal and photovoltaic systems
+  - [x] 4-4: Cogeneration systems
+  - [x] 4-5: District heating
+  - [x] Biomass/solid-fuel default wrapper for EN 15316-4 generation workflows
 - [x] EN 15316-5: Storage systems
+
+## Cross-Cutting EPB Accounting **(New)**
+
+- [x] EN ISO 52000-1: delivered/exported energy and primary-energy accounting
+- [x] EN 15193-1: lighting energy and LENI-style indicators
+- [x] EN 16798-5/7: mechanical ventilation, heat recovery and fan electricity
+- [x] EN 15232-1 / EN ISO 52120-1: BACS service factors
+- [x] EN 15459-1: global cost and annualized cost calculation
 
 ## EN 16798 Cooling Modular Structure **(New)**
 

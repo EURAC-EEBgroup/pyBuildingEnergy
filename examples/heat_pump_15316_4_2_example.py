@@ -68,6 +68,11 @@ def default_output_dir(
     dhw_design_method: str = "en12831-3",
     heating_generation_method: str = "en15316-4-2",
     renewable_method: str = "simple",
+    primary_energy_method: str = "simple",
+    lighting_method: str = "simple",
+    ventilation_method: str = "simple",
+    bacs_method: str = "simple",
+    economic_method: str = "simple",
 ) -> Path:
     suffix = f"heat_pump_15316_4_2_{scenario}"
     if heating_generation_method != "en15316-4-2":
@@ -127,6 +132,16 @@ def default_output_dir(
         suffix = f"{suffix}_simple_dhw_design"
     if renewable_method == "en15316-4-3-4-6":
         suffix = f"{suffix}_renewables"
+    if primary_energy_method == "eniso52000-1":
+        suffix = f"{suffix}_primary"
+    if lighting_method == "en15193-1":
+        suffix = f"{suffix}_lighting"
+    if ventilation_method == "en16798-5-7":
+        suffix = f"{suffix}_ventilation"
+    if bacs_method == "eniso52120-1":
+        suffix = f"{suffix}_bacs"
+    if economic_method == "en15459-1":
+        suffix = f"{suffix}_cost"
     return REPO_ROOT / "examples" / "outputs" / suffix
 
 
@@ -1038,6 +1053,99 @@ def renewable_system_config(scenario: str, building: dict) -> dict:
             "performance_ratio": 0.80,
             "self_consumption_fraction": 0.70,
         },
+    }
+
+
+def lighting_system_config(scenario: str, building: dict) -> dict:
+    """Scenario-specific EN 15193-1 lighting assumptions."""
+
+    area = float(building["building"]["net_floor_area"])
+    config = {
+        "area_m2": area,
+        "installed_power_density_W_m2": 4.5,
+        "daylight_dependency_factor": 0.86,
+        "occupancy_dependency_factor": 0.90,
+        "constant_illuminance_factor": 0.95,
+        "daylight_control_fraction": 0.35,
+        "occupancy_control_fraction": 0.25,
+        "parasitic_power_W_m2": 0.02,
+        "emergency_lighting_kWh_m2_a": 0.0,
+    }
+    if scenario == "bolzano":
+        config["daylight_control_fraction"] = 0.30
+    return config
+
+
+def ventilation_system_config(scenario: str, building: dict) -> dict:
+    """Scenario-specific EN 16798-5/7 ventilation assumptions."""
+
+    area = float(building["building"]["net_floor_area"])
+    volume = area * float(building["building"].get("floor_height", 3.0))
+    config = {
+        "volume_m3": volume,
+        "air_change_rate_h": 0.45,
+        "heat_recovery_efficiency": 0.75,
+        "mechanical_fraction": 1.0,
+        "specific_fan_power_W_s_m3": 850.0,
+        "fan_heat_to_air_fraction": 0.6,
+    }
+    if scenario == "bolzano":
+        config.update({"air_change_rate_h": 0.50, "heat_recovery_efficiency": 0.80})
+    return config
+
+
+def apply_ventilation_to_building(building: dict, config: dict) -> dict:
+    """Return a building copy with EN 16798-5/7 effective Hve in ISO52016."""
+
+    adjusted = copy.deepcopy(building)
+    h_ve = pybui.VentilationSystemCalculator(config).effective_heat_transfer_coefficient_W_K()
+    ventilation = adjusted["building_parameters"].setdefault("ventilation", {})
+    ventilation["ventilation_type"] = "custom"
+    ventilation["custom_heat_transfer_coefficient_ventilation"] = h_ve
+    ventilation["units"] = "W/K"
+    adjusted["building_parameters"].setdefault("airflow_rates", {})[
+        "infiltration_rate"
+    ] = float(config.get("air_change_rate_h", 0.45))
+    return adjusted
+
+
+def primary_energy_config() -> dict:
+    """Generic EN ISO 52000-1 factors used by the examples."""
+
+    return {
+        "carriers": ["natural_gas", "electricity", "district_heat", "biomass"],
+        "primary_energy_factors": {
+            "natural_gas": {"nonrenewable": 1.05, "renewable": 0.0},
+            "electricity": {"nonrenewable": 2.17, "renewable": 0.0},
+            "district_heat": {"nonrenewable": 0.80, "renewable": 0.20},
+            "biomass": {"nonrenewable": 0.20, "renewable": 1.00},
+        },
+        "export_primary_energy_factors": {
+            "electricity": {"nonrenewable": 2.17, "renewable": 0.0}
+        },
+        "export_credit_method": "symmetric",
+    }
+
+
+def cost_optimal_config(scenario: str, building: dict) -> dict:
+    """Generic EN 15459-1 economics used by the examples."""
+
+    area = float(building["building"]["net_floor_area"])
+    prices = {
+        "natural_gas": 0.12,
+        "electricity": 0.30,
+        "district_heat": 0.11,
+        "biomass": 0.08,
+    }
+    if scenario == "bolzano":
+        prices["electricity"] = 0.32
+        prices["district_heat"] = 0.12
+    return {
+        "calculation_period_years": 30,
+        "real_discount_rate": 0.03,
+        "floor_area_m2": area,
+        "energy_prices": prices,
+        "export_prices": {"electricity": 0.06},
     }
 
 

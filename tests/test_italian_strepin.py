@@ -3,7 +3,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from pybuildingenergy.data.italian_strepin import load_italian_strepin_tables
+from pybuildingenergy.data.italian_strepin import (
+    apply_extra_measure_specs_to_bui,
+    load_italian_strepin_tables,
+)
 
 
 WORKBOOK = (
@@ -70,3 +73,32 @@ def test_italian_strepin_engine_summary_uses_engine_demands():
     assert out["Final_energy_kWh_m2a"] > 0.0
     assert out["Primary_nonren_kWh_m2a"] > 0.0
     assert out["Reference_workbook_primary_kWh_m2a"] is not None
+
+
+@pytest.mark.skipif(not WORKBOOK.exists(), reason="Italian STREPIN workbook not present")
+def test_italian_strepin_arbitrary_measure_case_and_extra_overlays():
+    tables = load_italian_strepin_tables(WORKBOOK)
+    case = tables.make_measure_case(
+        "RMF_E1_B",
+        {"wall": 2, "roof_floor": 2, "windows": 2, "heating": 3, "pv": 2},
+    )
+    case_bui = apply_extra_measure_specs_to_bui(
+        case.bui,
+        [
+            {"measure_code": "lighting", "parameters": {"installed_power_density_W_m2": 4.0}},
+            {"measure_code": "ventilation", "parameters": {"heat_recovery_efficiency": 0.75}},
+            {"measure_code": "bacs", "parameters": {"bacs_class": "B"}},
+            {"measure_code": "solar_thermal", "parameters": {"area_m2": 4.0}},
+            {"measure_code": "battery", "parameters": {"capacity_kWh": 5.0}},
+        ],
+    )
+
+    strepin = case_bui["strepin"]
+    assert case.package["Heating_Level"] == 3
+    assert case.package["PV_Level"] == 2
+    assert strepin["heating_system"]["carrier"] == "electricity"
+    assert strepin["lighting_system"]["installed_power_density_W_m2"] == pytest.approx(4.0)
+    assert strepin["ventilation_system"]["heat_recovery_efficiency"] == pytest.approx(0.75)
+    assert strepin["bacs"]["bacs_class"] == "B"
+    assert strepin["solar_thermal"]["area_m2"] == pytest.approx(4.0)
+    assert strepin["battery"]["capacity_kWh"] == pytest.approx(5.0)
