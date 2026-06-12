@@ -224,7 +224,7 @@ def _resolve_single_zone_vent_boundary(
     legacy and causal solver timestep loops.
 
     When *ahu_outputs_collector* is a dict it is passed through to
-    resolve_ventilation_boundary â†’ _resolve_component_streams, which will write
+    resolve_ventilation_boundary -> _resolve_component_streams, which will write
     {component_name: AHUStepOutputs} entries for every mechanical_supply component.
     The caller is responsible for snapshotting the dict after each timestep.
     """
@@ -262,7 +262,7 @@ def _resolve_single_zone_vent_boundary(
 # Ordered specification of AHU diagnostic output fields: (column_prefix, attribute_name, dtype).
 # Used by both _ahu_coll_to_columns (legacy/causal paths) and the multizone buffer, so that
 # all solver paths expose the same 12 diagnostic columns.
-# AHU coil energy must NOT be added to the zone Sankey â€” the ventilation term already uses
+# AHU coil energy must NOT be added to the zone Sankey - the ventilation term already uses
 # the conditioned supply temperature, so adding coil energy would double-count.
 _AHU_DIAG_SPEC: tuple = (
     ("Q_ahu_coil",     "actual_heating_coil_power_w",    float),
@@ -285,7 +285,7 @@ def _ahu_coll_to_columns(ahu_coll_act):
 
     Returns {col_name: np.array} for all mechanical_supply components found in the list.
     Only called when at least one such component is present.
-    Column schema is defined by _AHU_DIAG_SPEC â€” identical to the multizone path.
+    Column schema is defined by _AHU_DIAG_SPEC - identical to the multizone path.
     """
     names = sorted({k for d in ahu_coll_act for k in d})
     if not names:
@@ -2945,8 +2945,8 @@ class ISO52016:
 
             * heating: TRUE or FALSE. Is there a heating system?
             * cooling: TRUE or FALSE. Is there a cooling system?
-            * heating_setpoint: setpoint for the heating system (default 20Â°C)
-            * cooling_setpoint: setpoint for cooling system (default 26Â°C)
+            * heating_setpoint: setpoint for the heating system (default 20degC)
+            * cooling_setpoint: setpoint for cooling system (default 26degC)
             * latitude_deg: latitude of location in degrees
             * slab_on_ground_area: area of the building in contact with the ground
             * perimeter: perimeter of the building [m]
@@ -3096,7 +3096,7 @@ class ISO52016:
         """
         Calculation of temperature of the ground using:
             1. the thermal Resistance (R) and Transmittance (U) of the floor
-            2. External Temperature [Â°C]
+            2. External Temperature [degC]
         """
         wall_thickness = building_object["building"]["wall_thickness"]
         thermal_resistance_floor = 5.3
@@ -3627,7 +3627,7 @@ class ISO52016:
             )
 
         # ---------- VENTILATION / HEATING / COOLING ----------
-        # Rule: if no profiles in the BUI â†’ use the OCCUPANCY default profiles (occ_wd/occ_hd)
+        # Rule: if no profiles in the BUI -> use the OCCUPANCY default profiles (occ_wd/occ_hd)
         bp = building_object["building_parameters"]
 
         # ventilation
@@ -5159,7 +5159,7 @@ class ISO52016:
             for zi, zone in enumerate(zones):
                 phi_int_z_t[zi] = _zone_internal_gain_w(zone, t)
                 # Theta[zi] is the zone AIR node (first Z rows of state vector),
-                # not the operative temperature â€” explicit lag, no algebraic loop.
+                # not the operative temperature - explicit lag, no algebraic loop.
                 vent_bdy, purge_factor_z_t[zi], purge_active_z_t[zi], _ahu_step = (
                     _zone_ventilation_h_wk(zone, Theta[zi], t, T_out)
                 )
@@ -5396,7 +5396,7 @@ class ISO52016:
         for surface_out in opaque_inside_surface_output_buffers:
             out_data[f"Q_opaque_inside_surface_{surface_out['surface_token']}"] = surface_out["Q_inside"]
 
-        # AHU component diagnostics â€” 12 fields per component (from _AHU_DIAG_SPEC).
+        # AHU component diagnostics - 12 fields per component (from _AHU_DIAG_SPEC).
         # Column names: {col_pfx}_{comp_name}_{zone_name}.  Same field set as the
         # legacy/causal paths (_ahu_coll_to_columns), different suffix convention.
         # Columns appear only when at least one mechanical_supply component ran.
@@ -6459,7 +6459,7 @@ class ISO52016:
                 return result[0], result[1]
             return result
         except Exception as exc:
-            print(f"âŒ Simulation error in Temperature_and_Energy_needs_calculation: {exc}")
+            print(f"ERROR: Simulation error in Temperature_and_Energy_needs_calculation: {exc}")
             raise
 
     @classmethod
@@ -6525,8 +6525,8 @@ class ISO52016:
         [Matrix A] x [Node temperature vector X] = [State vector B]
 
         where:
-        Theta_int_air: internal air temperature [Â°C]
-        Theta_op_act: actual operative temperature [Â°C]
+        Theta_int_air: internal air temperature [degC]
+        Theta_op_act: actual operative temperature [degC]
 
         :param building_object: Building object created according to the method ``Building`` or ``Buildings_from_dictionary``.
         :param nrHCmodes: initialization of system mode: 0 for Heating, 1 for Cooling, 2 for Heating and Cooling. Default: 2
@@ -6542,7 +6542,7 @@ class ISO52016:
             **sim_df**: dataframe with:
 
                 * index: time of simulation at hourly resolution and time index typology (13 months at hourly resolution)
-                * T2m: External temperature [Â°C]
+                * T2m: External temperature [degC]
                 * RH: External humidity [%]
                 * G(h):
                 * Gb(n):
@@ -6912,8 +6912,8 @@ class ISO52016:
 
         """
         CALCULATION OF SENSIBLE HEATING AND COOLING LOAD (following the procedure of poin 6.5.5.2 of UNI ISO 52016)
-        For each hour and each zone the actual internal operative temperature Î¸ and the actual int;ac;op;zt;t 6.5.5.2 Sensible heating and cooling load
-        heating or cooling load, Î¦HC;ld;ztc;t, is calculated using the following step-wise procedure: 
+        For each hour and each zone the actual internal operative temperature theta and the actual int;ac;op;zt;t 6.5.5.2 Sensible heating and cooling load
+        heating or cooling load, PhiHC;ld;ztc;t, is calculated using the following step-wise procedure: 
         """
         H_ve_nat_all = [0]
         S_ve_nat_all = [0.0]
@@ -6983,13 +6983,13 @@ class ISO52016:
         # summury_profile = gen.get_summary()
 
         # fig = gen.plot_annual_profiles(freq="H", include_weekend_shading=True,
-        #                        title="Annual Profiles â€” Hourly")
+        #                        title="Annual Profiles - Hourly")
         # fig.show()
 
         # # grafico a medie giornaliere solo per alcune categorie
         # fig_day = gen.plot_annual_profiles(categories=["ventilation","heating","cooling","occupancy"],
         #                                 freq="D", include_weekend_shading=True,
-        #                                 title="Annual Profiles â€” Daily Average")
+        #                                 title="Annual Profiles - Daily Average")
         # fig_day.show()
                             
         # === ACCUMULATORS FOR SANKEY (Wh) ===
@@ -7017,7 +7017,7 @@ class ISO52016:
                 ri_state = 1 + nodes.PlnSum[Eli] + Pli
                 C_state[ri_state] = float(kappa_pli_eli[Pli, Eli])
 
-        # Previous state for storage (Â°C): initialized ONCE
+        # Previous state for storage (degC): initialized ONCE
         Theta_prev_state = np.full(nodes.Rn, 20.0, dtype=float)
 
         # --- new structures for TRASMISSIONS per element (only OP and W) ---
@@ -7118,7 +7118,7 @@ class ISO52016:
                 else:
                     # Reasonable caps
                     A_use = building_object["building"]["net_floor_area"]
-                    design_P = max(150.0 * A_use, 15_000.0)  # e.g., 150 W/mÂ² or 15 kW minimum
+                    design_P = max(150.0 * A_use, 15_000.0)  # e.g., 150 W/m2 or 15 kW minimum
                     warmup_P = 3.0 * design_P
 
                     if isinstance(building_object, dict):
@@ -7235,7 +7235,7 @@ class ISO52016:
                     ri = 0
                     '''
                     Energy balacne on zone level. Eq. (38) UNI 52016
-                    XTemp = Thermal capacity at specific time (t) and for  a specific degree Â°C [W] +
+                    XTemp = Thermal capacity at specific time (t) and for  a specific degree degC [W] +
                     + Ventilation loss (at time t)[W] + Transmission loss (at time t)[W] + intrnal gain[W] + solar gain [W]. Missed the
                     the convective fraction of the heating/cooling system
                     '''
@@ -7246,7 +7246,7 @@ class ISO52016:
                     )
                     H_ve_nat = _vent_bdy.heat_transfer_coefficient_w_k
                     S_ve_nat = _vent_bdy.source_term_w
-                    # Record for this timestep; do NOT append here â€” the while
+                    # Record for this timestep; do NOT append here - the while
                     # loop may iterate again for HVAC re-solving and we must
                     # emit exactly one entry per timestep to keep diagnostics
                     # aligned.
@@ -7566,7 +7566,7 @@ class ISO52016:
                         theta = np.linalg.solve(MatA, VecB)
                     except np.linalg.LinAlgError:
                         rank = np.linalg.matrix_rank(MatA)
-                        print(f"âš ï¸ MatA solve failed at t={Tstepi}: rank={rank}/{MatA.shape[0]}")
+                        print(f"WARNING: MatA solve failed at t={Tstepi}: rank={rank}/{MatA.shape[0]}")
                         print("MatA diagonal:", np.diag(MatA))
                         raise
                     VecB[:, :] = theta
@@ -7603,9 +7603,9 @@ class ISO52016:
                     where:
                     Phi_HC_ld_zd: unrestricted heating or cooling load to reach the required setpoint in W
                     Phi_HC_upper: is the upper value of the heating or cooling load in W  
-                    theta_int_op_set: required internal operative setpoint temperature in Â°C
-                    thet_int_op_0: operating temperature in free floating condition in Â°C
-                    theta_int_op_upper: is the internal operational temperature, obtained for the upper heating or cooling load Â°C
+                    theta_int_op_set: required internal operative setpoint temperature in degC
+                    thet_int_op_0: operating temperature in free floating condition in degC
+                    theta_int_op_upper: is the internal operational temperature, obtained for the upper heating or cooling load degC
                     '''
                     if nrHCmodes > 1:
                         # HEATING
@@ -7830,7 +7830,7 @@ class ISO52016:
         hourly_results["T_ve_source_eq"] = _t_eq
         hourly_results["Q_ve"] = _h_ve_arr * _t_air_arr - _s_ve_arr
 
-        # AHU per-component diagnostics â€” only populated when mechanical_supply
+        # AHU per-component diagnostics - only populated when mechanical_supply
         # components are present. NOT added to the Sankey: AHU coil heat crosses
         # the zone boundary from the system side and must not double-count Q_HC.
         for _col_name, _col_arr in _ahu_coll_to_columns(_ahu_coll_all[act_slice]).items():
@@ -7889,8 +7889,8 @@ class ISO52016:
         [Matrix A] x [Node temperature vector X] = [State vector B]
 
         where:
-        Theta_int_air: internal air temperature [Â°C]
-        Theta_op_act: Actual operative temperature [Â°C]
+        Theta_int_air: internal air temperature [degC]
+        Theta_op_act: Actual operative temperature [degC]
 
         :param building_object: Building object create according to the method ``Building`` or ``Buildings_from_dictionary``.
         :param nrHCmodes:  inizailization of system mode: 0 for Heating, 1 for Cooling, 2 for Heating and Cooling. Default: 2
@@ -7906,7 +7906,7 @@ class ISO52016:
             **sim_df*: dataframe with:
 
                 * index: time of simulation on hourly resolution and timeindex typology (13 months on hourly resolution)
-                * T2m: Exteranl temperarture [Â°C]
+                * T2m: Exteranl temperarture [degC]
                 * RH: External humidity [%]
                 * G(h):
                 * Gb(n):
@@ -8294,8 +8294,8 @@ class ISO52016:
 
         """
         CALCULATION OF SENSIBLE HEATING AND COOLING LOAD (following the procedure of poin 6.5.5.2 of UNI ISO 52016)
-        For each hour and each zone the actual internal operative temperature Î¸ and the actual int;ac;op;zt;t 6.5.5.2 Sensible heating and cooling load
-        heating or cooling load, Î¦HC;ld;ztc;t, is calculated using the following step-wise procedure: 
+        For each hour and each zone the actual internal operative temperature theta and the actual int;ac;op;zt;t 6.5.5.2 Sensible heating and cooling load
+        heating or cooling load, PhiHC;ld;ztc;t, is calculated using the following step-wise procedure: 
         """
         H_ve_nat_all = [0]
         S_ve_nat_all = [0.0]
@@ -8370,13 +8370,13 @@ class ISO52016:
         # summury_profile = gen.get_summary()
 
         # fig = gen.plot_annual_profiles(freq="H", include_weekend_shading=True,
-        #                        title="Annual Profiles â€” Hourly")
+        #                        title="Annual Profiles - Hourly")
         # fig.show()
 
         # # grafico a medie giornaliere solo per alcune categorie
         # fig_day = gen.plot_annual_profiles(categories=["ventilation","heating","cooling","occupancy"],
         #                                 freq="D", include_weekend_shading=True,
-        #                                 title="Annual Profiles â€” Daily Average")
+        #                                 title="Annual Profiles - Daily Average")
         # fig_day.show()
                             
         # === ACCUMULATORS FOR SANKEY (Wh) ===
@@ -8404,7 +8404,7 @@ class ISO52016:
                 ri_state = 1 + nodes.PlnSum[Eli] + Pli
                 C_state[ri_state] = float(kappa_pli_eli[Pli, Eli])
 
-        # Previous state for storage (Â°C): initialized ONCE
+        # Previous state for storage (degC): initialized ONCE
         Theta_prev_state = np.full(nodes.Rn, 20.0, dtype=float)
         # Causal controller state: previous-step operative/air/radiant temperatures.
         theta_air_prev_causal = 20.0
@@ -8509,7 +8509,7 @@ class ISO52016:
                 else:
                     # Reasonable caps
                     A_use = building_object["building"]["net_floor_area"]
-                    design_P = max(150.0 * A_use, 15_000.0)  # e.g., 150 W/mÂ² or 15 kW minimum
+                    design_P = max(150.0 * A_use, 15_000.0)  # e.g., 150 W/m2 or 15 kW minimum
                     warmup_P = 3.0 * design_P
 
 
@@ -8665,7 +8665,7 @@ class ISO52016:
                     ri = 0
                     '''
                     Energy balacne on zone level. Eq. (38) UNI 52016
-                    XTemp = Thermal capacity at specific time (t) and for  a specific degree Â°C [W] +
+                    XTemp = Thermal capacity at specific time (t) and for  a specific degree degC [W] +
                     + Ventilation loss (at time t)[W] + Transmission loss (at time t)[W] + intrnal gain[W] + solar gain [W]. Missed the
                     the convective fraction of the heating/cooling system
                     '''
@@ -8676,7 +8676,7 @@ class ISO52016:
                     )
                     H_ve_nat = _vent_bdy.heat_transfer_coefficient_w_k
                     S_ve_nat = _vent_bdy.source_term_w
-                    # Record for this timestep; do NOT append here â€” the while
+                    # Record for this timestep; do NOT append here - the while
                     # loop may iterate again for HVAC re-solving and we must
                     # emit exactly one entry per timestep to keep diagnostics
                     # aligned.
@@ -8996,7 +8996,7 @@ class ISO52016:
                         theta = np.linalg.solve(MatA, VecB)
                     except np.linalg.LinAlgError:
                         rank = np.linalg.matrix_rank(MatA)
-                        print(f"âš ï¸ MatA solve failed at t={Tstepi}: rank={rank}/{MatA.shape[0]}")
+                        print(f"WARNING: MatA solve failed at t={Tstepi}: rank={rank}/{MatA.shape[0]}")
                         print("MatA diagonal:", np.diag(MatA))
                         raise
                     VecB[:, :] = theta
@@ -9033,9 +9033,9 @@ class ISO52016:
                     where:
                     Phi_HC_ld_zd: unrestricted heating or cooling load to reach the required setpoint in W
                     Phi_HC_upper: is the upper value of the heating or cooling load in W  
-                    theta_int_op_set: required internal operative setpoint temperature in Â°C
-                    thet_int_op_0: operating temperature in free floating condition in Â°C
-                    theta_int_op_upper: is the internal operational temperature, obtained for the upper heating or cooling load Â°C
+                    theta_int_op_set: required internal operative setpoint temperature in degC
+                    thet_int_op_0: operating temperature in free floating condition in degC
+                    theta_int_op_upper: is the internal operational temperature, obtained for the upper heating or cooling load degC
                     '''
                     if nrHCmodes > 1:
                         # HEATING
@@ -9302,7 +9302,7 @@ class ISO52016:
         hourly_results["T_ve_source_eq"] = _t_eq
         hourly_results["Q_ve"] = _h_ve_arr * _t_air_arr - _s_ve_arr
 
-        # AHU per-component diagnostics â€” only populated when mechanical_supply
+        # AHU per-component diagnostics - only populated when mechanical_supply
         # components are present. NOT added to the Sankey: AHU coil heat crosses
         # the zone boundary from the system side and must not double-count Q_HC.
         for _col_name, _col_arr in _ahu_coll_to_columns(_ahu_coll_all[act_slice]).items():
