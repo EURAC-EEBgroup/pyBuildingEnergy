@@ -1406,9 +1406,177 @@ def _run_legacy(building, n=48, t_out=-5.0, profile_df=None):
     return result[0] if isinstance(result, tuple) else result
 
 
+def _run_single_zone_engine(
+    building,
+    *,
+    control_mode="standard",
+    n=48,
+    t_out=-5.0,
+    profile_df=None,
+    **kwargs,
+):
+    """Run the shared private single-zone ISO 52016 engine with patched inputs."""
+    pf = profile_df if profile_df is not None else _minimal_profile_df(n)
+    engine_kwargs = {
+        "weather_source": "epw",
+        "path_weather_file": None,
+        "warmup_hours": 0,
+    }
+    engine_kwargs.update(kwargs)
+    with _patched_weather(n, t_out), _patched_profiles(pf):
+        result = ISO52016._single_zone_52016_engine(
+            building,
+            control_mode=control_mode,
+            **engine_kwargs,
+        )
+    return result[0] if isinstance(result, tuple) else result
+
+
 class TestLegacyCausalSolverPaths:
     """Verify the affine boundary end-to-end in the legacy and causal single-zone
     solver cores (via utils.py::_resolve_single_zone_vent_boundary)."""
+
+    def test_standard_wrapper_matches_shared_engine(self):
+        """Compatibility wrapper and shared engine produce identical standard results."""
+        bld = _legacy_building([{
+            "name": "mech",
+            "ventilation_type": "prescribed",
+            "heat_transfer_coefficient_w_k": 350.0,
+            "source_temperature_c": -5.0,
+        }])
+        wrapper = _run_legacy(bld, n=24, t_out=-8.0)
+        engine = _run_single_zone_engine(bld, control_mode="standard", n=24, t_out=-8.0)
+
+        for col in ("Q_HC", "T_op", "T_air", "H_ve", "S_ve", "Q_ve"):
+            assert col in wrapper.columns
+            assert col in engine.columns
+            np.testing.assert_allclose(
+                engine[col].to_numpy(),
+                wrapper[col].to_numpy(),
+                rtol=1e-9,
+                atol=1e-6,
+            )
+
+    def test_public_and_private_return_shapes_are_compatible(self):
+        """Public API stays two-value by default; private engine keeps Sankey data."""
+        bld = _legacy_building([{
+            "name": "mech",
+            "ventilation_type": "prescribed",
+            "heat_transfer_coefficient_w_k": 100.0,
+            "source_temperature_c": -5.0,
+        }])
+        pf = _minimal_profile_df(4)
+        with _patched_weather(4, -5.0), _patched_profiles(pf):
+            public_result = ISO52016.Temperature_and_Energy_needs_calculation(
+                bld,
+                weather_source="epw",
+                path_weather_file=None,
+                warmup_hours=0,
+            )
+        with _patched_weather(4, -5.0), _patched_profiles(pf):
+            public_with_sankey = ISO52016.Temperature_and_Energy_needs_calculation(
+                bld,
+                weather_source="epw",
+                path_weather_file=None,
+                warmup_hours=0,
+                return_sankey_data=True,
+            )
+        with _patched_weather(4, -5.0), _patched_profiles(pf):
+            private_result = ISO52016._Temperature_and_Energy_needs_calculation_core(
+                bld,
+                weather_source="epw",
+                path_weather_file=None,
+                warmup_hours=0,
+            )
+
+        assert isinstance(public_result, tuple)
+        assert len(public_result) == 2
+        assert isinstance(public_with_sankey, tuple)
+        assert len(public_with_sankey) == 3
+        assert isinstance(private_result, tuple)
+        assert len(private_result) == 3
+
+    def test_causal_wrapper_matches_shared_engine(self):
+        """The old AHU-causal private name remains a thin compatibility wrapper."""
+        bld = _legacy_building([{
+            "name": "mech",
+            "ventilation_type": "prescribed",
+            "heat_transfer_coefficient_w_k": 300.0,
+            "source_temperature_c": 18.0,
+        }])
+        wrapper = _run_causal(bld, n=24, t_out=-10.0)
+        engine = _run_single_zone_engine(bld, control_mode="ahu_causal", n=24, t_out=-10.0)
+
+        for col in ("Q_HC", "T_op", "T_air", "H_ve", "S_ve", "Q_ve"):
+            np.testing.assert_allclose(
+                engine[col].to_numpy(),
+                wrapper[col].to_numpy(),
+                rtol=1e-9,
+                atol=1e-6,
+            )
+
+    def test_external_series_control_mode_records_clamped_power(self):
+        """External series mode records the used heating power and clamps to capacity."""
+        bld = _legacy_building([{
+            "name": "inf",
+            "ventilation_type": "prescribed",
+            "heat_transfer_coefficient_w_k": 500.0,
+            "source_temperature_c": -25.0,
+        }])
+        series = np.array([500.0, 20000.0, 750.0, 0.0])
+        out = _run_single_zone_engine(
+            bld,
+            control_mode="external_series",
+            n=4,
+            t_out=-25.0,
+            external_heating_power_series=series,
+        )
+
+        assert "Q_H_AHU_used" in out.columns
+        np.testing.assert_allclose(
+            out["Q_H_AHU_used"].to_numpy(),
+            np.array([500.0, 10000.0, 750.0, 0.0]),
+            rtol=1e-9,
+            atol=1e-6,
+        )
+
+    def test_causal_callback_receives_previous_timestep_state(self):
+        """Causal AHU callback receives k-1 temperatures, not current free-float values."""
+        bld = _legacy_building([{
+            "name": "inf",
+            "ventilation_type": "prescribed",
+            "heat_transfer_coefficient_w_k": 500.0,
+            "source_temperature_c": -20.0,
+        }])
+        records = []
+
+        def causal_heat(**kwargs):
+            records.append(kwargs)
+            return 250.0
+
+        out = _run_single_zone_engine(
+            bld,
+            control_mode="ahu_causal",
+            n=4,
+            t_out=-20.0,
+            external_heating_power_causal_fn=causal_heat,
+        )
+
+        assert "Q_H_AHU_used" in out.columns
+        assert len(records) == 4
+        assert records[1]["theta_air_prev"] == pytest.approx(float(out["T_air"].iloc[0]))
+        assert records[1]["theta_op_prev"] == pytest.approx(float(out["T_op"].iloc[0]))
+        assert records[1]["theta_rad_prev"] == pytest.approx(float(out["T_rad"].iloc[0]))
+
+    def test_single_zone_mechanical_supply_diagnostic_schema(self):
+        """Shared engine keeps all single-zone AHU diagnostic columns."""
+        bld = _legacy_building([_ahu_component()])
+        out = _run_single_zone_engine(bld, control_mode="standard", n=4, t_out=-5.0)
+
+        for col_pfx, _, _ in _AHU_DIAG_SPEC:
+            col = f"{col_pfx}_ahu"
+            assert col in out.columns
+            assert len(out[col]) == len(out)
 
     def test_legacy_prescribed_h_ve_appears_in_output(self):
         """Legacy solver must emit H_ve matching the prescribed component H_k."""

@@ -970,6 +970,114 @@ def test_aggregation_preserves_area_weighted_surface_heat_transfer_coefficients(
     assert wall["radiative_heat_transfer_coefficient_external"] == pytest.approx(4.5)
 
 
+def test_table25_surface_heat_transfer_defaults_by_boundary_and_heat_flow():
+    from pybuildingenergy.source import utils as utils_module
+
+    def resolved(surface):
+        surface = copy.deepcopy(surface)
+        utils_module._apply_surface_heat_transfer_defaults(surface)
+        return surface
+
+    facade = resolved(
+        {
+            "type": "opaque",
+            "boundary": "OUTDOORS",
+            "ISO52016_type_string": "OP",
+            "orientation": {"azimuth": 180.0, "tilt": 90.0},
+        }
+    )
+    assert facade["convective_heat_transfer_coefficient_internal"] == pytest.approx(2.5)
+    assert facade["radiative_heat_transfer_coefficient_internal"] == pytest.approx(5.13)
+    assert facade["convective_heat_transfer_coefficient_external"] == pytest.approx(20.0)
+    assert facade["radiative_heat_transfer_coefficient_external"] == pytest.approx(4.14)
+    assert (
+        facade["convective_heat_transfer_coefficient_internal"]
+        + facade["radiative_heat_transfer_coefficient_internal"]
+    ) == pytest.approx(7.63)
+
+    roof = resolved(
+        {
+            "type": "opaque",
+            "boundary": "OUTDOORS",
+            "ISO52016_type_string": "OP",
+            "orientation": {"azimuth": 0.0, "tilt": 0.0},
+        }
+    )
+    assert roof["convective_heat_transfer_coefficient_internal"] == pytest.approx(5.0)
+    assert roof["radiative_heat_transfer_coefficient_internal"] == pytest.approx(5.13)
+    assert roof["convective_heat_transfer_coefficient_external"] == pytest.approx(20.0)
+    assert roof["radiative_heat_transfer_coefficient_external"] == pytest.approx(4.14)
+    assert (
+        roof["convective_heat_transfer_coefficient_internal"]
+        + roof["radiative_heat_transfer_coefficient_internal"]
+    ) == pytest.approx(10.13)
+
+    roof_reverse = resolved(
+        {
+            "type": "opaque",
+            "boundary": "OUTDOORS",
+            "ISO52016_type_string": "OP",
+            "heat_flow_direction": "downwards",
+            "orientation": {"azimuth": 0.0, "tilt": 0.0},
+        }
+    )
+    assert roof_reverse["convective_heat_transfer_coefficient_internal"] == pytest.approx(0.7)
+    assert roof_reverse["radiative_heat_transfer_coefficient_internal"] == pytest.approx(5.13)
+
+    ground = resolved(
+        {
+            "type": "opaque",
+            "boundary": "GROUND",
+            "ISO52016_type_string": "GR",
+            "orientation": {"azimuth": 0.0, "tilt": 180.0},
+        }
+    )
+    assert ground["convective_heat_transfer_coefficient_internal"] == pytest.approx(0.7)
+    assert ground["radiative_heat_transfer_coefficient_internal"] == pytest.approx(5.13)
+    assert ground["convective_heat_transfer_coefficient_external"] == pytest.approx(0.0)
+    assert ground["radiative_heat_transfer_coefficient_external"] == pytest.approx(0.0)
+
+    internal_partition = resolved(
+        {
+            "type": "adjacent",
+            "boundary": "INTERNAL",
+            "ISO52016_type_string": "ADJ",
+            "orientation": {"azimuth": 90.0, "tilt": 90.0},
+        }
+    )
+    assert internal_partition["convective_heat_transfer_coefficient_internal"] == pytest.approx(2.5)
+    assert internal_partition["radiative_heat_transfer_coefficient_internal"] == pytest.approx(5.13)
+    assert internal_partition["convective_heat_transfer_coefficient_external"] == pytest.approx(2.5)
+    assert internal_partition["radiative_heat_transfer_coefficient_external"] == pytest.approx(5.13)
+
+
+def test_ground_conductance_does_not_apply_outdoor_surface_coefficient():
+    from pybuildingenergy.source import utils as utils_module
+
+    building_object = {
+        "building_surface": [
+            {
+                "name": "Slab",
+                "type": "opaque",
+                "boundary": "GROUND",
+                "ISO52016_type_string": "GR",
+                "orientation": {"azimuth": 0.0, "tilt": 180.0},
+                "area": 10.0,
+                "u_value": 1.0,
+            }
+        ]
+    }
+
+    result = utils_module.ISO52016.Conductance_node_of_element(building_object)
+    slab = building_object["building_surface"][0]
+
+    assert np.isfinite(result.h_pli_eli).all()
+    assert slab["convective_heat_transfer_coefficient_internal"] == pytest.approx(0.7)
+    assert slab["radiative_heat_transfer_coefficient_internal"] == pytest.approx(5.13)
+    assert slab["convective_heat_transfer_coefficient_external"] == pytest.approx(0.0)
+    assert slab["radiative_heat_transfer_coefficient_external"] == pytest.approx(0.0)
+
+
 def test_shading_window_uses_geographical_gamma_for_north(monkeypatch):
     """Per NV il gamma passato allo shading deve usare convenzione geografica (N=0)."""
     from pybuildingenergy.source import utils as utils_module
@@ -1449,7 +1557,7 @@ def test_multizone_solver_exports_ground_flux_columns(monkeypatch):
     )
     monkeypatch.setattr(
         ISO52016,
-        "Conduttance_node_of_element",
+        "Conductance_node_of_element",
         lambda self, building_object: SimpleNamespace(h_pli_eli=np.zeros((1, 1), dtype=float)),
     )
     monkeypatch.setattr(
@@ -1619,7 +1727,7 @@ def test_multizone_solver_exports_opaque_inside_flux_columns(monkeypatch):
     )
     monkeypatch.setattr(
         ISO52016,
-        "Conduttance_node_of_element",
+        "Conductance_node_of_element",
         lambda self, building_object: SimpleNamespace(h_pli_eli=np.array([[2.0]], dtype=float)),
     )
     monkeypatch.setattr(
@@ -1728,7 +1836,7 @@ def test_multizone_solver_does_not_cache_global_ventilation_fallbacks_in_zones(m
     )
     monkeypatch.setattr(
         ISO52016,
-        "Conduttance_node_of_element",
+        "Conductance_node_of_element",
         lambda self, building_object: SimpleNamespace(h_pli_eli=np.zeros((1, 1), dtype=float)),
     )
     monkeypatch.setattr(
