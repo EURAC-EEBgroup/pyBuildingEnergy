@@ -36,6 +36,16 @@ DEFAULT_WINDOW_ORIENTATION_SPLIT = {
     "WV": 0.20,
 }
 
+DEFAULT_SOLAR_SHADING_TRANSMITTANCE = {
+    "sf": 1.00,
+    "fixed": 0.20,
+    "mobile": 0.20,
+}
+
+DEFAULT_SOLAR_SHADING_ORIENTATIONS = ("EV", "SV", "WV")
+DEFAULT_MOBILE_SOLAR_SHADING_BASE_WIDTH_CM = 160.0
+DEFAULT_FIXED_SOLAR_SHADING_COST_EUR_M2 = 170.0
+
 DEFAULT_CLIMATE_LOCATIONS = {
     "B": {
         "name": "Palermo",
@@ -642,6 +652,85 @@ def apply_extra_measure_specs_to_bui(
             metadata["ventilation_system"] = ventilation
             extra.append({"measure_code": "ventilation", **ventilation})
 
+        elif measure_code in {"solar_shading", "window_shading", "eem6"}:
+            raw_level = str(
+                params.get("level", params.get("type", params.get("level_label", "fixed")))
+            ).strip().lower()
+            level_aliases = {
+                "sf": "sf",
+                "state-of-fact": "sf",
+                "state_of_fact": "sf",
+                "none": "sf",
+                "no": "sf",
+                "fixed": "fixed",
+                "fissa": "fixed",
+                "mobile": "mobile",
+                "movable": "mobile",
+            }
+            level = level_aliases.get(raw_level, raw_level)
+            if level not in DEFAULT_SOLAR_SHADING_TRANSMITTANCE:
+                raise ValueError(
+                    "Solar shading level must be one of 'sf', 'fixed'/'fissa' or 'mobile'."
+                )
+
+            factor = _to_float(
+                params.get(
+                    "solar_transmission_factor",
+                    params.get(
+                        "solar_shading_transmittance",
+                        params.get("transmittance", params.get("factor")),
+                    ),
+                ),
+                DEFAULT_SOLAR_SHADING_TRANSMITTANCE[level],
+            )
+            factor = max(0.0, min(1.0, factor))
+
+            activation_raw = params.get("activation_irradiance_W_m2")
+            if activation_raw is None:
+                activation_raw = params.get("solar_shading_activation_irradiance_W_m2")
+            activation = (
+                None
+                if activation_raw is None
+                else max(0.0, _to_float(activation_raw, 0.0))
+            )
+
+            orientations = _solar_shading_orientations(
+                params.get("orientations", params.get("apply_to_orientations"))
+            )
+            affected_area_m2 = _set_window_solar_shading(
+                updated,
+                level=level,
+                solar_transmission_factor=factor,
+                activation_irradiance_W_m2=activation,
+                orientations=orientations,
+            )
+            cost_eur_m2 = _to_float(
+                params.get("cost_EUR_m2", params.get("cost_eur_m2")),
+                _solar_shading_default_cost_eur_m2(level, params),
+            )
+            investment = _to_float(
+                params.get("investment_EUR"),
+                0.0 if level == "sf" else cost_eur_m2 * affected_area_m2,
+            )
+            solar_shading = {
+                "level": level,
+                "level_label": {
+                    "sf": "SF",
+                    "fixed": "fissa",
+                    "mobile": "mobile",
+                }[level],
+                "solar_transmission_factor": factor,
+                "activation_irradiance_W_m2": activation,
+                "applied_orientations": sorted(orientations),
+                "affected_window_area_m2": affected_area_m2,
+                "cost_EUR_m2": cost_eur_m2,
+                "investment_EUR": investment,
+                "annual_maintenance_EUR": _to_float(params.get("annual_maintenance_EUR"), 0.0),
+                "lifetime_years": _to_int(params.get("lifetime_years"), 20),
+            }
+            metadata["solar_shading"] = solar_shading
+            extra.append({"measure_code": "solar_shading", **solar_shading})
+
         elif measure_code == "bacs":
             bacs = {
                 "bacs_class": str(params.get("bacs_class", params.get("class", "B"))).upper(),
@@ -965,7 +1054,7 @@ def _archetype_to_bui(
                     shading=False,
                     shading_type="none",
                     width_or_distance_of_shading_elements=0.0,
-                    overhang_proprieties={"width_of_horizontal_overhangs": 0.0},
+                    overhang_properties={"width_of_horizontal_overhangs": 0.0},
                 )
             )
 
@@ -1106,7 +1195,7 @@ def _surface(
     shading: bool = False,
     shading_type: str = "none",
     width_or_distance_of_shading_elements: float = 0.0,
-    overhang_proprieties: dict[str, float] | None = None,
+    overhang_properties: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     iso_type = "W" if surface_type == "transparent" else "OP"
     if boundary.upper() == "GROUND":
@@ -1142,7 +1231,7 @@ def _surface(
                 "width_or_distance_of_shading_elements": float(
                     width_or_distance_of_shading_elements
                 ),
-                "overhang_proprieties": overhang_proprieties
+                "overhang_properties": overhang_properties
                 or {"width_of_horizontal_overhangs": 0.0},
             }
         )
@@ -1172,6 +1261,119 @@ def _set_window_g_value(bui: dict[str, Any], target_u: float) -> None:
                 "g_value"
             )
             surface["g_value"] = g_value
+
+
+def _set_window_solar_shading(
+    bui: dict[str, Any],
+    *,
+    level: str,
+    solar_transmission_factor: float,
+    activation_irradiance_W_m2: float | None,
+    orientations: set[str],
+) -> float:
+    factor = max(0.0, min(1.0, float(solar_transmission_factor)))
+    active = level != "sf" and factor < 1.0
+    affected_area_m2 = 0.0
+    for surface in bui.get("building_surface", []):
+        if not _surface_matches_kind(surface, "window"):
+            continue
+        orientation = _surface_orientation_code(surface)
+        if orientation not in orientations:
+            continue
+        affected_area_m2 += _to_float(surface.get("area"), 0.0)
+        before = surface.setdefault("strepin_pre_retrofit", {})
+        for key in [
+            "shading",
+            "shading_type",
+            "solar_shading_level",
+            "solar_shading_transmittance",
+            "solar_shading_activation_irradiance_W_m2",
+        ]:
+            before.setdefault(key, surface.get(key))
+        surface["shading"] = active
+        surface["shading_type"] = "solar_transmission_factor" if active else "none"
+        surface["solar_shading_level"] = level
+        surface["solar_shading_transmittance"] = factor
+        if activation_irradiance_W_m2 is None:
+            surface.pop("solar_shading_activation_irradiance_W_m2", None)
+        else:
+            surface["solar_shading_activation_irradiance_W_m2"] = float(
+                activation_irradiance_W_m2
+            )
+    return affected_area_m2
+
+
+def _surface_orientation_code(surface: dict[str, Any]) -> str | None:
+    tag = str(surface.get("ISO52016_orientation_string", "")).strip().upper()
+    if tag in {"NV", "EV", "SV", "WV", "HOR"}:
+        return tag
+
+    orientation = surface.get("orientation", {}) or {}
+    try:
+        azimuth = float(orientation.get("azimuth")) % 360.0
+        tilt = float(orientation.get("tilt"))
+    except (TypeError, ValueError):
+        return None
+    if tilt < 45.0:
+        return "HOR"
+    candidates = [(0.0, "NV"), (90.0, "EV"), (180.0, "SV"), (270.0, "WV")]
+    return min(
+        candidates,
+        key=lambda item: abs(((azimuth - item[0] + 180.0) % 360.0) - 180.0),
+    )[1]
+
+
+def _solar_shading_orientations(raw: Any) -> set[str]:
+    if raw is None or raw == "":
+        return set(DEFAULT_SOLAR_SHADING_ORIENTATIONS)
+    if isinstance(raw, str):
+        values = [item.strip() for item in raw.replace(";", ",").split(",")]
+    else:
+        try:
+            values = list(raw)
+        except TypeError:
+            values = [raw]
+    aliases = {
+        "N": "NV",
+        "NORTH": "NV",
+        "NV": "NV",
+        "E": "EV",
+        "EAST": "EV",
+        "EV": "EV",
+        "S": "SV",
+        "SOUTH": "SV",
+        "SV": "SV",
+        "W": "WV",
+        "WEST": "WV",
+        "WV": "WV",
+    }
+    out = set()
+    for value in values:
+        key = str(value).strip().upper()
+        if not key:
+            continue
+        if key not in aliases:
+            raise ValueError(
+                "Solar shading orientations must use N/E/S/W or NV/EV/SV/WV labels."
+            )
+        out.add(aliases[key])
+    return out or set(DEFAULT_SOLAR_SHADING_ORIENTATIONS)
+
+
+def _solar_shading_default_cost_eur_m2(level: str, params: dict[str, Any]) -> float:
+    if level == "sf":
+        return 0.0
+    if level == "fixed":
+        return DEFAULT_FIXED_SOLAR_SHADING_COST_EUR_M2
+
+    base_width_cm = _to_float(
+        params.get("base_width_cm", params.get("B_cm")),
+        DEFAULT_MOBILE_SOLAR_SHADING_BASE_WIDTH_CM,
+    )
+    element = str(params.get("element", "window")).strip().lower()
+    if element in {"door", "door_window", "porta_finestra", "portafinestra"}:
+        return max(0.0, -0.066 * base_width_cm + 31.794)
+    return max(0.0, -0.0484 * base_width_cm + 31.755)
 
 
 def _set_internal_gain_full_load(

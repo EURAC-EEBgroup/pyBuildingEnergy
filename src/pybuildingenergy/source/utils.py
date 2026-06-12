@@ -1625,30 +1625,74 @@ class ISO52010:
                 else:
                     phi_deg = 0.0
 
+                overhang_properties = window.get("overhang_properties", {}) or {}
                 F_sh_dir_k_t = shading_reduction_factor(
                     alpha_sol_t=alpha_deg,
                     phi_sol_t=phi_deg,
                     beta_k_t=90,
                     gamma_k_t=orientation_angle,
-                    D_k_ovh_q=window.get("overhang_proprieties", {}).get("width_of_horizontal_overhangs"),
+                    D_k_ovh_q=overhang_properties.get("width_of_horizontal_overhangs"),
                     L_k_ovh_q=window.get("width_or_distance_of_shading_elements"),
                     elements_shading_type=window.get("shading_type"),
                     H_k=window.get("height"),
                     W_k=window.get("width"),
                 )
 
-                # Warning: I assume F_sh_dir_k_t = (dir_factor, sun_height)
-                fatt_dir = F_sh_dir_k_t[0] if F_sh_dir_k_t is not None else 0.0
-                if fatt_dir > 0:
-                    I_dir = float(I_dir_tot.iloc[i]) if pd.notna(I_dir_tot.iloc[i]) else 0.0
-                    I_dif = float(I_dif_tot.iloc[i]) if pd.notna(I_dif_tot.iloc[i]) else 0.0
-                    denom = I_dir + I_dif
-                    F_sh_obst_k_t = 0.0 if denom == 0 else (fatt_dir * I_dir + I_dif) / denom
+                # F_sh_dir_k_t = (direct-beam factor, sunlit height).
+                # Annex F Method 1 converts that direct factor to the combined
+                # obstacle factor used with total irradiance: diffuse remains
+                # unaffected while direct irradiance is reduced.
+                direct_shading_factor = F_sh_dir_k_t[0] if F_sh_dir_k_t is not None else 0.0
+                direct_shading_factor = float(np.clip(direct_shading_factor, 0.0, 1.0)) if np.isfinite(direct_shading_factor) else 0.0
+                I_dir = float(I_dir_tot.iloc[i]) if pd.notna(I_dir_tot.iloc[i]) else 0.0
+                I_dif = float(I_dif_tot.iloc[i]) if pd.notna(I_dif_tot.iloc[i]) else 0.0
+                I_dir = max(0.0, I_dir)
+                I_dif = max(0.0, I_dif)
+                denom = I_dir + I_dif
+                if denom <= 0.0:
+                    F_sh_obst_k_t = 1.0
                 else:
-                    F_sh_obst_k_t = 0.0
+                    F_sh_obst_k_t = float(
+                        np.clip((direct_shading_factor * I_dir + I_dif) / denom, 0.0, 1.0)
+                    )
+
+                    try:
+                        solar_shading_transmittance = float(
+                            window.get(
+                                "solar_shading_transmittance",
+                                window.get("shading_transmittance", 1.0),
+                            )
+                        )
+                    except (TypeError, ValueError):
+                        solar_shading_transmittance = 1.0
+                    if not np.isfinite(solar_shading_transmittance):
+                        solar_shading_transmittance = 1.0
+                    solar_shading_transmittance = float(
+                        np.clip(solar_shading_transmittance, 0.0, 1.0)
+                    )
+
+                    activation_threshold = window.get(
+                        "solar_shading_activation_irradiance_W_m2"
+                    )
+                    try:
+                        activation_threshold = float(activation_threshold)
+                    except (TypeError, ValueError):
+                        activation_threshold = None
+                    if (
+                        activation_threshold is not None
+                        and np.isfinite(activation_threshold)
+                        and denom < max(0.0, activation_threshold)
+                    ):
+                        solar_shading_transmittance = 1.0
+
+                    F_sh_obst_k_t = float(
+                        np.clip(F_sh_obst_k_t * solar_shading_transmittance, 0.0, 1.0)
+                    )
 
                 F_sh_dir_k_ts_hour.iat[i] = F_sh_obst_k_t
-                h_k_sun_t_hour.iat[i]     = F_sh_dir_k_t[1] if F_sh_dir_k_t is not None else 0.0
+                h_k_sun_t_hour.iat[i]     = (
+                    F_sh_dir_k_t[1] if F_sh_dir_k_t is not None and I_dir > 0.0 else 0.0
+                )
 
             name = window.get('name', 'unknown')
             F_sh_dir_df[f"W_{name}"]     = F_sh_dir_k_ts_hour
@@ -1706,7 +1750,7 @@ class ISO52010:
     #                     phi_sol_t=np.degrees(solar_azimuth_angle.iloc[i]),
     #                     beta_k_t=90,
     #                     gamma_k_t=orientation_angle,
-    #                     D_k_ovh_q=window.get("overhang_proprieties", {}).get("width_of_horizontal_overhangs"),
+    #                     D_k_ovh_q=window.get("overhang_properties", {}).get("width_of_horizontal_overhangs"),
     #                     L_k_ovh_q=window.get("width_or_distance_of_shading_elements"),
     #                     elements_shading_type=window.get("shading_type"),
     #                     H_k=window.get("height"),
@@ -2210,6 +2254,27 @@ class ISO52016:
             return f_direct
 
         return 1.0
+
+    @staticmethod
+    def _solar_irradiance_after_method1_shading(
+        diffuse_irradiance_w_m2: float,
+        direct_irradiance_w_m2: float,
+        shading_factor_obstacles: float,
+    ) -> float:
+        """
+        Return total irradiance after ISO 52016-1 Annex F Method 1 shading.
+
+        ``shading_factor_obstacles`` is the combined Method 1 factor
+        F_sh;obst, i.e. the direct-beam shading result already weighted with
+        the unaffected diffuse term. It therefore multiplies the total
+        irradiance, not the direct component alone.
+        """
+
+        i_dif = max(0.0, float(diffuse_irradiance_w_m2))
+        i_dir = max(0.0, float(direct_irradiance_w_m2))
+        f_sh = float(shading_factor_obstacles)
+        f_sh = float(np.clip(f_sh, 0.0, 1.0)) if np.isfinite(f_sh) else 1.0
+        return (i_dif + i_dir) * f_sh
 
     @classmethod
     def Number_of_nodes_element(cls, building_object) -> numb_nodes_facade_elements:
@@ -5995,29 +6060,29 @@ class ISO52016:
     ):
         from .generate_profile import HourlyProfileGenerator, get_country_code_from_latlon  # lazy
         """
-        Calcualation fo energy needs according to the equation (37) of ISO 52016:2017. Page 60.
+        Calculation of energy needs according to equation (37) of ISO 52016:2017. Page 60.
 
         [Matrix A] x [Node temperature vector X] = [State vector B]
 
         where:
         Theta_int_air: internal air temperature [°C]
-        Theta_op_act: Actual operative temperature [°C]
+        Theta_op_act: actual operative temperature [°C]
 
-        :param building_object: Building object create according to the method ``Building`` or ``Buildings_from_dictionary``.
-        :param nrHCmodes:  inizailization of system mode: 0 for Heating, 1 for Cooling, 2 for Heating and Cooling. Default: 2
+        :param building_object: Building object created according to the method ``Building`` or ``Buildings_from_dictionary``.
+        :param nrHCmodes: initialization of system mode: 0 for Heating, 1 for Cooling, 2 for Heating and Cooling. Default: 2
         :param k_m_int_a_zt: areal thermal capacity of air and furniture per thermally conditioned zone. Default: 10000 J/m2K
         :param f_int_c: convective fraction of the internal gains into the zone. Default: 0.4
         :param f_sol_c: convective fraction of the solar radiation into the zone. Default: 0.1
-        :param f_H_c: convective fraction of the heating system per thermally conditioned zone (if system specific). Deafult: 1
+        :param f_H_c: convective fraction of the heating system per thermally conditioned zone (if system specific). Default: 1
         :param f_C_c: convective fraction of the cooling system per thermally conditioned zone (if system specific). Default: 1
-        :param delta_Theta_er: Average difference between external air temperature and sky temperature. Default: 11 fro intermediate zones, 13 Tropics and 9 Sub polar areas
+        :param delta_Theta_er: average difference between external air temperature and sky temperature. Default: 11 for intermediate zones, 13 for tropical areas, and 9 for subpolar areas
 
-        .. note:: 
+        .. note::
             INPUT:
-            **sim_df*: dataframe with:
+            **sim_df**: dataframe with:
 
-                * index: time of simulation on hourly resolution and timeindex typology (13 months on hourly resolution)
-                * T2m: Exteranl temperarture [°C]
+                * index: time of simulation at hourly resolution and time index typology (13 months at hourly resolution)
+                * T2m: External temperature [°C]
                 * RH: External humidity [%]
                 * G(h):
                 * Gb(n):
@@ -6040,27 +6105,27 @@ class ISO52016:
                 * air_flow_rate:
                 * internal_gains
 
-            * **power_heating_max**: max power of the heating system (provided by the user) in W
-            * **power_cooling_max**: max power of the cooling system (provided by the user) in W
+            * **power_heating_max**: maximum power of the heating system (provided by the user) in W
+            * **power_cooling_max**: maximum power of the cooling system (provided by the user) in W
             * **Rn**: ... result of function ``Number_of_nodes_element``
-            * **Htb**: Heat transmission coefficient for Thermal bridges (provided by the user)
+            * **Htb**: heat transmission coefficient for thermal bridges (provided by the user)
             * **H_ve**: ... result of function ``Ventilation_heat_transfer_coefficient``
             * **Phi_int**: ... result of function ``Internal_heat_gains``
             * **a_use**: building area [m2]
             * **Pln**: ... result of function ``Number_of_nodes_element``
             * **PlnSum**: ... result of function ``Number_of_nodes_element``
-            * **a_sol_pli_eli**: ... result of function ``Solar_absorption_of_elment``
-            * **kappa_pli_eli**: ... result of function  ``Areal_heat_capacity_of_element``
-            * **heat_convective_elements_internal**: internal convective heat transfer coefficient for each element as defined int Table 25 of UNI 52016 - 7.2.2.10
-            * **heat_convective_elements_external**: external convective heat transfer coefficient for each element as defined int Table 25 of UNI 52016 - 7.2.2.10
-            * **heat_radiative_elements_external**: external radiative  heat transfer coefficient for each element as defined int Table 25 of UNI 52016 - 7.2.2.10
-            * **heat_radiative_elements_internal**: internal radiative  heat transfer coefficient for each element as defined int Table 25 of UNI 52016 - 7.2.2.10
-            * **sky_factor_elements**: View factor between element and sky
-            * **R_gr_ve**: ... result of function ``Temp_calculation_of_ground`` (Thermal Resitance of virtual layer)
+            * **a_sol_pli_eli**: ... result of function ``Solar_absorption_of_element``
+            * **kappa_pli_eli**: ... result of function ``Areal_heat_capacity_of_element``
+            * **heat_convective_elements_internal**: internal convective heat transfer coefficient for each element as defined in Table 25 of UNI 52016 - 7.2.2.10
+            * **heat_convective_elements_external**: external convective heat transfer coefficient for each element as defined in Table 25 of UNI 52016 - 7.2.2.10
+            * **heat_radiative_elements_external**: external radiative heat transfer coefficient for each element as defined in Table 25 of UNI 52016 - 7.2.2.10
+            * **heat_radiative_elements_internal**: internal radiative heat transfer coefficient for each element as defined in Table 25 of UNI 52016 - 7.2.2.10
+            * **sky_factor_elements**: view factor between element and sky
+            * **R_gr_ve**: ... result of function ``Temp_calculation_of_ground`` (thermal resistance of virtual layer)
             * **Theta_gr_ve**: ... result of function ``Temp_calculation_of_ground``
-            * **h_pli_eli**: ... result of function ``Conduttance_node_of_element``
-
+            * **h_pli_eli**: ... result of function ``Conductance_node_of_element``
         """
+
         from .generate_profile import HourlyProfileGenerator, get_country_code_from_latlon  # lazy
         _sched = _make_sched_resolver(kwargs, iso16798_profiles)
         occupants_schedule_workdays = _sched("occupants_schedule_workdays", "occupants_schedule_workdays")
@@ -6087,39 +6152,38 @@ class ISO52016:
             kwargs.get("external_emissivity_default", None),
         )
         i = 1
-        with tqdm(total=13) as pbar:
+        with tqdm(total=12) as pbar:
 
             pbar.set_postfix({"Info": f"Initialization {i}"})
 
-            # INIZIALIZATION
             path_weather_file_ = kwargs.get("path_weather_file", None)
             if kwargs["weather_source"] == "pvgis":
                 path_weather_file_ = None
             sim_df = ISO52016().Weather_data_bui(building_object, path_weather_file_, weather_source=kwargs["weather_source"]).simulation_df
-            Tstepn = len(sim_df)  # number of hours to perform the simulation
+            Tstepn = len(sim_df)  # number of timesteps
 
-            # Heating and cooling Load
-            Phi_HC_nd_calc = np.zeros(3)  # Load of Heating or Cooling needed to heat/cool the zone - calculated
-            Phi_HC_nd_act = np.zeros(Tstepn)  # Load of Heating or Cooling needed to heat/cool the zone - actual
+            # Heating/cooling load (heating +, cooling -)
+            Phi_HC_nd_calc = np.zeros(3)  # calculated
+            Phi_HC_nd_act = np.zeros(Tstepn)  # actual
 
-            # Name adjacent zones (optional in many BUI inputs)
+            # Names of adjacent zones (if any)
             name_adjacent_zones = [surface.get("name_adj_zone") for surface in building_object["building_surface"]]
 
             # Temperature (indoor and operative)
             '''
-            Initialize vector temperature
+            Initialize temperature vector
             Theta_int_air: internal air temperature
             Theta_int_r_mn: mean radiant temperature
-                caluclated as:
-                Theta_int_r_min = sum(eli=1 to n)(A_eli * teta_pli=oln,eli,t)/sum(eli=1 to n)(A_eli)
+                calculated as:
+                Theta_int_r_min = sum(eli=1 to n)(A_eli * theta_pli=pln,eli,t)/sum(eli=1 to n)(A_eli)
                 where:
                 A_eli: area of element eli
-                teta_pli=oln,eli,t: is the temperature at node pli=pln of the building element eli
+                theta_pli=pln,eli,t: is the temperature at node pli=pln of the building element eli
 
             Theta_int_op: operative temperature
             '''
             Theta_int_air = np.zeros((Tstepn, 3))
-            Theta_int_r_mn = np.zeros((Tstepn, 3))  # <---
+            Theta_int_r_mn = np.zeros((Tstepn, 3))
             Theta_int_op = np.zeros((Tstepn, 3))
             Theta_op_act = np.zeros(Tstepn)
             pbar.update(1)
@@ -6129,10 +6193,10 @@ class ISO52016:
             pbar.update(1)
 
             # Mode
-            colB_act = 0  # the vector B has 3 columns (1st column actual value, 2nd: maximum value reachable in heating, 3rd: maximum value reachbale in cooling)
+            colB_act = 0  # the vector B has 3 columns (1st column actual value, 2nd: maximum value reachable in heating, 3rd: maximum value reachable in cooling)
             pbar.update(1)
             
-            # # Number of building element
+            # # Number of building elements
             bui_eln = len(building_object["building_surface"])
 
             # Element types and orientations
@@ -6172,7 +6236,7 @@ class ISO52016:
                 hce_roof   = 25.0  # convective external roofs
                 hce_ground = 4.0   # convective external ground/adiabatic ≈ negligible
                 hre_int    = 5.13  # radiative internal
-                hre_ext    = 5.13  # radiative external
+                hre_ext    = 4.14  # radiative external
 
                 for i, surf in enumerate(building_object["building_surface"]):
                     svf = surf.get("sky_view_factor", 1)
@@ -6206,7 +6270,6 @@ class ISO52016:
                     # --- radiative external ---
                     surf.setdefault("radiative_heat_transfer_coefficient_external", hre_ext)
 
-            #
             pbar.update(1)
             if isinstance(building_object, dict):
                 g_values = np.zeros(bui_eln, dtype=float)
@@ -6217,7 +6280,7 @@ class ISO52016:
             else:
                 g_gl_wi_t = np.array(building_object.g_factor_windows)
             
-            # Building Area of elements
+            # Surface area of building elements
             if isinstance(building_object, dict):
                 area_elements = np.zeros(bui_eln, dtype=float)
                 for i, surf in enumerate(building_object["building_surface"]):
@@ -6243,7 +6306,7 @@ class ISO52016:
                 if is_close(tilt, 0.0):
                     orientation_elements[i] = "HOR"
                 elif is_close(tilt, 90.0):
-                    # normalizza azimuth in [0, 360)
+                    # normalize azimuth to [0, 360)
                     az = azimuth % 360.0
                     if is_close(az, 0.0) or is_close(az, 360.0):
                         orientation_elements[i] = "NV"
@@ -6314,28 +6377,8 @@ class ISO52016:
             C_int = (c_int_per_A_us * building_object["building"]["net_floor_area"])
             pbar.update(1)
 
-            # mean internal radiative transfer coefficient
-            if isinstance(building_object, dict):
-                radiative_heat_transfer_coefficient = 5.13
-                heat_radiative_elements_internal_mn = (
-                    np.dot(
-                        area_elements,
-                        radiative_heat_transfer_coefficient * np.ones(bui_eln),
-                    )/ area_elements_tot
-                )
-                for surf in building_object["building_surface"]:
-                    surf["radiative_heat_transfer_coefficient_internal"] = (
-                        radiative_heat_transfer_coefficient
-                    )
-            else:
-                heat_radiative_elements_internal_mn = (
-                    np.dot(
-                        area_elements,
-                        building_object.heat_radiative_elements_internal,
-                    )
-                    / area_elements_tot
-                )
-            pbar.update(1)
+            # Internal radiative coefficients are already stored per surface and
+            # used directly in the matrix assembly below.
 
             
             # Initialization vectorB and temperature
@@ -6736,7 +6779,11 @@ class ISO52016:
 
                             Phi_sol_dir_zt_t += (
                                 g_gl_wi_t[Eli]
-                                * (I_sol_dif_el[Tstepi, Eli] + I_sol_dir_el[Tstepi, Eli] * F_sh_obst_wi_t)
+                                * cls._solar_irradiance_after_method1_shading(
+                                    I_sol_dif_el[Tstepi, Eli],
+                                    I_sol_dir_el[Tstepi, Eli],
+                                    F_sh_obst_wi_t,
+                                )
                                 * area_elements[Eli] * (1 - Ffr_wi)
                             )
                             
@@ -7041,7 +7088,7 @@ class ISO52016:
                                     Plk = nodes.Pln[Elk] - 1
                                     ck = 1 + nodes.PlnSum[Elk] + Plk
                                     Area_ratio += area_elements[Elk] / area_int_surfaces_tot
-                                    MatA[ri, ck] -= (area_elements[Elk] / area_int_surfaces_tot) * heat_radiative_elements_internal[Elk]
+                                    MatA[ri, ck] -= (area_elements[Elk] / area_int_surfaces_tot) * heat_radiative_elements_internal[Eli]
                                 '''
                                 in formula 39  [.. + h_ci_eli  + h_re_eli * sum(elk=1 to eln)(A_elk/Atot) + ..]
                                 '''
@@ -7507,7 +7554,7 @@ class ISO52016:
         )
         
         i = 1
-        with tqdm(total=13) as pbar:
+        with tqdm(total=12) as pbar:
 
             pbar.set_postfix({"Info": f"Initialization {i}"})
 
@@ -7601,7 +7648,7 @@ class ISO52016:
                 hce_roof   = 25.0  # convective external roofs
                 hce_ground = 4.0   # convective external ground/adiabatic ≈ negligible
                 hre_int    = 5.13  # radiative internal
-                hre_ext    = 5.13  # radiative external
+                hre_ext    = 4.14  # radiative external
 
                 for i, surf in enumerate(building_object["building_surface"]):
                     svf = surf.get("sky_view_factor", 1)
@@ -7743,28 +7790,8 @@ class ISO52016:
             C_int = (c_int_per_A_us * building_object["building"]["net_floor_area"])
             pbar.update(1)
 
-            # mean internal radiative transfer coefficient
-            if isinstance(building_object, dict):
-                radiative_heat_transfer_coefficient = 5.13
-                heat_radiative_elements_internal_mn = (
-                    np.dot(
-                        area_elements,
-                        radiative_heat_transfer_coefficient * np.ones(bui_eln),
-                    )/ area_elements_tot
-                )
-                for surf in building_object["building_surface"]:
-                    surf["radiative_heat_transfer_coefficient_internal"] = (
-                        radiative_heat_transfer_coefficient
-                    )
-            else:
-                heat_radiative_elements_internal_mn = (
-                    np.dot(
-                        area_elements,
-                        building_object.heat_radiative_elements_internal,
-                    )
-                    / area_elements_tot
-                )
-            pbar.update(1)
+            # Internal radiative coefficients are already stored per surface and
+            # used directly in the matrix assembly below.
 
             
             # inizialiazation vectorB and temperature
@@ -8213,7 +8240,11 @@ class ISO52016:
 
                             Phi_sol_dir_zt_t += (
                                 g_gl_wi_t[Eli]
-                                * (I_sol_dif_el[Tstepi, Eli] + I_sol_dir_el[Tstepi, Eli] * F_sh_obst_wi_t)
+                                * cls._solar_irradiance_after_method1_shading(
+                                    I_sol_dif_el[Tstepi, Eli],
+                                    I_sol_dir_el[Tstepi, Eli],
+                                    F_sh_obst_wi_t,
+                                )
                                 * area_elements[Eli] * (1 - Ffr_wi)
                             )
                             
@@ -8518,7 +8549,7 @@ class ISO52016:
                                     Plk = nodes.Pln[Elk] - 1
                                     ck = 1 + nodes.PlnSum[Elk] + Plk
                                     Area_ratio += area_elements[Elk] / area_int_surfaces_tot
-                                    MatA[ri, ck] -= (area_elements[Elk] / area_int_surfaces_tot) * heat_radiative_elements_internal[Elk]
+                                    MatA[ri, ck] -= (area_elements[Elk] / area_int_surfaces_tot) * heat_radiative_elements_internal[Eli]
                                 '''
                                 in formula 39  [.. + h_ci_eli  + h_re_eli * sum(elk=1 to eln)(A_elk/Atot) + ..]
                                 '''

@@ -1,3 +1,4 @@
+from io import StringIO
 from pathlib import Path
 
 import pandas as pd
@@ -102,3 +103,105 @@ def test_italian_strepin_arbitrary_measure_case_and_extra_overlays():
     assert strepin["bacs"]["bacs_class"] == "B"
     assert strepin["solar_thermal"]["area_m2"] == pytest.approx(4.0)
     assert strepin["battery"]["capacity_kWh"] == pytest.approx(5.0)
+
+
+@pytest.mark.skipif(not WORKBOOK.exists(), reason="Italian STREPIN workbook not present")
+def test_italian_strepin_eem6_solar_shading_overlay_sets_window_factor():
+    tables = load_italian_strepin_tables(WORKBOOK)
+    case = tables.make_case("RMF_E1_E", "P00")
+    case_bui = apply_extra_measure_specs_to_bui(
+        case.bui,
+        [
+            {
+                "measure_code": "solar_shading",
+                "parameters": {
+                    "level": "mobile",
+                    "solar_transmission_factor": 0.40,
+                    "activation_irradiance_W_m2": 180.0,
+                },
+            }
+        ],
+    )
+
+    strepin = case_bui["strepin"]
+    windows = [
+        surface
+        for surface in case_bui["building_surface"]
+        if surface.get("type") == "transparent"
+    ]
+    shaded_windows = [
+        window
+        for window in windows
+        if window.get("ISO52016_orientation_string") in {"EV", "SV", "WV"}
+    ]
+    north_windows = [
+        window for window in windows if window.get("ISO52016_orientation_string") == "NV"
+    ]
+
+    assert strepin["solar_shading"]["level"] == "mobile"
+    assert strepin["solar_shading"]["solar_transmission_factor"] == pytest.approx(0.40)
+    assert strepin["solar_shading"]["applied_orientations"] == ["EV", "SV", "WV"]
+    assert strepin["solar_shading"]["affected_window_area_m2"] == pytest.approx(
+        sum(float(window["area"]) for window in shaded_windows)
+    )
+    assert windows
+    assert shaded_windows
+    assert north_windows
+    assert all(window["shading_type"] == "solar_transmission_factor" for window in shaded_windows)
+    assert all(
+        window["solar_shading_transmittance"] == pytest.approx(0.40)
+        for window in shaded_windows
+    )
+    assert all(
+        window["solar_shading_activation_irradiance_W_m2"] == pytest.approx(180.0)
+        for window in shaded_windows
+    )
+    assert all(window["shading_type"] == "none" for window in north_windows)
+
+
+@pytest.mark.skipif(not WORKBOOK.exists(), reason="Italian STREPIN workbook not present")
+def test_italian_strepin_eem6_defaults_follow_rds_shading_assumptions():
+    tables = load_italian_strepin_tables(WORKBOOK)
+    case = tables.make_case("RMF_E1_E", "P00")
+    case_bui = apply_extra_measure_specs_to_bui(
+        case.bui,
+        [{"measure_code": "solar_shading", "parameters": {"level": "mobile"}}],
+    )
+
+    strepin = case_bui["strepin"]["solar_shading"]
+    expected_cost_eur_m2 = -0.0484 * 160.0 + 31.755
+
+    assert strepin["solar_transmission_factor"] == pytest.approx(0.20)
+    assert strepin["activation_irradiance_W_m2"] is None
+    assert strepin["applied_orientations"] == ["EV", "SV", "WV"]
+    assert strepin["cost_EUR_m2"] == pytest.approx(expected_cost_eur_m2)
+    assert strepin["investment_EUR"] == pytest.approx(
+        expected_cost_eur_m2 * strepin["affected_window_area_m2"]
+    )
+
+
+def test_strepin_hourly_export_adds_units_to_header():
+    from examples.strepin_archetypes.run_italian_strepin_engine import (
+        _hourly_output_with_units,
+    )
+
+    hourly = pd.DataFrame(
+        {
+            "Q_HC": [1.0],
+            "T_op": [20.0],
+            "H_ve": [48.114],
+            "S_ve": [86.6],
+            "T_ve_source_eq": [1.8],
+            "Q_H": [1.0],
+            "Q_C": [0.0],
+        },
+        index=pd.to_datetime(["2020-01-01 00:00:00"]),
+    )
+    buffer = StringIO()
+
+    _hourly_output_with_units(hourly).to_csv(buffer, index_label="time [local]")
+
+    assert buffer.getvalue().splitlines()[0] == (
+        "time [local],Q_HC [W],T_op [degC],H_ve [W/K],S_ve [W],"
+        "T_ve_source_eq [degC],Q_H [W],Q_C [W]"
+    )

@@ -37,6 +37,54 @@ DEFAULT_ZONE_E_EPW = REPO_ROOT / "examples" / "2020_Milan.epw"
 
 WORKBOOK_MEASURE_CODES = {"wall", "roof_floor", "windows", "heating", "pv"}
 
+HOURLY_OUTPUT_COLUMN_UNITS = {
+    "Q_HC": "W",
+    "Q_H": "W",
+    "Q_C": "W",
+    "Q_ve": "W",
+    "Q_H_AHU_used": "W",
+    "T_op": "degC",
+    "T_ext": "degC",
+    "T_air": "degC",
+    "T_rad": "degC",
+    "T_ve_source_eq": "degC",
+    "H_ve": "W/K",
+    "S_ve": "W",
+    "GHI": "W/m2",
+    "I_sol_global_W_m2": "W/m2",
+    "global_horizontal_irradiance_W_m2": "W/m2",
+    "lighting_profile": "fraction",
+    "ventilation_profile": "fraction",
+    "occupancy_profile": "fraction",
+}
+
+
+def _hourly_output_units_for_column(column: str) -> str | None:
+    if column in HOURLY_OUTPUT_COLUMN_UNITS:
+        return HOURLY_OUTPUT_COLUMN_UNITS[column]
+    if column.startswith(("Q_HVAC_", "Q_HC_", "Q_ve_", "Q_cpl_", "dQ_")):
+        return "W"
+    if column.startswith(("Phi_int_", "Phi_sol_")):
+        return "W"
+    if column.startswith("H_ve_"):
+        return "W/K"
+    if column.startswith("S_ve_"):
+        return "W"
+    if column.startswith(("T_air_", "T_rad_", "T_op_", "T_op_core_", "T_ve_source_eq_", "dT_")):
+        return "degC"
+    if column.endswith("_profile"):
+        return "fraction"
+    return None
+
+
+def _hourly_output_with_units(hourly: pd.DataFrame) -> pd.DataFrame:
+    rename_map = {}
+    for column in hourly.columns:
+        unit = _hourly_output_units_for_column(str(column))
+        if unit:
+            rename_map[column] = f"{column} [{unit}]"
+    return hourly.rename(columns=rename_map)
+
 
 def _split_selection(raw: str, allowed: list[str]) -> list[str]:
     value = str(raw).strip()
@@ -125,6 +173,22 @@ def _extra_measure_spec_from_token(token: str) -> dict:
                 "specific_fan_power_W_s_m3": 900.0,
             },
         }
+    if normalized in {"solar-shading-sf", "window-shading-sf", "eem6-sf"}:
+        return {"measure_code": "solar_shading", "parameters": {"level": "sf"}}
+    if normalized in {
+        "solar-shading",
+        "solar-shading-fixed",
+        "window-shading-fixed",
+        "eem6-fixed",
+        "eem6-fissa",
+    }:
+        return {"measure_code": "solar_shading", "parameters": {"level": "fixed"}}
+    if normalized in {
+        "solar-shading-mobile",
+        "window-shading-mobile",
+        "eem6-mobile",
+    }:
+        return {"measure_code": "solar_shading", "parameters": {"level": "mobile"}}
     if normalized.startswith("bacs-"):
         return {
             "measure_code": "bacs",
@@ -158,7 +222,8 @@ def _extra_measure_spec_from_token(token: str) -> dict:
         }
     raise ValueError(
         f"Unknown extra measure token {token!r}. Use tokens such as "
-        "lighting-led, ventilation-hrv, bacs-a, biomass-boiler, "
+        "lighting-led, ventilation-hrv, solar-shading-fixed, "
+        "solar-shading-mobile, bacs-a, biomass-boiler, "
         "solar-thermal, battery-5, pv-shading-10, district-heat or chp."
     )
 
@@ -170,10 +235,15 @@ def _case_with_extra_measures(
     if not extra_specs:
         return case
     bui = pybui.apply_extra_measure_specs_to_bui(case.bui, extra_specs)
-    labels = [
-        str(spec.get("measure_code", spec.get("code", ""))).replace("_", "-")
-        for spec in extra_specs
-    ]
+    labels = []
+    for spec in extra_specs:
+        code = str(spec.get("measure_code", spec.get("code", ""))).replace("_", "-")
+        params = spec.get("parameters", spec.get("params", {})) or {}
+        if code in {"solar-shading", "window-shading", "eem6"}:
+            level = str(params.get("level", params.get("type", ""))).strip().lower()
+            if level:
+                code = f"{code}-{level}"
+        labels.append(code)
     package = dict(case.package)
     package["Extra_Measures"] = ",".join(labels)
     package["Package_Type"] = f"{package.get('Package_Type', '')} + engine overlays"
@@ -723,6 +793,7 @@ def _run_strepin_standard_chain(
     lighting_summary = lighting_result.summary if lighting_result is not None else {}
     ventilation_summary = ventilation_result.summary if ventilation_result is not None else {}
     bacs_summary = bacs_result.summary if bacs_result is not None else {}
+    solar_shading_metadata = case.bui.get("strepin", {}).get("solar_shading", {})
 
     return {
         "Archetype_ID": case.archetype_id,
@@ -749,6 +820,20 @@ def _run_strepin_standard_chain(
         "Q_C_after_BACS_kWh_a": loads_after_bacs["Q_C_kWh"].sum(),
         "Q_H_engine_kWh_m2a": raw_loads["Q_H_kWh"].sum() / area_m2 if area_m2 > 0 else 0.0,
         "Q_C_engine_kWh_m2a": raw_loads["Q_C_kWh"].sum() / area_m2 if area_m2 > 0 else 0.0,
+        "Window_solar_shading_level": solar_shading_metadata.get("level_label"),
+        "Window_solar_shading_transmittance": solar_shading_metadata.get(
+            "solar_transmission_factor"
+        ),
+        "Window_solar_shading_activation_W_m2": solar_shading_metadata.get(
+            "activation_irradiance_W_m2"
+        ),
+        "Window_solar_shading_orientations": ",".join(
+            solar_shading_metadata.get("applied_orientations", []) or []
+        ),
+        "Window_solar_shading_area_m2": solar_shading_metadata.get(
+            "affected_window_area_m2"
+        ),
+        "Window_solar_shading_cost_EUR_m2": solar_shading_metadata.get("cost_EUR_m2"),
         "DHW_useful_kWh_a": raw_loads["Q_W_kWh"].sum(),
         "DHW_after_BACS_solar_kWh_a": solar_loads["Q_W_kWh"].sum(),
         "Solar_thermal_used_kWh_a": solar_summary.get("Q_solar_thermal_used_kWh", 0.0),
@@ -909,7 +994,10 @@ def run(args: argparse.Namespace) -> Path:
         if args.write_hourly:
             case_dir = output_dir / "hourly"
             case_dir.mkdir(exist_ok=True)
-            hourly.to_csv(case_dir / f"{case.archetype_id}_{case.package_id}.csv")
+            _hourly_output_with_units(hourly).to_csv(
+                case_dir / f"{case.archetype_id}_{case.package_id}.csv",
+                index_label="time [local]",
+            )
 
     summary = pd.DataFrame(summary_rows)
     out = output_dir / "italian_strepin_engine_summary.csv"

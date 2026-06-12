@@ -136,7 +136,7 @@ def building_data():
                 "shading": False,
                 "shading_type": "horizontal_overhang",
                 "width_or_distance_of_shading_elements": 0.5,
-                "overhang_proprieties": {"width_of_horizontal_overhangs": 1},
+                "overhang_properties": {"width_of_horizontal_overhangs": 1},
                 "name_adj_zone": None
             },
             {
@@ -153,7 +153,7 @@ def building_data():
                 "shading": False,
                 "shading_type": "horizontal_overhang",
                 "width_or_distance_of_shading_elements": 0.5,
-                "overhang_proprieties": {"width_of_horizontal_overhangs": 1},
+                "overhang_properties": {"width_of_horizontal_overhangs": 1},
                 "name_adj_zone": None
             }
         ],
@@ -924,6 +924,52 @@ def test_transparent_aggregation_preserves_shading_for_identical_side_by_side_wi
     assert pytest.approx(F_equiv) == F_single
 
 
+def test_aggregation_preserves_area_weighted_surface_heat_transfer_coefficients():
+    import pybuildingenergy as pybui
+
+    building_object = {
+        "building_surface": [
+            {
+                "name": "Wall 1",
+                "type": "opaque",
+                "boundary": "OUTDOORS",
+                "area": 2.0,
+                "u_value": 1.2,
+                "orientation": {"azimuth": 180.0, "tilt": 90.0},
+                "ISO52016_type_string": "OP",
+                "ISO52016_orientation_string": "SV",
+                "convective_heat_transfer_coefficient_internal": 2.0,
+                "radiative_heat_transfer_coefficient_internal": 4.0,
+                "convective_heat_transfer_coefficient_external": 20.0,
+                "radiative_heat_transfer_coefficient_external": 3.0,
+            },
+            {
+                "name": "Wall 2",
+                "type": "opaque",
+                "boundary": "OUTDOORS",
+                "area": 6.0,
+                "u_value": 1.2,
+                "orientation": {"azimuth": 180.0, "tilt": 90.0},
+                "ISO52016_type_string": "OP",
+                "ISO52016_orientation_string": "SV",
+                "convective_heat_transfer_coefficient_internal": 4.0,
+                "radiative_heat_transfer_coefficient_internal": 6.0,
+                "convective_heat_transfer_coefficient_external": 22.0,
+                "radiative_heat_transfer_coefficient_external": 5.0,
+            },
+        ]
+    }
+
+    aggregated = pybui.ISO52016._aggregate_surfaces_by_direction(building_object)
+    assert len(aggregated["building_surface"]) == 1
+    wall = aggregated["building_surface"][0]
+
+    assert wall["convective_heat_transfer_coefficient_internal"] == pytest.approx(3.5)
+    assert wall["radiative_heat_transfer_coefficient_internal"] == pytest.approx(5.5)
+    assert wall["convective_heat_transfer_coefficient_external"] == pytest.approx(21.5)
+    assert wall["radiative_heat_transfer_coefficient_external"] == pytest.approx(4.5)
+
+
 def test_shading_window_uses_geographical_gamma_for_north(monkeypatch):
     """Per NV il gamma passato allo shading deve usare convenzione geografica (N=0)."""
     from pybuildingenergy.source import utils as utils_module
@@ -1027,6 +1073,127 @@ def test_shading_window_filters_west_with_geographical_gamma(monkeypatch):
     assert captured_calls[0]["gamma_k_t"] == pytest.approx(270.0)
     # input solar azimuth in ISO convention (W=-90) -> geographical west (270)
     assert captured_calls[0]["phi_sol_t"] == pytest.approx(270.0)
+
+
+def test_shading_window_method1_combined_factor_keeps_diffuse_when_direct_blocked(monkeypatch):
+    from pybuildingenergy.source import utils as utils_module
+
+    captured_calls = []
+
+    def _fake_shading_reduction_factor(*args, **kwargs):
+        captured_calls.append(kwargs)
+        return 0.0, 0.0
+
+    monkeypatch.setattr(utils_module, "shading_reduction_factor", _fake_shading_reduction_factor)
+
+    idx = pd.RangeIndex(1)
+    result = utils_module.ISO52010.Shading_reduction_factor_window(
+        solar_altitude_angle=pd.Series([np.radians(45.0)], index=idx),
+        solar_azimuth_angle=pd.Series([np.radians(0.0)], index=idx),
+        I_dir_tot=pd.Series([800.0], index=idx),
+        I_dif_tot=pd.Series([200.0], index=idx),
+        calendar=pd.DataFrame({"day of year": [1], "hour of day": [12]}, index=idx),
+        n_timesteps=1,
+        orientation="SV",
+        building_object={
+            "building_surface": [
+                {
+                    "name": "South Window",
+                    "type": "transparent",
+                    "orientation": {"azimuth": 180.0, "tilt": 90.0},
+                    "overhang_properties": {"width_of_horizontal_overhangs": 0.7},
+                    "height": 1.5,
+                    "width": 1.2,
+                }
+            ]
+        },
+    )
+
+    assert result is not None
+    assert result.shading_reduction_factor_window["W_South Window"].iloc[0] == pytest.approx(0.2)
+    assert captured_calls[0]["D_k_ovh_q"] == pytest.approx(0.7)
+
+
+def test_shading_window_sunlit_height_is_zero_without_direct_beam(monkeypatch):
+    from pybuildingenergy.source import utils as utils_module
+
+    def _fake_shading_reduction_factor(*args, **kwargs):
+        return 1.0, 1.5
+
+    monkeypatch.setattr(utils_module, "shading_reduction_factor", _fake_shading_reduction_factor)
+
+    idx = pd.RangeIndex(1)
+    result = utils_module.ISO52010.Shading_reduction_factor_window(
+        solar_altitude_angle=pd.Series([np.radians(0.0)], index=idx),
+        solar_azimuth_angle=pd.Series([np.radians(-90.0)], index=idx),
+        I_dir_tot=pd.Series([0.0], index=idx),
+        I_dif_tot=pd.Series([200.0], index=idx),
+        calendar=pd.DataFrame({"day of year": [1], "hour of day": [16]}, index=idx),
+        n_timesteps=1,
+        orientation="WV",
+        building_object={
+            "building_surface": [
+                {
+                    "name": "West Window",
+                    "type": "transparent",
+                    "orientation": {"azimuth": 270.0, "tilt": 90.0},
+                    "overhang_properties": {"width_of_horizontal_overhangs": 0.0},
+                    "height": 1.5,
+                    "width": 1.2,
+                }
+            ]
+        },
+    )
+
+    assert result is not None
+    assert result.shading_reduction_factor_window["W_West Window"].iloc[0] == pytest.approx(1.0)
+    assert result.shading_reduction_factor_window["H_sun_West Window"].iloc[0] == pytest.approx(0.0)
+
+
+def test_shading_window_solar_transmission_factor_reduces_total_irradiance(monkeypatch):
+    from pybuildingenergy.source import utils as utils_module
+
+    def _fake_shading_reduction_factor(*args, **kwargs):
+        return 1.0, 1.5
+
+    monkeypatch.setattr(utils_module, "shading_reduction_factor", _fake_shading_reduction_factor)
+
+    idx = pd.RangeIndex(1)
+    result = utils_module.ISO52010.Shading_reduction_factor_window(
+        solar_altitude_angle=pd.Series([np.radians(30.0)], index=idx),
+        solar_azimuth_angle=pd.Series([np.radians(-90.0)], index=idx),
+        I_dir_tot=pd.Series([600.0], index=idx),
+        I_dif_tot=pd.Series([200.0], index=idx),
+        calendar=pd.DataFrame({"day of year": [1], "hour of day": [14]}, index=idx),
+        n_timesteps=1,
+        orientation="WV",
+        building_object={
+            "building_surface": [
+                {
+                    "name": "West Window",
+                    "type": "transparent",
+                    "orientation": {"azimuth": 270.0, "tilt": 90.0},
+                    "overhang_properties": {"width_of_horizontal_overhangs": 0.0},
+                    "height": 1.5,
+                    "width": 1.2,
+                    "solar_shading_transmittance": 0.5,
+                }
+            ]
+        },
+    )
+
+    assert result is not None
+    assert result.shading_reduction_factor_window["W_West Window"].iloc[0] == pytest.approx(0.5)
+
+
+def test_iso52016_method1_combined_shading_factor_multiplies_total_irradiance():
+    from pybuildingenergy.source.utils import ISO52016
+
+    assert ISO52016._solar_irradiance_after_method1_shading(
+        diffuse_irradiance_w_m2=200.0,
+        direct_irradiance_w_m2=800.0,
+        shading_factor_obstacles=0.6,
+    ) == pytest.approx(600.0)
 
 
 def test_shading_reduction_factor_handles_wrapped_azimuth():
