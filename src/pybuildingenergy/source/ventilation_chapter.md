@@ -228,6 +228,7 @@ resolve_ventilation_boundary(
     altitude_m=None,
     c_air=1006.0,
     rho_air=1.204,
+    ahu_outputs_collector=None,
 ) -> VentilationBoundary
 ```
 
@@ -254,7 +255,7 @@ ventilation.  Each entry is a dict:
 ```python
 {
     "name": "infiltration",               # required, unique label
-    "ventilation_type": "constant_ach",   # "constant_ach" or "prescribed"
+    "ventilation_type": "constant_ach",   # "constant_ach", "prescribed" or "mechanical_supply"
     "profile": "ventilation_profile",     # optional — names a profile_df column
     # type-specific keys, e.g.:
     "air_changes_per_hour": 0.3,
@@ -278,7 +279,72 @@ AHU delivering 18 °C supply air):
 
 A `components` list may combine infiltration (no profile → always active) and mechanical
 supply (with profile → follows schedule), which is the practical purpose of the additive
-stream model and the contract required by the EN 16798-5-1 AHU module (PR 2).
+stream model and the contract used by the EN 16798-5-1 AHU module (section 4.6).
+
+When a component has a `profile`, the profile name must be resolvable by the
+active solver path.  For `mechanical_supply`, a missing or unsupported profile
+raises `ValueError` by default because treating a misspelled AHU schedule as
+full-flow operation can materially change the result.  To preserve that fallback
+intentionally, set `"missing_profile_policy": "warn"` on the component; the
+solver will emit a warning and use multiplier `1.0`.  Non-AHU components retain
+the warning fallback by default for compatibility.
+
+### 4.6 The `mechanical_supply` component (EN 16798-5-1 sensible AHU)
+
+The `"mechanical_supply"` type replaces the externally known supply condition of
+`"prescribed"` with a physics-based per-timestep AHU calculation implemented in
+`ventilation_16798_5_1.py`: sensible heat recovery, modulating bypass, frost
+protection by exhaust-temperature limit, capacity-limited sensible heating and
+cooling coils, and fan electricity/fan heat. The calculation is solver-independent;
+its result enters the zone balance only as one additive stream with
+`H_k = rho_air · cp_air · q_supply` and `T_source,k` equal to the delivered supply
+temperature, so the §6.5.10 formulation above is unchanged.
+
+```python
+{
+    "name": "ahu",
+    "ventilation_type": "mechanical_supply",
+    "supply_flow_m3_h": 3600.0,                  # required; extract defaults to supply
+    "sensible_heat_recovery_efficiency": 0.784,  # required, in [0, 1]
+    "supply_temperature_setpoint_c": 18.0,       # required for the default "fixed" mode
+    # optional, with defaults:
+    # "supply_temperature_mode": "fixed" | "outdoor_compensated" | "extract_compensated",
+    # "supply_temperature_points": [[-20, 19], [15, 17]],   # for compensated modes
+    # "heat_recovery_control": "modulating_bypass",
+    # "frost_control": "exhaust_limit", "frost_exhaust_limit_c": -5.0,
+    # "heating_coil_max_power_w": None, "cooling_coil_enabled": False,
+    # "supply_fan_specific_power_w_per_m3_s": 0.0, "fan_performance_model": "en16798_5_1",
+    "profile": "ventilation_profile",
+}
+```
+
+Three behaviours of this component differ from the simpler types and are
+deliberate conventions:
+
+1. **Lagged extract-air coupling.** The extract-air temperature entering the
+   heat recovery is the zone *air-node* temperature from the previous timestep
+   (not the operative temperature). This avoids the algebraic loop
+   T_zone → T_extract → heat recovery/coils → T_supply → T_zone and preserves
+   the single-pass solver workflow.
+2. **Profile fractions are flow fractions.** A fractional profile value scales
+   the operating airflow continuously (reduced fan speed, with fan power
+   following the EN 16798-5-1 part-load relations). It is *not* ON/OFF
+   duty-cycle averaging. Values outside [0, 1] raise `ValueError`.
+3. **System energy is diagnostic, not a zone gain.** Coil and fan quantities
+   are exported as per-component hourly columns (`Q_ahu_coil*`, `Q_ahu_cool*`,
+   `Q_ahu_hr`, `P_ahu_fan`, `T_ahu_sup*`, `q_sup_m3h`, `q_ext_m3h`,
+   `ahu_bypass`, `ahu_frost`) but are not added to the zone energy balance —
+   the ventilation term already uses the conditioned supply temperature, so
+   adding coil energy on the zone side would double-count it.
+
+The initial scope is a sensible, balanced-airflow subset of EN 16798-5-1 with
+fixed air properties (`rho·cp = 1211.224 J/(m³·K)`, the existing module
+convention; no altitude correction). For the full implemented / simplified /
+not-included breakdown, the configuration-key reference, the diagnostic-column
+schema and the standards context, see
+[`docs/ventilation_ahu_audit.html`](../../../docs/ventilation_ahu_audit.html).
+The `"prescribed"` type remains available as the intermediate option when the
+supply temperature is known externally.
 
 ## 5. `internal_gains`
 

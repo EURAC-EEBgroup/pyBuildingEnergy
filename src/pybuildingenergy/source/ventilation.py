@@ -35,7 +35,7 @@ independent streams with per-component operation schedules.
 To integrate (deferred):
 - Detailed leakage and duct networks
 - Cross-ventilation and inter-zone airflow
-- Full mechanical ventilation via EN 16798-5-1 AHU module (PR 2)
+- Latent AHU processes, recirculation, duct losses, and unbalanced flow
 '''
 
 from dataclasses import dataclass
@@ -666,6 +666,8 @@ def _resolve_component_streams(
     rho_air: float,
     component_multipliers: dict = None,
     default_multiplier: float = 1.0,
+    zone_temperature_c: float = 20.0,
+    ahu_outputs_collector: dict = None,
 ) -> list:
     """Convert a ventilation components list to VentilationStream objects.
 
@@ -673,12 +675,23 @@ def _resolve_component_streams(
     - 'constant_ach': infiltration or natural ventilation via air-change rate.
       Requires zone_volume_m3. source_temperature defaults to "outdoor".
     - 'prescribed': fixed H_k and source temperature supplied by caller (e.g. AHU).
+    - 'mechanical_supply': physics-based AHU step via EN 16798-5-1 sensible model.
+      Requires supply_flow_m3_h, sensible_heat_recovery_efficiency,
+      supply_temperature_setpoint_c. zone_temperature_c is used as the extract
+      temperature (previous-timestep zone AIR node temperature, not operative).
 
-    component_multipliers: optional per-component name -> float operation fraction.
+    component_multipliers: optional per-component name -> float.
+      For 'mechanical_supply': a continuous operating-flow fraction relative to
+      design flow. It is NOT timestep duty-cycle averaging; operation_fraction is
+      always 1.0. A value of 0.25 means the AHU runs at 25% of design airflow
+      continuously, with fan power following the EN 16798-5-1 reduced-flow relation.
+      Values outside [0, 1] raise ValueError for 'mechanical_supply'.
+      For 'constant_ach' and 'prescribed': scales H_k linearly and is not
+      restricted to [0, 1]. The resulting H_k must still be finite and
+      non-negative, as enforced by VentilationStream.
     default_multiplier: applied to any component not in component_multipliers.
-    Note: infiltration components should typically use a multiplier of 1.0 so they
-    remain active when the mechanical profile is off. Pass component_multipliers
-    explicitly to give each stream an independent schedule.
+      Infiltration components typically use 1.0 so they remain active
+      independently of the mechanical ventilation schedule.
     """
     streams = []
     seen_names: set = set()
@@ -692,7 +705,7 @@ def _resolve_component_streams(
         seen_names.add(name)
 
         comp_type = str(comp.get("ventilation_type", "")).strip().lower()
-        multiplier = float(cm.get(name, default_multiplier))
+        component_fraction = float(cm.get(name, default_multiplier))
 
         if comp_type == "constant_ach":
             if zone_volume_m3 is None or float(zone_volume_m3) <= 0.0:
@@ -702,21 +715,60 @@ def _resolve_component_streams(
                 )
             ach = float(comp["air_changes_per_hour"])
             q_m3_s = ach * float(zone_volume_m3) / 3600.0
-            h_k = rho_air * c_air * q_m3_s * multiplier
+            h_k = rho_air * c_air * q_m3_s * component_fraction
             source_temp = _parse_source_temperature(
                 comp.get("source_temperature", "outdoor"), outdoor_temperature_c
             )
             category = "outdoor_air"
 
         elif comp_type == "prescribed":
-            h_k = float(comp["heat_transfer_coefficient_w_k"]) * multiplier
+            h_k = float(comp["heat_transfer_coefficient_w_k"]) * component_fraction
             source_temp = float(comp["source_temperature_c"])
             category = comp.get("category", "supply")
+
+        elif comp_type == "mechanical_supply":
+            # Validate flow fraction here (before AHUStepInputs) so the error
+            # names the component rather than producing a generic dataclass message.
+            if not math.isfinite(component_fraction) or not (0.0 <= component_fraction <= 1.0):
+                raise ValueError(
+                    f"Component {name!r}: mechanical-supply flow fraction must be finite "
+                    f"and in [0, 1], got {component_fraction!r}"
+                )
+            # Imported lazily: the boundary module stays usable without the
+            # AHU module unless a mechanical_supply component is configured.
+            from .ventilation_16798_5_1 import (  # noqa: PLC0415
+                AHUStepInputs,
+                ahu_outputs_to_ventilation_stream,
+                calculate_sensible_ahu_step,
+                sensible_ahu_config_from_dict,
+            )
+            supply_m3_h = float(comp["supply_flow_m3_h"])
+            extract_m3_h = float(comp.get("extract_flow_m3_h", supply_m3_h))
+            ahu_cfg = sensible_ahu_config_from_dict(comp)
+            # extract_air_temperature_c: previous-timestep zone AIR node temperature,
+            # not operative. Explicit lag avoids the T_zone→T_extract→T_supply→T_zone loop.
+            extract_air_temperature_c = zone_temperature_c
+            ahu_inp = AHUStepInputs(
+                outdoor_temperature_c=outdoor_temperature_c,
+                extract_temperature_c=extract_air_temperature_c,
+                required_supply_flow_m3_h=supply_m3_h,
+                required_extract_flow_m3_h=extract_m3_h,
+                operation_fraction=1.0,
+                # component_fraction is a continuous flow fraction, not timestep duty-cycle.
+                flow_fraction=component_fraction,
+            )
+            ahu_out = calculate_sensible_ahu_step(ahu_cfg, ahu_inp)
+            if ahu_outputs_collector is not None:
+                ahu_outputs_collector[name] = ahu_out
+            _s = ahu_outputs_to_ventilation_stream(ahu_out, name=name)
+            h_k = _s.heat_transfer_coefficient_w_k
+            source_temp = _s.source_temperature_c
+            category = "supply"
 
         else:
             raise ValueError(
                 f"Component {name!r}: unknown ventilation_type={comp_type!r}. "
-                "Supported component types: 'constant_ach', 'prescribed'."
+                "Supported component types: 'constant_ach', 'mechanical_supply', 'prescribed'."
             )
 
         streams.append(
@@ -742,6 +794,7 @@ def resolve_ventilation_boundary(
     extra_streams=(),
     c_air: float = 1006.0,
     rho_air: float = 1.204,
+    ahu_outputs_collector: dict = None,
 ) -> VentilationBoundary:
     """Resolve building/zone configuration into an ISO 52016-1 VentilationBoundary.
 
@@ -754,7 +807,11 @@ def resolve_ventilation_boundary(
     eplus_infiltration_ext_area, sherman_grimsrud_like) are supported via this path.
 
     profile_multiplier: operation fraction applied to the legacy single stream.
-    component_multipliers: optional dict mapping component name -> operation fraction.
+    component_multipliers: optional dict mapping component name -> float.
+      For 'mechanical_supply' components: a continuous flow fraction (not duty-cycle);
+      values outside [0, 1] raise ValueError.
+      For other component types: scales H_k linearly and is not restricted to
+      [0, 1]. The resulting H_k must still be finite and non-negative.
       Components not in the dict default to 1.0 (full capacity), so infiltration
       components remain active independently of the mechanical ventilation schedule.
       Pass {"ahu_supply": 0.0} to turn off the AHU while infiltration runs
@@ -787,6 +844,8 @@ def resolve_ventilation_boundary(
             rho_air,
             component_multipliers=component_multipliers,
             default_multiplier=1.0,
+            zone_temperature_c=zone_temperature_c,
+            ahu_outputs_collector=ahu_outputs_collector,
         )
     else:
         vent_type = str(vent_cfg.get("ventilation_type", "none")).strip().lower()

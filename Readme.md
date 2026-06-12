@@ -476,6 +476,44 @@ Due to the need to have profiles of occupancy and consumption of buildings for s
 These tables are provided by ANNEX A of ISO EN 16798-1. 
 In the tool they are available here: [Table](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/src/pybuildingenergy/source/table_iso_16798_1.py)
 
+## EN 16798-5-1 - Mechanical Ventilation AHU **(New)**
+
+A sensible, balanced-airflow air-handling-unit model based on EN 16798-5-1 can
+be configured as a `mechanical_supply` ventilation component. It computes heat
+recovery, bypass and frost behaviour, capacity-limited heating/cooling coils
+and fan electricity per timestep, and couples into the ISO 52016-1 zone
+balance as a supply-air stream. Existing configurations are unchanged unless
+the component is configured.
+
+```python
+"building_parameters": {
+    "ventilation": {
+        "components": [
+            {   # envelope leakage: no profile, always active
+                "name": "infiltration",
+                "ventilation_type": "constant_ach",
+                "air_changes_per_hour": 0.15,
+            },
+            {   # balanced AHU with sensible heat recovery
+                "name": "ahu",
+                "ventilation_type": "mechanical_supply",
+                "supply_flow_m3_h": 3600.0,
+                "sensible_heat_recovery_efficiency": 0.784,
+                "supply_temperature_setpoint_c": 18.0,
+                "heating_coil_max_power_w": 15000.0,
+                "supply_fan_specific_power_w_per_m3_s": 750.0,
+                "extract_fan_specific_power_w_per_m3_s": 750.0,
+                "profile": "ventilation_profile",  # flow fraction in [0, 1]
+            },
+        ],
+    },
+},
+```
+
+For the implemented / simplified / not-included scope, all configuration keys
+and the hourly diagnostic columns, open
+[Ventilation AHU EN 16798-5-1 Implementation Audit](docs/ventilation_ahu_audit.html).
+
 ## Input Quality check  **(New)**
 
 The data provided before being used for the simulation are processed and evaluated to be considered fit for the simulation. This process includes a series of checks that allow to identify any potential errors. 

@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>EN 16798-5-1 Sensible AHU Implementation Audit</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.55; margin: 32px; color: #1f2933; }
+    h1, h2, h3 { color: #102a43; }
+    code { background: #eef2f7; padding: 2px 5px; border-radius: 4px; }
+    pre { background: #f8fafc; border: 1px solid #d7dde5; padding: 12px 14px; overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; margin: 18px 0 28px; }
+    th, td { border: 1px solid #d7dde5; padding: 10px; vertical-align: top; }
+    th { background: #f3f6fa; text-align: left; }
+    .note { background: #f8fafc; border-left: 4px solid #607d9c; padding: 12px 16px; }
+    .ok { color: #1f7a4d; font-weight: 700; }
+    .partial { color: #956000; font-weight: 700; }
+    .no { color: #8b1e2d; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <h1>EN 16798-5-1 Sensible AHU Implementation Audit</h1>
+
+  <p>
+    This page maps the air-handling-unit (AHU) module
+    <code>src/pybuildingenergy/source/ventilation_16798_5_1.py</code> to
+    <strong>EN 16798-5-1, Energy performance of buildings - Ventilation for
+    buildings - Part 5-1: Calculation methods for energy requirements of
+    ventilation and air conditioning systems (Methods M5-6, M5-8, M6-5, M6-8,
+    M7-5, M7-8) - Method 1: Distribution and generation</strong>.
+    The module sits in the EPB ventilation chain ISO 52016-1 (zone heat
+    balance) &rarr; EN 16798-7 (required zone airflow) &rarr; EN 16798-5-1
+    (AHU and system energy). It describes the calculation structure at a
+    high level and does not reproduce protected standard text; the standard
+    itself remains required to understand and verify the method.
+  </p>
+
+  <h2>Architecture And Solver Coupling</h2>
+  <p>
+    The AHU calculation is solver-independent. Each timestep it receives
+    outdoor temperature, extract-air temperature, required airflow and a
+    supply-temperature setpoint, and returns the delivered supply temperature
+    plus system-energy diagnostics. The result enters the zone heat balance
+    only through the existing ISO 52016-1 &sect;6.5.10 affine ventilation
+    boundary as one additive stream with conductance
+    <code>H_k = rho_air &middot; cp_air &middot; q_supply</code> and source
+    temperature equal to the delivered supply temperature. The zone matrix
+    formulation is unchanged and no solver iterations are added.
+  </p>
+
+  <pre><code>outdoor air (ODA)
+  -> sensible heat recovery   (frost-limited effectiveness, modulating bypass)
+  -> sensible cooling coil    (optional, capacity-limited)
+  -> sensible heating coil    (capacity-limited)
+  -> supply fan heat          (configured fraction to air)
+  -> supply stream (H_k, T_supply) -> ISO 52016-1 &sect;6.5.10 boundary
+
+extract air (ETA = lagged zone air temperature)
+  -> extract fan heat         (configured fraction to air, before heat recovery)
+  -> heat-recovery exhaust side -> exhaust air (EHA, frost-limit check)</code></pre>
+
+  <div class="note">
+    <strong>Lagged extract-air coupling.</strong> The extract-air temperature
+    is the zone <em>air-node</em> temperature from the previous timestep (not
+    the operative temperature). This is an explicit lagged-coupling assumption:
+    it avoids the algebraic loop T_zone &rarr; T_extract &rarr; heat
+    recovery/coils &rarr; T_supply &rarr; T_zone and preserves the existing
+    single-pass solver workflow. For hourly EPB-style simulation this is a
+    reasonable first coupling; for very high air-change rates, short zone time
+    constants or tight extract-temperature control an iterative or implicit
+    coupling would be a future option.
+  </div>
+
+  <p>Three levels of ventilation modelling coexist; the AHU level is strictly opt-in:</p>
+  <table>
+    <tr><th>Level</th><th>Configuration</th><th>Behaviour</th></tr>
+    <tr>
+      <td>Simple (default)</td>
+      <td>Existing <code>ventilation_type</code> values or
+          <code>constant_ach</code> components</td>
+      <td>Outdoor-air ventilation/infiltration path, unchanged. No AHU system
+          calculation.</td>
+    </tr>
+    <tr>
+      <td>Prescribed supply</td>
+      <td><code>prescribed</code> component</td>
+      <td>User supplies <code>H_k</code> and a known supply temperature
+          directly. Intermediate option when the supply condition is computed
+          externally.</td>
+    </tr>
+    <tr>
+      <td>Detailed AHU (this module)</td>
+      <td><code>mechanical_supply</code> component</td>
+      <td>Heat recovery, frost/bypass behaviour, coils and fans are computed
+          per timestep from EN 16798-5-1 sensible relations; the resulting
+          supply stream and diagnostics are returned.</td>
+    </tr>
+  </table>
+
+  <h2>Coverage: Implemented, Simplified, Not Included</h2>
+
+  <h3>Implemented</h3>
+  <table>
+    <tr><th>Functionality</th><th>Notes</th><th>Status</th></tr>
+    <tr>
+      <td>Balanced single-zone supply and extract airflow</td>
+      <td>Constant-air-volume operation per timestep; supply and extract flow
+          must be equal (enforced).</td>
+      <td><span class="ok">Implemented</span></td>
+    </tr>
+    <tr>
+      <td>Sensible heat recovery</td>
+      <td>Configured temperature efficiency (effectiveness) applied between
+          extract and outdoor streams.</td>
+      <td><span class="ok">Implemented</span></td>
+    </tr>
+    <tr>
+      <td>Heat-recovery bypass with continuous modulation</td>
+      <td><code>modulating_bypass</code> tracks the supply setpoint by mixing
+          outdoor air with heat-recovery outlet air; <code>always_on</code>
+          disables modulation. In economizer conditions (outdoor warmer than
+          extract) the heat recovery is modulated continuously rather than
+          switched, so supply delivery is consistent across all conditions.</td>
+      <td><span class="ok">Implemented</span></td>
+    </tr>
+    <tr>
+      <td>Frost protection by exhaust-temperature limit</td>
+      <td><code>exhaust_limit</code> mode reduces the effective heat-recovery
+          efficiency so the exhaust leaving the recovery core stays at or above
+          a configured limit, following the direct frost-protection approach of
+          EN 16798-5-1 (cf. formula (46)).</td>
+      <td><span class="ok">Implemented</span></td>
+    </tr>
+    <tr>
+      <td>Sensible heating coil with capacity limit</td>
+      <td>Raises supply air to the (fan-heat-adjusted) setpoint; optional
+          maximum power.</td>
+      <td><span class="ok">Implemented</span></td>
+    </tr>
+    <tr>
+      <td>Sensible cooling coil with capacity limit</td>
+      <td>Opt-in (<code>cooling_coil_enabled</code>); placed before the heating
+          coil in the air path per the standard sequence. With a single supply
+          setpoint the two coils are mutually exclusive within a timestep.</td>
+      <td><span class="ok">Implemented</span></td>
+    </tr>
+    <tr>
+      <td>Required vs. delivered coil power (unmet demand)</td>
+      <td>Required and actual powers are reported separately for both coils;
+          a disabled or capacity-limited coil exposes its shortfall instead of
+          hiding it.</td>
+      <td><span class="ok">Implemented</span></td>
+    </tr>
+    <tr>
+      <td>Fan electricity, single-zone relations</td>
+      <td>Default <code>en16798_5_1</code> model: design pressure from nominal
+          specific fan power and nominal efficiency, part-load pressure
+          proportional to the square of the flow ratio, fan efficiency with the
+          product-data square-root flow correction. A
+          <code>constant_sfp</code> alternative keeps the legacy
+          P&nbsp;=&nbsp;q&nbsp;&middot;&nbsp;SFP relation. Both are identical at
+          design flow.</td>
+      <td><span class="ok">Implemented</span></td>
+    </tr>
+    <tr>
+      <td>Fan heat to the airstreams</td>
+      <td>Configured fraction of each fan's power heats its airstream. Extract
+          fan heat is added before heat recovery (increasing recovery);
+          supply fan heat after the coils (the coil target compensates so the
+          delivered temperature still meets the setpoint).</td>
+      <td><span class="ok">Implemented</span></td>
+    </tr>
+    <tr>
+      <td>Supply-temperature control: fixed and outdoor-compensated</td>
+      <td>Fixed setpoint, or piecewise-linear outdoor-compensation curve with
+          endpoint clamping and optional min/max limits; these correspond to
+          the controller strategies enumerated in EN 16798-5-1 Table B.2.
+          A scheduled (per-timestep external setpoint) mode exists at the
+          library API level.</td>
+      <td><span class="ok">Implemented</span></td>
+    </tr>
+  </table>
+
+  <h3>Simplified Or User-Supplied</h3>
+  <table>
+    <tr><th>Item</th><th>Simplification</th><th>Status</th></tr>
+    <tr>
+      <td>Extract-air temperature</td>
+      <td>Previous-timestep zone air-node temperature (lagged coupling, see
+          note above). Not iterated within the timestep.</td>
+      <td><span class="partial">Simplified</span></td>
+    </tr>
+    <tr>
+      <td>Air properties</td>
+      <td>Fixed rho&nbsp;=&nbsp;1.204&nbsp;kg/m&sup3;,
+          cp&nbsp;=&nbsp;1006&nbsp;J/(kg&middot;K)
+          (rho&middot;cp&nbsp;=&nbsp;1211.224&nbsp;J/(m&sup3;&middot;K)),
+          following the existing <code>ventilation.py</code> convention. No
+          altitude-corrected air density, no humidity dependence.</td>
+      <td><span class="partial">Simplified</span></td>
+    </tr>
+    <tr>
+      <td>Frost protection</td>
+      <td>Only the direct effectiveness-reduction approach (cf. formula (46)).
+          The indirect treatment computing frost-protected outdoor-air and
+          limited heat-recovery supply temperatures (cf. formulas (47b)-(49))
+          is not implemented, and the physical defrost mechanism (bypass,
+          preheater, recirculation) is not modelled as equipment.</td>
+      <td><span class="partial">Simplified</span></td>
+    </tr>
+    <tr>
+      <td>Extract-compensated supply-temperature control</td>
+      <td>Provided as a generic piecewise-linear controller on extract (zone)
+          temperature. This supervisory strategy fits the architecture of
+          EN 16798-5-1 but is <em>not</em> one of the controller modes
+          enumerated in Table B.2.</td>
+      <td><span class="partial">Extension beyond Table B.2</span></td>
+    </tr>
+    <tr>
+      <td>Fan product data</td>
+      <td>When not supplied: design pressure is derived from nominal specific
+          fan power and nominal efficiency; nominal efficiencies default to
+          0.72 (supply) and 0.78 (extract); reference flow/efficiency for the
+          part-load efficiency correction default to the design values. These
+          defaults stand in for product data and should be replaced with
+          manufacturer values in project studies.</td>
+      <td><span class="partial">User-supplied / defaulted</span></td>
+    </tr>
+    <tr>
+      <td>Fan heat fraction to air</td>
+      <td>Defaults to 0.90 for both fans. Set the extract value to 0 for an
+          extract fan downstream of heat recovery.</td>
+      <td><span class="partial">User-supplied / defaulted</span></td>
+    </tr>
+    <tr>
+      <td>Ventilation profile fractions</td>
+      <td>A fractional profile value scales the operating airflow continuously
+          (reduced fan speed), with fan power following the part-load
+          relations. It is <em>not</em> ON/OFF duty-cycle averaging. The
+          library API has a separate <code>operation_fraction</code> input for
+          duty-cycle averaging, which the solver path does not use.</td>
+      <td><span class="partial">Convention</span></td>
+    </tr>
+    <tr>
+      <td>Reported bypass fraction</td>
+      <td><code>bypass_fraction</code> is the effective fraction of supply air
+          bypassing the recovery core derived from actual vs. nominal recovery
+          (frost reduction plus setpoint modulation combined); it is not a
+          physical damper position.</td>
+      <td><span class="partial">Diagnostic convention</span></td>
+    </tr>
+  </table>
+
+  <h3>Not Included In This Version</h3>
+  <table>
+    <tr><th>Functionality</th><th>Status</th></tr>
+    <tr><td>Latent cooling and dehumidification</td><td><span class="no">Not included</span></td></tr>
+    <tr><td>Humidity recovery and humidification</td><td><span class="no">Not included</span></td></tr>
+    <tr><td>Recirculation</td><td><span class="no">Not included</span></td></tr>
+    <tr><td>Airflow leakage, AHU casing and duct losses</td><td><span class="no">Not included</span></td></tr>
+    <tr><td>Ground preheating (earth-to-air heat exchangers)</td><td><span class="no">Not included</span></td></tr>
+    <tr><td>Unbalanced supply/extract airflow</td><td><span class="no">Not included (rejected with an error)</span></td></tr>
+    <tr><td>Multi-zone air distribution and detailed VAV control</td><td><span class="no">Not included</span></td></tr>
+    <tr><td>Indirect frost treatment and explicit defrost equipment (preheater, recirculation defrost)</td><td><span class="no">Not included</span></td></tr>
+  </table>
+
+  <h2>Main Inputs (<code>mechanical_supply</code> Component Schema)</h2>
+  <table>
+    <tr><th>Input</th><th>Key</th><th>Default</th><th>Role</th></tr>
+    <tr>
+      <td>Supply airflow</td>
+      <td><code>supply_flow_m3_h</code> (required), <code>extract_flow_m3_h</code></td>
+      <td>extract = supply</td>
+      <td>Design/required balanced airflow; extract must equal supply.</td>
+    </tr>
+    <tr>
+      <td>Heat-recovery efficiency</td>
+      <td><code>sensible_heat_recovery_efficiency</code> (required)</td>
+      <td>-</td>
+      <td>Sensible temperature efficiency in [0, 1].</td>
+    </tr>
+    <tr>
+      <td>Supply-temperature control</td>
+      <td><code>supply_temperature_mode</code>:
+          <code>"fixed"</code> with <code>supply_temperature_setpoint_c</code>, or
+          <code>"outdoor_compensated"</code> / <code>"extract_compensated"</code>
+          with <code>supply_temperature_points</code> ([T_ref, T_sup] pairs) and
+          optional <code>supply_temperature_minimum_c</code> /
+          <code>supply_temperature_maximum_c</code></td>
+      <td><code>"fixed"</code></td>
+      <td>Requested supply-air setpoint per timestep.</td>
+    </tr>
+    <tr>
+      <td>Heat-recovery control</td>
+      <td><code>heat_recovery_control</code></td>
+      <td><code>"modulating_bypass"</code></td>
+      <td><code>"modulating_bypass"</code> or <code>"always_on"</code>.</td>
+    </tr>
+    <tr>
+      <td>Frost protection</td>
+      <td><code>frost_control</code>, <code>frost_exhaust_limit_c</code></td>
+      <td><code>"exhaust_limit"</code>, -5&nbsp;&deg;C</td>
+      <td>Minimum allowed exhaust temperature leaving the recovery core.</td>
+    </tr>
+    <tr>
+      <td>Coils</td>
+      <td><code>heating_coil_max_power_w</code>, <code>cooling_coil_enabled</code>,
+          <code>cooling_coil_max_power_w</code></td>
+      <td>unlimited, <code>false</code>, unlimited</td>
+      <td>Capacity limits; disabled cooling still reports required (unmet) power.</td>
+    </tr>
+    <tr>
+      <td>Fans</td>
+      <td><code>supply_fan_specific_power_w_per_m3_s</code>,
+          <code>extract_fan_specific_power_w_per_m3_s</code>,
+          <code>fan_performance_model</code>,
+          <code>*_fan_design_pressure_pa</code>,
+          <code>*_fan_nominal_efficiency</code>,
+          <code>*_fan_reference_flow_m3_h</code>,
+          <code>*_fan_reference_efficiency</code></td>
+      <td>0, <code>"en16798_5_1"</code>, derived, 0.72 / 0.78, design values</td>
+      <td>Nominal specific fan power at design flow plus optional product data
+          for the part-load relations.</td>
+    </tr>
+    <tr>
+      <td>Fan heat to air</td>
+      <td><code>supply_fan_heat_fraction_to_air</code>,
+          <code>extract_fan_heat_fraction_to_air</code></td>
+      <td>0.90 / 0.90</td>
+      <td>Share of fan electricity heating the respective airstream.</td>
+    </tr>
+    <tr>
+      <td>Operating schedule</td>
+      <td><code>profile</code> (names a profile column)</td>
+      <td>1.0</td>
+      <td>Continuous flow fraction in [0, 1] relative to design flow
+          (reduced flow, not duty cycle).</td>
+    </tr>
+  </table>
+
+  <h2>Calculation Mapping</h2>
+  <table>
+    <tr><th>Standard framework item</th><th>Implemented calculation</th><th>Code location</th><th>Output fields</th></tr>
+    <tr>
+      <td>Supply-temperature controller (Table B.2 framework)</td>
+      <td>Resolves the requested setpoint from fixed value, schedule, or
+          piecewise-linear compensation curve before the thermodynamic step.</td>
+      <td><code>resolve_supply_temperature_setpoint()</code>,
+          <code>SupplyTemperatureControl</code></td>
+      <td><code>requested_supply_temperature_c</code></td>
+    </tr>
+    <tr>
+      <td>Fan power and air heat-up (single-zone no-control relations,
+          product-data efficiency correction)</td>
+      <td>Design pressure from nominal SFP and efficiency unless given;
+          part-load pressure with the square of the flow ratio; efficiency with
+          the square-root flow correction; temperature rise from heat fraction
+          to air.</td>
+      <td><code>_fan_power_and_temperature_rise()</code></td>
+      <td><code>fan_electric_power_w</code></td>
+    </tr>
+    <tr>
+      <td>Frost protection, direct effectiveness control (cf. formula (46))</td>
+      <td>Reduces effective heat-recovery efficiency so the exhaust at the
+          recovery outlet stays at or above the configured limit.</td>
+      <td><code>calculate_sensible_ahu_step()</code> step 4</td>
+      <td><code>frost_protection_required</code></td>
+    </tr>
+    <tr>
+      <td>Sensible heat recovery and bypass modulation</td>
+      <td>Recovery outlet temperature from effectiveness; modulating bypass
+          mixes outdoor air to track the setpoint; recovery power is the net
+          supply-side gain relative to outdoor air (matches the formula (77)
+          bookkeeping only under balanced flow, no recirculation, no outdoor-air
+          preheat and inactive frost correction).</td>
+      <td><code>calculate_sensible_ahu_step()</code> steps 5-7</td>
+      <td><code>heat_recovery_power_w</code>, <code>bypass_fraction</code></td>
+    </tr>
+    <tr>
+      <td>Sensible cooling coil</td>
+      <td>Required power to pull post-recovery air down to the target;
+          delivered power limited by enable flag and capacity. Precedes the
+          heating coil in the air path.</td>
+      <td><code>calculate_sensible_ahu_step()</code> step 8a</td>
+      <td><code>required_cooling_coil_power_w</code>,
+          <code>actual_cooling_coil_power_w</code></td>
+    </tr>
+    <tr>
+      <td>Sensible heating coil</td>
+      <td>Required power to raise air to the fan-heat-adjusted target;
+          delivered power limited by capacity.</td>
+      <td><code>calculate_sensible_ahu_step()</code> step 8b</td>
+      <td><code>required_heating_coil_power_w</code>,
+          <code>actual_heating_coil_power_w</code></td>
+    </tr>
+    <tr>
+      <td>Zone coupling (ISO 52016-1 &sect;6.5.10)</td>
+      <td>Supply stream conductance and source temperature from delivered flow
+          and temperature; zero flow yields zero conductance.</td>
+      <td><code>ahu_outputs_to_ventilation_stream()</code>,
+          <code>ventilation.py::_resolve_component_streams()</code></td>
+      <td><code>actual_supply_temperature_c</code>,
+          <code>actual_supply_flow_m3_h</code></td>
+    </tr>
+  </table>
+
+  <h2>Output Diagnostics</h2>
+  <p>
+    When at least one <code>mechanical_supply</code> component runs, twelve
+    diagnostic columns per component are added to the hourly results. The
+    single-zone solver paths suffix columns with the component name
+    (<code>Q_ahu_coil_&lt;component&gt;</code>); the multizone path also appends
+    the zone name (<code>Q_ahu_coil_&lt;component&gt;_&lt;zone&gt;</code>).
+  </p>
+  <table>
+    <tr><th>Column prefix</th><th>Quantity</th><th>Unit</th></tr>
+    <tr><td><code>Q_ahu_coil</code> / <code>Q_ahu_coil_req</code></td><td>Delivered / required heating-coil power (timestep average)</td><td>W</td></tr>
+    <tr><td><code>Q_ahu_cool</code> / <code>Q_ahu_cool_req</code></td><td>Delivered / required sensible cooling-coil power</td><td>W</td></tr>
+    <tr><td><code>Q_ahu_hr</code></td><td>Heat-recovery power (negative in economizer operation)</td><td>W</td></tr>
+    <tr><td><code>P_ahu_fan</code></td><td>Total fan electric power</td><td>W</td></tr>
+    <tr><td><code>T_ahu_sup</code> / <code>T_ahu_sup_req</code></td><td>Delivered / requested supply temperature (requested is NaN when the AHU is off)</td><td>&deg;C</td></tr>
+    <tr><td><code>q_sup_m3h</code> / <code>q_ext_m3h</code></td><td>Actual supply / extract airflow</td><td>m&sup3;/h</td></tr>
+    <tr><td><code>ahu_bypass</code></td><td>Effective bypass fraction (frost plus modulation)</td><td>-</td></tr>
+    <tr><td><code>ahu_frost</code></td><td>Frost protection active (0/1)</td><td>-</td></tr>
+  </table>
+
+  <div class="note">
+    <strong>Energy bookkeeping.</strong> AHU coil energy is reported as a
+    system-side diagnostic and is deliberately <em>not</em> added to the zone
+    energy balance (Sankey): the zone ventilation term already uses the
+    conditioned supply temperature, so adding coil energy on the zone side
+    would double-count it. Required-minus-delivered coil power exposes unmet
+    AHU demand.
+  </div>
+
+  <h2>Validation Status</h2>
+  <ul>
+    <li>Analytical unit tests derive expected values from first-principles
+        sensible heat balances with independently defined air properties
+        (heat-recovery balance, bypass mixing, frost limit, coil limits and
+        shortfall reporting, fan power and fan-heat placement).</li>
+    <li>The fan part-load pressure and efficiency relations follow the
+        EPB Center EN 16798-5-1 reference implementation for the overlapping
+        single-zone fan and sensible-air calculations.</li>
+    <li>Integration tests cover the coupling into the affine ventilation
+        boundary and the end-to-end solver paths (legacy, causal and
+        multizone), including the lagged extract-air assumption and the
+        diagnostic column schema.</li>
+  </ul>
+
+  <div class="note">
+    This module evaluates and demonstrates the calculation approach of
+    EN 16798-5-1 for a sensible, balanced-airflow subset. It does not replace
+    the standard and should be used alongside it. Defaults documented above
+    (fan efficiencies, fan heat fractions, frost limit) are placeholders for
+    product and design data and should be replaced with project values.
+  </div>
+</body>
+</html>

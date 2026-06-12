@@ -16,6 +16,7 @@ import tempfile
 import copy
 import re
 import time
+import warnings
 # timezonefinder imported lazily -- avoids ~0.7s startup cost
 from pytz import timezone
 import numpy as np
@@ -131,13 +132,101 @@ def _make_sched_resolver(kwargs, iso16798_profiles_obj):
     return _sched
 
 
-def _resolve_single_zone_vent_boundary(building_object, T_zone, Tstepi, sim_df, profile_df):
+_VENTILATION_COMPONENT_PROFILE_COLUMNS = {
+    "occupancy_profile",
+    "appliances_profile",
+    "lighting_profile",
+    "heating_profile",
+    "cooling_profile",
+    "ventilation_profile",
+}
+
+_VENTILATION_MISSING_PROFILE_POLICIES = {"error", "warn"}
+
+
+def _ventilation_component_type(component):
+    return str(component.get("ventilation_type", "")).strip().lower()
+
+
+def _ventilation_missing_profile_policy(component):
+    """Return the missing-profile policy for a ventilation component.
+
+    Mechanical supply components represent active AHU flow. If their schedule is
+    misspelled, silently running them at 100% flow is a large modelling error, so
+    the default is strict. Passive/prescribed legacy components retain the older
+    warning fallback unless callers opt into strictness.
+    """
+    raw_policy = component.get("missing_profile_policy")
+    if raw_policy is None:
+        return "error" if _ventilation_component_type(component) == "mechanical_supply" else "warn"
+
+    policy = str(raw_policy).strip().lower().replace("-", "_")
+    aliases = {
+        "raise": "error",
+        "strict": "error",
+        "warning": "warn",
+        "use_default": "warn",
+        "default": "warn",
+        "fallback": "warn",
+    }
+    policy = aliases.get(policy, policy)
+    if policy not in _VENTILATION_MISSING_PROFILE_POLICIES:
+        raise ValueError(
+            "Unsupported ventilation component missing_profile_policy "
+            f"{raw_policy!r}; expected one of {sorted(_VENTILATION_MISSING_PROFILE_POLICIES)}."
+        )
+    return policy
+
+
+def _resolve_ventilation_component_profile_multiplier(
+    *,
+    component,
+    component_name,
+    profile_columns,
+    value_getter,
+    context,
+):
+    """Resolve one component profile multiplier or None when it should default to 1.0."""
+    profile_name = component.get("profile")
+    if profile_name is None:
+        return None
+
+    profile_name = str(profile_name).strip()
+    if not profile_name:
+        return None
+
+    available_columns = {str(col) for col in profile_columns}
+    if profile_name in available_columns:
+        return float(value_getter(profile_name))
+
+    policy = _ventilation_missing_profile_policy(component)
+    message = (
+        f"{context} component {component_name!r}: profile {profile_name!r} is not "
+        f"available; available columns are {sorted(available_columns)}. "
+        "Add the profile column or set missing_profile_policy='warn' to use 1.0 explicitly."
+    )
+    if policy == "error":
+        raise ValueError(message)
+
+    warnings.warn(f"{message} Using 1.0.", stacklevel=3)
+    return None
+
+
+def _resolve_single_zone_vent_boundary(
+    building_object, T_zone, Tstepi, sim_df, profile_df,
+    ahu_outputs_collector=None,
+):
     """Build the affine ventilation boundary for legacy and causal single-zone solvers.
 
     Reads zone volume and ventilation config from *building_object*, resolves per-component
     profile multipliers from *profile_df* at timestep *Tstepi*, and delegates to
     resolve_ventilation_boundary.  Centralises logic that is otherwise duplicated in the
     legacy and causal solver timestep loops.
+
+    When *ahu_outputs_collector* is a dict it is passed through to
+    resolve_ventilation_boundary → _resolve_component_streams, which will write
+    {component_name: AHUStepOutputs} entries for every mechanical_supply component.
+    The caller is responsible for snapshotting the dict after each timestep.
     """
     _bld = building_object.get("building", {})
     _zone_vol = float(
@@ -147,18 +236,17 @@ def _resolve_single_zone_vent_boundary(building_object, T_zone, Tstepi, sim_df, 
     _comp_mult: dict = {}
     for _comp in _vent_cfg.get("components", []):
         _cname = str(_comp.get("name", "")).strip()
-        _cprof = _comp.get("profile")
-        if _cname and _cprof is not None:
-            _col = str(_cprof)
-            if _col in profile_df.columns:
-                _comp_mult[_cname] = float(profile_df[_col].iloc[Tstepi])
-            else:
-                import warnings as _w
-                _w.warn(
-                    f"Component {_cname!r}: profile column {_col!r} not in "
-                    f"profile_df; available columns: {list(profile_df.columns)}. Using 1.0.",
-                    stacklevel=3,
-                )
+        if not _cname:
+            continue
+        _mult = _resolve_ventilation_component_profile_multiplier(
+            component=_comp,
+            component_name=_cname,
+            profile_columns=profile_df.columns,
+            value_getter=lambda col: profile_df[col].iloc[Tstepi],
+            context="Single-zone ventilation",
+        )
+        if _mult is not None:
+            _comp_mult[_cname] = _mult
     return resolve_ventilation_boundary(
         building_object,
         float(T_zone),
@@ -167,7 +255,57 @@ def _resolve_single_zone_vent_boundary(building_object, T_zone, Tstepi, sim_df, 
         profile_multiplier=float(profile_df["ventilation_profile"].iloc[Tstepi]),
         component_multipliers=_comp_mult if _comp_mult else None,
         zone_volume_m3=_zone_vol if _zone_vol > 0.0 else None,
+        ahu_outputs_collector=ahu_outputs_collector,
     )
+
+
+# Ordered specification of AHU diagnostic output fields: (column_prefix, attribute_name, dtype).
+# Used by both _ahu_coll_to_columns (legacy/causal paths) and the multizone buffer, so that
+# all solver paths expose the same 12 diagnostic columns.
+# AHU coil energy must NOT be added to the zone Sankey — the ventilation term already uses
+# the conditioned supply temperature, so adding coil energy would double-count.
+_AHU_DIAG_SPEC: tuple = (
+    ("Q_ahu_coil",     "actual_heating_coil_power_w",    float),
+    ("Q_ahu_coil_req", "required_heating_coil_power_w",  float),
+    ("Q_ahu_cool",     "actual_cooling_coil_power_w",    float),
+    ("Q_ahu_cool_req", "required_cooling_coil_power_w",  float),
+    ("Q_ahu_hr",       "heat_recovery_power_w",          float),
+    ("P_ahu_fan",      "fan_electric_power_w",           float),
+    ("T_ahu_sup",      "actual_supply_temperature_c",    float),
+    ("T_ahu_sup_req",  "requested_supply_temperature_c", float),
+    ("q_sup_m3h",      "actual_supply_flow_m3_h",        float),
+    ("q_ext_m3h",      "actual_extract_flow_m3_h",       float),
+    ("ahu_bypass",     "bypass_fraction",                float),
+    ("ahu_frost",      "frost_protection_required",      int),
+)
+
+
+def _ahu_coll_to_columns(ahu_coll_act):
+    """Convert per-timestep {component_name: AHUStepOutputs} dicts to hourly column arrays.
+
+    Returns {col_name: np.array} for all mechanical_supply components found in the list.
+    Only called when at least one such component is present.
+    Column schema is defined by _AHU_DIAG_SPEC — identical to the multizone path.
+    """
+    names = sorted({k for d in ahu_coll_act for k in d})
+    if not names:
+        return {}
+
+    cols: dict = {}
+    n = len(ahu_coll_act)
+    for name in names:
+        sfx = f"_{name}"
+        vv = [d.get(name) for d in ahu_coll_act]
+        for col_pfx, attr, dtype in _AHU_DIAG_SPEC:
+            a = np.empty(n, dtype=dtype)
+            for i, v in enumerate(vv):
+                raw = getattr(v, attr) if v is not None else None
+                if dtype == float:
+                    a[i] = float(raw) if raw is not None else np.nan
+                else:
+                    a[i] = int(bool(raw)) if raw is not None else 0
+            cols[f"{col_pfx}{sfx}"] = a
+    return cols
 
 
 def _infer_timestep_hours_from_index(index, default=1.0):
@@ -3941,6 +4079,11 @@ class ISO52016:
                 }
             )
 
+        # Per-zone AHU output buffers: keyed by (zone_index, component_name).
+        # Populated lazily on first encounter. Keys are the _AHU_DIAG_SPEC column prefixes,
+        # so the multizone output schema matches _ahu_coll_to_columns (legacy/causal paths).
+        _ahu_buffers: dict = {}  # (zi, comp_name) -> {col_pfx: np.array}
+
         # ------------------------
         # 7) Ground virtual temperature (optional)
         # ------------------------
@@ -4285,10 +4428,11 @@ class ISO52016:
             theta_air_prev: float,
             tstep: int,
             T_out: float,
-        ) -> tuple:  # (VentilationBoundary, float, int)
+        ) -> tuple:  # (VentilationBoundary, float, int, dict)
             _empty = VentilationBoundary(streams=())
+            _empty_ahu: dict = {}
             if not include_ventilation:
-                return _empty, 1.0, 0
+                return _empty, 1.0, 0, _empty_ahu
 
             zname = str(zone_obj.get("name", zone_names[0]))
             if zname not in zone_proxies:
@@ -4300,7 +4444,7 @@ class ISO52016:
             has_components = "components" in vent_cfg
 
             if not has_components and vent_type in ("none", "off", "disabled", ""):
-                return _empty, 1.0, 0
+                return _empty, 1.0, 0, _empty_ahu
 
             ws = float(sim_df["WS10m"].iloc[tstep]) if "WS10m" in sim_df.columns else 0.0
             profile_mult = _profile_value(zname, "ventilation_profile", tstep, 1.0)
@@ -4317,31 +4461,27 @@ class ISO52016:
                 or 0.0
             )
 
-            # Per-component schedules: each component may have a "profile" key
-            # naming a profile in the profile registry.  Components without a
-            # profile key always run at full capacity (1.0) so infiltration
-            # remains active independently of the mechanical schedule.
-            # Only the six standard profile columns are supported; unknown names
-            # warn once and fall back to 1.0.
-            _known_profiles = {
-                "occupancy_profile", "appliances_profile", "lighting_profile",
-                "heating_profile", "cooling_profile", "ventilation_profile",
-            }
+            # Per-component schedules: each component may have a "profile" key.
+            # Components without a profile key run at full capacity (1.0), so
+            # infiltration remains active independently of AHU schedules.
             _comp_mult: dict = {}
             for _comp in vent_cfg.get("components", []):
                 _cname = str(_comp.get("name", "")).strip()
-                _prof = _comp.get("profile")
-                if _cname and _prof is not None:
-                    if _prof not in _known_profiles:
-                        import warnings as _w
-                        _w.warn(
-                            f"Zone {zname!r} component {_cname!r}: profile {_prof!r} is not "
-                            f"one of the supported profile columns {sorted(_known_profiles)}. "
-                            "Using 1.0.",
-                            stacklevel=2,
-                        )
-                    _comp_mult[_cname] = _profile_value(zname, _prof, tstep, 1.0)
+                if not _cname:
+                    continue
+                _mult = _resolve_ventilation_component_profile_multiplier(
+                    component=_comp,
+                    component_name=_cname,
+                    profile_columns=_VENTILATION_COMPONENT_PROFILE_COLUMNS,
+                    value_getter=lambda col, _zname=zname, _tstep=tstep: _profile_value(
+                        _zname, col, _tstep, 1.0
+                    ),
+                    context=f"Zone {zname!r}",
+                )
+                if _mult is not None:
+                    _comp_mult[_cname] = _mult
 
+            _ahu_coll: dict = {}
             try:
                 base_bdy = resolve_ventilation_boundary(
                     proxy,
@@ -4351,6 +4491,7 @@ class ISO52016:
                     profile_multiplier=profile_mult,
                     component_multipliers=_comp_mult if _comp_mult else None,
                     zone_volume_m3=zone_vol if zone_vol > 0.0 else None,
+                    ahu_outputs_collector=_ahu_coll,
                 )
             except Exception as exc:
                 raise RuntimeError(
@@ -4463,7 +4604,7 @@ class ISO52016:
                         purge_factor_applied = float(boost_factor)
                         purge_active = 1
 
-            return base_bdy, purge_factor_applied, purge_active
+            return base_bdy, purge_factor_applied, purge_active, _ahu_coll
 
         def _zone_solar_transmitted_w(tstep: int) -> np.ndarray:
             phi_sol = np.zeros(Z, dtype=float)
@@ -4788,11 +4929,30 @@ class ISO52016:
             purge_active_z_t = np.zeros(Z, dtype=int)
             for zi, zone in enumerate(zones):
                 phi_int_z_t[zi] = _zone_internal_gain_w(zone, t)
-                vent_bdy, purge_factor_z_t[zi], purge_active_z_t[zi] = _zone_ventilation_h_wk(
-                    zone, Theta[zi], t, T_out
+                # Theta[zi] is the zone AIR node (first Z rows of state vector),
+                # not the operative temperature — explicit lag, no algebraic loop.
+                vent_bdy, purge_factor_z_t[zi], purge_active_z_t[zi], _ahu_step = (
+                    _zone_ventilation_h_wk(zone, Theta[zi], t, T_out)
                 )
                 h_ve_z_t[zi] = vent_bdy.heat_transfer_coefficient_w_k
                 s_ve_z_t[zi] = vent_bdy.source_term_w
+                for _cn, _ao in _ahu_step.items():
+                    _key = (zi, _cn)
+                    if _key not in _ahu_buffers:
+                        _ahu_buffers[_key] = {
+                            col_pfx: (
+                                np.full(Tstepn, np.nan, dtype=float) if dtype == float
+                                else np.zeros(Tstepn, dtype=dtype)
+                            )
+                            for col_pfx, _, dtype in _AHU_DIAG_SPEC
+                        }
+                    _buf = _ahu_buffers[_key]
+                    for col_pfx, attr, dtype in _AHU_DIAG_SPEC:
+                        raw = getattr(_ao, attr)
+                        if dtype == float:
+                            _buf[col_pfx][t] = float(raw) if raw is not None else np.nan
+                        else:
+                            _buf[col_pfx][t] = int(bool(raw))
             phi_sol_z_t = _zone_solar_transmitted_w(t)
 
             # Base matrix for this timestep
@@ -5006,6 +5166,15 @@ class ISO52016:
             out_data[f"Q_ground_surface_{surface_out['surface_token']}"] = surface_out["Q_ground"]
         for surface_out in opaque_inside_surface_output_buffers:
             out_data[f"Q_opaque_inside_surface_{surface_out['surface_token']}"] = surface_out["Q_inside"]
+
+        # AHU component diagnostics — 12 fields per component (from _AHU_DIAG_SPEC).
+        # Column names: {col_pfx}_{comp_name}_{zone_name}.  Same field set as the
+        # legacy/causal paths (_ahu_coll_to_columns), different suffix convention.
+        # Columns appear only when at least one mechanical_supply component ran.
+        for (zi, comp_name), _buf in _ahu_buffers.items():
+            _zn = zone_names[zi]
+            for col_pfx, _, _ in _AHU_DIAG_SPEC:
+                out_data[f"{col_pfx}_{comp_name}_{_zn}"] = _buf[col_pfx]
 
         out = pd.DataFrame(out_data, index=sim_df.index)
         out = out.iloc[start_idx:].copy()
@@ -6497,6 +6666,7 @@ class ISO52016:
         """
         H_ve_nat_all = [0]
         S_ve_nat_all = [0.0]
+        _ahu_coll_all: list = []   # per-timestep {comp_name: AHUStepOutputs}; appended once per timestep after HVAC loop
         # Time step for indoor temperature in adjacent zones
         if building_object['building']['adj_zones_present']:
             list_adj_zones = building_object['building']['number_adj_zone']
@@ -6747,6 +6917,7 @@ class ISO52016:
                 iterate = True
                 _H_ve_nat_tstep = 0.0
                 _S_ve_nat_tstep = 0.0
+                _ahu_coll_tstep: dict = {}   # overwritten each while iteration; final value captured after loop
                 while iterate:
 
                     iterate = False
@@ -6820,6 +6991,7 @@ class ISO52016:
 
                     _vent_bdy = _resolve_single_zone_vent_boundary(
                         building_object, float(Theta_old[ri]), Tstepi, sim_df, profile_df,
+                        ahu_outputs_collector=_ahu_coll_tstep,
                     )
                     H_ve_nat = _vent_bdy.heat_transfer_coefficient_w_k
                     S_ve_nat = _vent_bdy.source_term_w
@@ -7230,6 +7402,7 @@ class ISO52016:
                 # while loop so HVAC re-solving iterations do not duplicate entries).
                 H_ve_nat_all.append(_H_ve_nat_tstep)
                 S_ve_nat_all.append(_S_ve_nat_tstep)
+                _ahu_coll_all.append(dict(_ahu_coll_tstep))
                 H_ve_nat = _H_ve_nat_tstep
                 S_ve_nat = _S_ve_nat_tstep
 
@@ -7405,6 +7578,12 @@ class ISO52016:
         )
         hourly_results["T_ve_source_eq"] = _t_eq
         hourly_results["Q_ve"] = _h_ve_arr * _t_air_arr - _s_ve_arr
+
+        # AHU per-component diagnostics — only populated when mechanical_supply
+        # components are present. NOT added to the Sankey: AHU coil heat crosses
+        # the zone boundary from the system side and must not double-count Q_HC.
+        for _col_name, _col_arr in _ahu_coll_to_columns(_ahu_coll_all[act_slice]).items():
+            hourly_results[_col_name] = _col_arr
 
         # separate H/C
         hourly_results["Q_H"] = 0.0
@@ -7910,6 +8089,7 @@ class ISO52016:
         """
         H_ve_nat_all = [0]
         S_ve_nat_all = [0.0]
+        _ahu_coll_all: list = []   # per-timestep {comp_name: AHUStepOutputs}; appended once per timestep after HVAC loop
         # Time step for indoor temperature in adjacent zones
         if building_object['building']['adj_zones_present']:
             list_adj_zones = building_object['building']['number_adj_zone']
@@ -8208,6 +8388,7 @@ class ISO52016:
                 iterate = True
                 _H_ve_nat_tstep = 0.0
                 _S_ve_nat_tstep = 0.0
+                _ahu_coll_tstep: dict = {}   # overwritten each while iteration; final value captured after loop
                 while iterate:
 
                     iterate = False
@@ -8281,6 +8462,7 @@ class ISO52016:
 
                     _vent_bdy = _resolve_single_zone_vent_boundary(
                         building_object, float(Theta_old[ri]), Tstepi, sim_df, profile_df,
+                        ahu_outputs_collector=_ahu_coll_tstep,
                     )
                     H_ve_nat = _vent_bdy.heat_transfer_coefficient_w_k
                     S_ve_nat = _vent_bdy.source_term_w
@@ -8728,6 +8910,7 @@ class ISO52016:
                 # while loop so HVAC re-solving iterations do not duplicate entries).
                 H_ve_nat_all.append(_H_ve_nat_tstep)
                 S_ve_nat_all.append(_S_ve_nat_tstep)
+                _ahu_coll_all.append(dict(_ahu_coll_tstep))
                 H_ve_nat = _H_ve_nat_tstep
                 S_ve_nat = _S_ve_nat_tstep
 
@@ -8908,6 +9091,12 @@ class ISO52016:
         )
         hourly_results["T_ve_source_eq"] = _t_eq
         hourly_results["Q_ve"] = _h_ve_arr * _t_air_arr - _s_ve_arr
+
+        # AHU per-component diagnostics — only populated when mechanical_supply
+        # components are present. NOT added to the Sankey: AHU coil heat crosses
+        # the zone boundary from the system side and must not double-count Q_HC.
+        for _col_name, _col_arr in _ahu_coll_to_columns(_ahu_coll_all[act_slice]).items():
+            hourly_results[_col_name] = _col_arr
 
         # separate H/C
         hourly_results["Q_H"] = 0.0
