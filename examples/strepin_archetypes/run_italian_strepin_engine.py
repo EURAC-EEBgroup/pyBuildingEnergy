@@ -53,6 +53,14 @@ HOURLY_OUTPUT_COLUMN_UNITS = {
     "T_ve_source_eq": "degC",
     "H_ve": "W/K",
     "S_ve": "W",
+    "Q_solar_gains": "W",
+    "Q_internal_gains": "W",
+    "Q_storage": "W",
+    "Q_tr_total": "W",
+    "Q_tr_opaque": "W",
+    "Q_tr_window": "W",
+    "Q_tb": "W",
+    "Q_ground": "W",
     "GHI": "W/m2",
     "I_sol_global_W_m2": "W/m2",
     "global_horizontal_irradiance_W_m2": "W/m2",
@@ -65,7 +73,16 @@ HOURLY_OUTPUT_COLUMN_UNITS = {
 def _hourly_output_units_for_column(column: str) -> str | None:
     if column in HOURLY_OUTPUT_COLUMN_UNITS:
         return HOURLY_OUTPUT_COLUMN_UNITS[column]
-    if column.startswith(("Q_HVAC_", "Q_HC_", "Q_ve_", "Q_cpl_", "dQ_")):
+    if column.startswith((
+        "Q_HVAC_",
+        "Q_HC_",
+        "Q_ve_",
+        "Q_tr_",
+        "Q_H_attr_",
+        "Q_C_attr_",
+        "Q_cpl_",
+        "dQ_",
+    )):
         return "W"
     if column.startswith(("Phi_int_", "Phi_sol_")):
         return "W"
@@ -73,7 +90,15 @@ def _hourly_output_units_for_column(column: str) -> str | None:
         return "W/K"
     if column.startswith("S_ve_"):
         return "W"
-    if column.startswith(("T_air_", "T_rad_", "T_op_", "T_op_core_", "T_ve_source_eq_", "dT_")):
+    if column.startswith((
+        "T_air_",
+        "T_rad_",
+        "T_op_",
+        "T_op_core_",
+        "T_ve_source_eq_",
+        "T_ve_source_",
+        "dT_",
+    )):
         return "degC"
     if column.endswith("_profile"):
         return "fraction"

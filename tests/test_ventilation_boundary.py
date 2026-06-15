@@ -1496,6 +1496,33 @@ class TestLegacyCausalSolverPaths:
         assert isinstance(private_result, tuple)
         assert len(private_result) == 3
 
+        hourly, annual = public_result
+        for col in (
+            "Q_solar_gains",
+            "Q_internal_gains",
+            "Q_storage",
+            "Q_tr_total",
+            "Q_tr_opaque",
+            "Q_tr_window",
+            "Q_tb",
+            "Q_ground",
+            "Q_H_attr_transmission",
+            "Q_C_attr_solar",
+        ):
+            assert col in hourly.columns
+        for col in (
+            "Q_tr_total_loss_kWh",
+            "Q_tr_total_gain_kWh",
+            "Q_ve_loss_kWh",
+            "Q_ve_gain_kWh",
+            "Q_solar_gains_kWh",
+            "Q_internal_gains_kWh",
+            "Q_storage_net_kWh",
+            "Q_H_attr_transmission_kWh",
+            "Q_C_attr_solar_kWh",
+        ):
+            assert col in annual.columns
+
     def test_causal_wrapper_matches_shared_engine(self):
         """The old AHU-causal private name remains a thin compatibility wrapper."""
         bld = _legacy_building([{
@@ -1676,6 +1703,127 @@ class TestLegacyCausalSolverPaths:
         t_air = out["T_air"].to_numpy()
         q_ve = out["Q_ve"].to_numpy()
         np.testing.assert_allclose(q_ve, h_ve * t_air - s_ve, atol=1e-6)
+
+    def test_component_ventilation_stream_reporting_sums_to_total(self):
+        """Per-stream ventilation diagnostics are reported only for real components."""
+        bld = _legacy_building([
+            {
+                "name": "infiltration",
+                "ventilation_type": "prescribed",
+                "heat_transfer_coefficient_w_k": 60.0,
+                "source_temperature_c": -5.0,
+            },
+            {
+                "name": "ventilation",
+                "ventilation_type": "prescribed",
+                "heat_transfer_coefficient_w_k": 40.0,
+                "source_temperature_c": 10.0,
+            },
+        ])
+        out = _run_legacy(bld, n=8, t_out=-5.0)
+
+        for col in (
+            "H_ve_infiltration",
+            "H_ve_ventilation",
+            "T_ve_source_infiltration",
+            "T_ve_source_ventilation",
+            "Q_ve_infiltration",
+            "Q_ve_ventilation",
+        ):
+            assert col in out.columns
+
+        np.testing.assert_allclose(
+            out["H_ve"].to_numpy(),
+            (out["H_ve_infiltration"] + out["H_ve_ventilation"]).to_numpy(),
+            atol=1e-9,
+        )
+        np.testing.assert_allclose(
+            out["Q_ve"].to_numpy(),
+            (out["Q_ve_infiltration"] + out["Q_ve_ventilation"]).to_numpy(),
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(
+            out["Q_ve"].to_numpy(),
+            (out["H_ve"] * out["T_air"] - out["S_ve"]).to_numpy(),
+            atol=1e-6,
+        )
+
+    def test_scalar_custom_ventilation_does_not_invent_infiltration_split(self):
+        """A scalar custom outdoor-air exchange reports total Q_ve only."""
+        bld = _legacy_building([])
+        bld["building_parameters"]["ventilation"] = {
+            "ventilation_type": "custom",
+            "custom_heat_transfer_coefficient_ventilation": 48.114,
+            "flow_rate_per_person": 0.0,
+        }
+        out = _run_legacy(bld, n=8, t_out=-5.0)
+
+        assert "Q_ve" in out.columns
+        assert "Q_ve_infiltration" not in out.columns
+        assert not any(col.startswith("Q_ve_infiltration") for col in out.columns)
+        assert not any(col.startswith("H_ve_infiltration") for col in out.columns)
+
+    def test_need_attribution_columns_sum_to_sensible_needs_hourly_and_annual(self):
+        """Attribution columns are reporting splits and sum back to Q_H/Q_C."""
+        bld = _legacy_building([{
+            "name": "outdoor_air",
+            "ventilation_type": "prescribed",
+            "heat_transfer_coefficient_w_k": 120.0,
+            "source_temperature_c": -10.0,
+        }])
+        heating_cols = [
+            "Q_H_attr_transmission",
+            "Q_H_attr_thermal_bridges",
+            "Q_H_attr_ground",
+            "Q_H_attr_ventilation",
+            "Q_H_attr_storage",
+            "Q_H_attr_unallocated",
+        ]
+        cooling_cols = [
+            "Q_C_attr_solar",
+            "Q_C_attr_internal",
+            "Q_C_attr_transmission",
+            "Q_C_attr_thermal_bridges",
+            "Q_C_attr_ground",
+            "Q_C_attr_ventilation",
+            "Q_C_attr_storage",
+            "Q_C_attr_unallocated",
+        ]
+
+        for t_out in (-10.0, 40.0):
+            pf = _minimal_profile_df(24)
+            with _patched_weather(24, t_out), _patched_profiles(pf):
+                hourly, annual = ISO52016.Temperature_and_Energy_needs_calculation(
+                    bld,
+                    weather_source="epw",
+                    path_weather_file=None,
+                    warmup_hours=0,
+                )
+
+            for col in heating_cols + cooling_cols:
+                assert col in hourly.columns
+                assert f"{col}_kWh" in annual.columns
+
+            np.testing.assert_allclose(
+                hourly[heating_cols].sum(axis=1).to_numpy(),
+                hourly["Q_H"].to_numpy(),
+                atol=1e-6,
+            )
+            np.testing.assert_allclose(
+                hourly[cooling_cols].sum(axis=1).to_numpy(),
+                hourly["Q_C"].to_numpy(),
+                atol=1e-6,
+            )
+
+            row = annual.iloc[0]
+            assert sum(row[f"{col}_kWh"] for col in heating_cols) == pytest.approx(
+                row["Q_H_annual_kWh"],
+                abs=1e-6,
+            )
+            assert sum(row[f"{col}_kWh"] for col in cooling_cols) == pytest.approx(
+                row["Q_C_annual_kWh"],
+                abs=1e-6,
+            )
 
     def test_hybrid_zone_volume_per_zone_in_legacy_core(self):
         """Hybrid path must use zone-local volume, not global building total."""

@@ -378,6 +378,271 @@ def _integrate_power_series_to_energy_wh(power_series, default_dt_h=1.0):
     return float((p * dt_h).sum())
 
 
+def _safe_report_name(name: str) -> str:
+    """Return a stable ASCII suffix for generated reporting columns."""
+
+    safe = re.sub(r"[^0-9A-Za-z]+", "_", str(name or "").strip()).strip("_")
+    return safe or "unnamed"
+
+
+def _unique_report_names(names) -> list[str]:
+    """Return unique safe names while preserving input order."""
+
+    used: dict[str, int] = {}
+    out: list[str] = []
+    for name in names:
+        base = _safe_report_name(name)
+        count = used.get(base, 0)
+        used[base] = count + 1
+        out.append(base if count == 0 else f"{base}_{count + 1}")
+    return out
+
+
+def _integrate_w_to_kwh(series_w, default_dt_h=1.0) -> float:
+    return _integrate_power_series_to_energy_wh(series_w, default_dt_h) / 1000.0
+
+
+def _split_pos_neg_energy_kwh(series_w, default_dt_h=1.0) -> tuple[float, float]:
+    """Return positive and negative-magnitude energy from a signed W series."""
+
+    s = pd.to_numeric(series_w, errors="coerce").fillna(0.0)
+    positive_kWh = _integrate_w_to_kwh(s.clip(lower=0.0), default_dt_h)
+    negative_kWh = _integrate_w_to_kwh((-s.clip(upper=0.0)), default_dt_h)
+    return positive_kWh, negative_kWh
+
+
+def _has_ventilation_components(building_object) -> bool:
+    if not isinstance(building_object, dict):
+        return False
+    vent_cfg = building_object.get("building_parameters", {}).get("ventilation", {}) or {}
+    components = vent_cfg.get("components")
+    return isinstance(components, list) and len(components) > 0
+
+
+def _ventilation_stream_diag(boundary: VentilationBoundary, zone_temperature_c: float) -> dict[str, dict[str, float]]:
+    """Return per-stream ventilation diagnostics for componentized boundaries."""
+
+    diag: dict[str, dict[str, float]] = {}
+    for stream in boundary.streams:
+        h = float(stream.heat_transfer_coefficient_w_k)
+        t_source = float(stream.source_temperature_c)
+        diag[str(stream.name)] = {
+            "H": h,
+            "T_source": t_source,
+            "Q": h * float(zone_temperature_c) - h * t_source,
+        }
+    return diag
+
+
+def _ventilation_stream_diag_to_columns(diag_by_timestep: list[dict[str, dict[str, float]]]) -> tuple[dict[str, np.ndarray], list[str]]:
+    """Convert per-timestep ventilation stream diagnostics to hourly columns."""
+
+    raw_names = []
+    for diag in diag_by_timestep:
+        for name in diag:
+            if name not in raw_names:
+                raw_names.append(name)
+    if not raw_names:
+        return {}, []
+
+    safe_by_raw = dict(zip(raw_names, _unique_report_names(raw_names)))
+    n = len(diag_by_timestep)
+    columns: dict[str, np.ndarray] = {}
+    q_cols: list[str] = []
+    for raw_name in raw_names:
+        safe = safe_by_raw[raw_name]
+        h_arr = np.zeros(n, dtype=float)
+        t_arr = np.full(n, np.nan, dtype=float)
+        q_arr = np.zeros(n, dtype=float)
+        for i, diag in enumerate(diag_by_timestep):
+            values = diag.get(raw_name)
+            if not values:
+                continue
+            h_arr[i] = float(values.get("H", 0.0))
+            t_arr[i] = float(values.get("T_source", np.nan))
+            q_arr[i] = float(values.get("Q", 0.0))
+        columns[f"H_ve_{safe}"] = h_arr
+        columns[f"T_ve_source_{safe}"] = t_arr
+        q_col = f"Q_ve_{safe}"
+        columns[q_col] = q_arr
+        q_cols.append(q_col)
+    return columns, q_cols
+
+
+def _proportional_part(total, part, denominator):
+    total_arr = np.asarray(total, dtype=float)
+    part_arr = np.asarray(part, dtype=float)
+    denom_arr = np.asarray(denominator, dtype=float)
+    return np.divide(
+        total_arr * part_arr,
+        denom_arr,
+        out=np.zeros_like(total_arr, dtype=float),
+        where=denom_arr > 0.0,
+    )
+
+
+def _add_need_attribution_columns(
+    hourly_results: pd.DataFrame,
+    surface_cols: list[str] | None = None,
+    ve_cols: list[str] | None = None,
+) -> pd.DataFrame:
+    """Add proportional useful-need attribution columns.
+
+    These columns are reporting attributions, not independent ISO52016 state
+    variables. Gross heat-balance terms do not generally sum to Q_H or Q_C
+    because storage, controls, setpoints and timestep dynamics intervene.
+    """
+
+    hourly_results = hourly_results.copy()
+    surface_cols = surface_cols or []
+    ve_cols = ve_cols or []
+
+    q_h = pd.to_numeric(hourly_results.get("Q_H", 0.0), errors="coerce").fillna(0.0)
+    q_c = pd.to_numeric(hourly_results.get("Q_C", 0.0), errors="coerce").fillna(0.0)
+
+    q_tr = pd.to_numeric(hourly_results.get("Q_tr_total", 0.0), errors="coerce").fillna(0.0)
+    q_tb = pd.to_numeric(hourly_results.get("Q_tb", 0.0), errors="coerce").fillna(0.0)
+    q_ground = pd.to_numeric(hourly_results.get("Q_ground", 0.0), errors="coerce").fillna(0.0)
+    q_ve = pd.to_numeric(hourly_results.get("Q_ve", 0.0), errors="coerce").fillna(0.0)
+    q_storage = pd.to_numeric(hourly_results.get("Q_storage", 0.0), errors="coerce").fillna(0.0)
+    q_solar = pd.to_numeric(hourly_results.get("Q_solar_gains", 0.0), errors="coerce").fillna(0.0)
+    q_internal = pd.to_numeric(hourly_results.get("Q_internal_gains", 0.0), errors="coerce").fillna(0.0)
+
+    heating_drivers = {
+        "transmission": q_tr.clip(lower=0.0),
+        "thermal_bridges": q_tb.clip(lower=0.0),
+        "ground": q_ground.clip(lower=0.0),
+        "ventilation": q_ve.clip(lower=0.0),
+        "storage": q_storage.clip(lower=0.0),
+    }
+    heating_den = sum(heating_drivers.values())
+    heating_cols = []
+    for name, driver in heating_drivers.items():
+        col = f"Q_H_attr_{name}"
+        hourly_results.loc[:, col] = _proportional_part(q_h, driver, heating_den)
+        heating_cols.append(col)
+    heating_sum = hourly_results[heating_cols].sum(axis=1)
+    hourly_results.loc[:, "Q_H_attr_unallocated"] = (q_h - heating_sum).where(heating_den > 0.0, q_h)
+    hourly_results.loc[:, "Q_H_attr_unallocated"] = hourly_results["Q_H_attr_unallocated"].where(
+        hourly_results["Q_H_attr_unallocated"].abs() > 1e-9,
+        0.0,
+    )
+
+    cooling_drivers = {
+        "solar": q_solar.clip(lower=0.0),
+        "internal": q_internal.clip(lower=0.0),
+        "transmission": (-q_tr.clip(upper=0.0)),
+        "thermal_bridges": (-q_tb.clip(upper=0.0)),
+        "ground": (-q_ground.clip(upper=0.0)),
+        "ventilation": (-q_ve.clip(upper=0.0)),
+        "storage": (-q_storage.clip(upper=0.0)),
+    }
+    cooling_den = sum(cooling_drivers.values())
+    cooling_cols = []
+    for name, driver in cooling_drivers.items():
+        col = f"Q_C_attr_{name}"
+        hourly_results.loc[:, col] = _proportional_part(q_c, driver, cooling_den)
+        cooling_cols.append(col)
+    cooling_sum = hourly_results[cooling_cols].sum(axis=1)
+    hourly_results.loc[:, "Q_C_attr_unallocated"] = (q_c - cooling_sum).where(cooling_den > 0.0, q_c)
+    hourly_results.loc[:, "Q_C_attr_unallocated"] = hourly_results["Q_C_attr_unallocated"].where(
+        hourly_results["Q_C_attr_unallocated"].abs() > 1e-9,
+        0.0,
+    )
+
+    q_h_tr_attr = pd.to_numeric(hourly_results["Q_H_attr_transmission"], errors="coerce").fillna(0.0)
+    q_c_tr_attr = pd.to_numeric(hourly_results["Q_C_attr_transmission"], errors="coerce").fillna(0.0)
+    l_tr = heating_drivers["transmission"]
+    g_tr = cooling_drivers["transmission"]
+    for col in surface_cols:
+        safe = col.replace("Q_tr_surface_", "", 1)
+        q_surf = pd.to_numeric(hourly_results[col], errors="coerce").fillna(0.0)
+        hourly_results.loc[:, f"Q_H_attr_tr_surface_{safe}"] = _proportional_part(
+            q_h_tr_attr, q_surf.clip(lower=0.0), l_tr
+        )
+        hourly_results.loc[:, f"Q_C_attr_tr_surface_{safe}"] = _proportional_part(
+            q_c_tr_attr, -q_surf.clip(upper=0.0), g_tr
+        )
+
+    q_h_ve_attr = pd.to_numeric(hourly_results["Q_H_attr_ventilation"], errors="coerce").fillna(0.0)
+    q_c_ve_attr = pd.to_numeric(hourly_results["Q_C_attr_ventilation"], errors="coerce").fillna(0.0)
+    l_ve = heating_drivers["ventilation"]
+    g_ve = cooling_drivers["ventilation"]
+    for col in ve_cols:
+        safe = col.replace("Q_ve_", "", 1)
+        q_stream = pd.to_numeric(hourly_results[col], errors="coerce").fillna(0.0)
+        hourly_results.loc[:, f"Q_H_attr_ve_{safe}"] = _proportional_part(
+            q_h_ve_attr, q_stream.clip(lower=0.0), l_ve
+        )
+        hourly_results.loc[:, f"Q_C_attr_ve_{safe}"] = _proportional_part(
+            q_c_ve_attr, -q_stream.clip(upper=0.0), g_ve
+        )
+
+    return hourly_results
+
+
+def _add_annual_balance_columns(
+    hourly_results: pd.DataFrame,
+    annual_results_dic: dict,
+    area_m2: float,
+    dt_h: float,
+) -> None:
+    """Add annual gross balance and attribution reporting columns."""
+
+    signed_terms = {
+        "Q_tr_total": ("Q_tr_total_loss_kWh", "Q_tr_total_gain_kWh"),
+        "Q_tr_opaque": ("Q_tr_opaque_loss_kWh", "Q_tr_opaque_gain_kWh"),
+        "Q_tr_window": ("Q_tr_window_loss_kWh", "Q_tr_window_gain_kWh"),
+        "Q_tb": ("Q_tb_loss_kWh", "Q_tb_gain_kWh"),
+        "Q_ground": ("Q_ground_loss_kWh", "Q_ground_gain_kWh"),
+        "Q_ve": ("Q_ve_loss_kWh", "Q_ve_gain_kWh"),
+    }
+    for col, (loss_key, gain_key) in signed_terms.items():
+        if col not in hourly_results:
+            continue
+        loss_kWh, gain_kWh = _split_pos_neg_energy_kwh(hourly_results[col], dt_h)
+        annual_results_dic[loss_key] = loss_kWh
+        annual_results_dic[gain_key] = gain_kWh
+
+    for col in [c for c in hourly_results.columns if c.startswith("Q_ve_")]:
+        if col.startswith(("Q_ve_loss", "Q_ve_gain")):
+            continue
+        loss_kWh, gain_kWh = _split_pos_neg_energy_kwh(hourly_results[col], dt_h)
+        annual_results_dic[f"{col}_loss_kWh"] = loss_kWh
+        annual_results_dic[f"{col}_gain_kWh"] = gain_kWh
+
+    for col in [c for c in hourly_results.columns if c.startswith("Q_tr_surface_")]:
+        loss_kWh, gain_kWh = _split_pos_neg_energy_kwh(hourly_results[col], dt_h)
+        annual_results_dic[f"{col}_loss_kWh"] = loss_kWh
+        annual_results_dic[f"{col}_gain_kWh"] = gain_kWh
+
+    if "Q_solar_gains" in hourly_results:
+        annual_results_dic["Q_solar_gains_kWh"] = _integrate_w_to_kwh(
+            pd.to_numeric(hourly_results["Q_solar_gains"], errors="coerce").fillna(0.0).clip(lower=0.0),
+            dt_h,
+        )
+    if "Q_internal_gains" in hourly_results:
+        annual_results_dic["Q_internal_gains_kWh"] = _integrate_w_to_kwh(
+            pd.to_numeric(hourly_results["Q_internal_gains"], errors="coerce").fillna(0.0).clip(lower=0.0),
+            dt_h,
+        )
+    if "Q_storage" in hourly_results:
+        q_storage = pd.to_numeric(hourly_results["Q_storage"], errors="coerce").fillna(0.0)
+        annual_results_dic["Q_storage_charge_kWh"] = _integrate_w_to_kwh(q_storage.clip(lower=0.0), dt_h)
+        annual_results_dic["Q_storage_discharge_kWh"] = _integrate_w_to_kwh((-q_storage.clip(upper=0.0)), dt_h)
+        annual_results_dic["Q_storage_net_kWh"] = _integrate_w_to_kwh(q_storage, dt_h)
+
+    for col in [
+        c for c in hourly_results.columns
+        if c.startswith("Q_H_attr_") or c.startswith("Q_C_attr_")
+    ]:
+        annual_results_dic[f"{col}_kWh"] = _integrate_w_to_kwh(hourly_results[col], dt_h)
+
+    for key, value in list(annual_results_dic.items()):
+        if key.endswith("_kWh"):
+            annual_results_dic[f"{key}_per_sqm"] = (float(value) / area_m2) if area_m2 > 0 else 0.0
+
+
 def _ground_contact_area(building_object):
     """
     Total slab-on-ground area [m2].
@@ -7007,6 +7272,12 @@ class ISO52016:
         # --- new structures for TRASMISSIONS per element (only OP and W) ---
         surface_names = [surf["name"] for surf in building_object["building_surface"]]
         surface_types  = [surf["ISO52016_type_string"] for surf in building_object["building_surface"]]
+        surface_report_names = _unique_report_names(surface_names)
+        surface_report_cols = {
+            i: f"Q_tr_surface_{surface_report_names[i]}"
+            for i, stype in enumerate(surface_types)
+            if stype in ("OP", "W")
+        }
         E_trans_loss_by_surface_Wh = {name: 0.0 for name in surface_names}  # riempiamo solo per OP/W
 
 
@@ -7031,6 +7302,19 @@ class ISO52016:
         E_tb_loss_Wh = 0.0
         E_ground_loss_Wh = 0.0
         E_storage_Wh = 0.0
+        _report_q_solar_gains_all: list[float] = []
+        _report_q_internal_gains_all: list[float] = []
+        _report_q_storage_all: list[float] = []
+        _report_q_tb_all: list[float] = []
+        _report_q_ground_all: list[float] = []
+        _report_q_tr_total_all: list[float] = []
+        _report_q_tr_opaque_all: list[float] = []
+        _report_q_tr_window_all: list[float] = []
+        _report_q_tr_surface_all: dict[str, list[float]] = {
+            col: [] for col in surface_report_cols.values()
+        }
+        _report_ve_stream_diag_all: list[dict[str, dict[str, float]]] = []
+        _report_component_ventilation = _has_ventilation_components(building_object)
 
         # --- Commit-1 pre-loop allocations ---
         vig = VentilationInternalGains(building_object)
@@ -7153,6 +7437,7 @@ class ISO52016:
                 _H_ve_nat_tstep = 0.0
                 _S_ve_nat_tstep = 0.0
                 _ahu_coll_tstep: dict = {}   # overwritten each while iteration; final value captured after loop
+                _vent_bdy_tstep = None
                 while iterate:
 
                     iterate = False
@@ -7236,6 +7521,7 @@ class ISO52016:
                     # aligned.
                     _H_ve_nat_tstep = H_ve_nat
                     _S_ve_nat_tstep = S_ve_nat
+                    _vent_bdy_tstep = _vent_bdy
                     
                     
                     
@@ -7651,7 +7937,8 @@ class ISO52016:
                 Theta_curr_state = VecB[:, colB_act]
                 dTheta_state = Theta_curr_state - Theta_prev_state
                 if Tstepi >= Tstep_first_act:
-                    E_storage_Wh += float(np.dot(C_state, dTheta_state)) / 3600.0
+                    q_storage = float(np.dot(C_state, dTheta_state)) / float(Dtime[Tstepi])
+                    E_storage_Wh += q_storage * dt_h
                 Theta_prev_state = Theta_curr_state
 
                 if Tstepi >= Tstep_first_act:
@@ -7691,6 +7978,10 @@ class ISO52016:
                     # 7) Transmission for element (OP, W)
                     T_air = float(Theta_int_air[Tstepi, 0])
                     T_rad = float(Theta_int_r_mn[Tstepi, 0])
+                    q_tr_by_surface = {col: 0.0 for col in surface_report_cols.values()}
+                    q_tr_total = 0.0
+                    q_tr_opaque = 0.0
+                    q_tr_window = 0.0
                     for Eli in range(bui_eln):
                         if surface_types[Eli] not in ("OP", "W"):  continue
                         n_nodes_Eli = nodes.Pln[Eli]
@@ -7703,6 +7994,27 @@ class ISO52016:
                         q_cond = A * (hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int))
                         if   q_cond > 0: E_trans_loss_by_surface_Wh[surface_names[Eli]] += q_cond * dt_h
                         elif q_cond < 0: E_solar_Wh += (-q_cond) * dt_h
+                        q_tr_total += q_cond
+                        if surface_types[Eli] == "OP":
+                            q_tr_opaque += q_cond
+                        elif surface_types[Eli] == "W":
+                            q_tr_window += q_cond
+                        q_tr_by_surface[surface_report_cols[Eli]] = q_cond
+
+                    _report_q_solar_gains_all.append(phi_solar)
+                    _report_q_internal_gains_all.append(phi_int)
+                    _report_q_storage_all.append(q_storage)
+                    _report_q_tb_all.append(q_tb)
+                    _report_q_ground_all.append(q_ground)
+                    _report_q_tr_total_all.append(q_tr_total)
+                    _report_q_tr_opaque_all.append(q_tr_opaque)
+                    _report_q_tr_window_all.append(q_tr_window)
+                    for col in _report_q_tr_surface_all:
+                        _report_q_tr_surface_all[col].append(q_tr_by_surface.get(col, 0.0))
+                    if _report_component_ventilation and _vent_bdy_tstep is not None:
+                        _report_ve_stream_diag_all.append(
+                            _ventilation_stream_diag(_vent_bdy_tstep, T_in)
+                        )
 
 
                 if Tstepi < 6:  # primi 6 passi di debug
@@ -7814,6 +8126,22 @@ class ISO52016:
         hourly_results["T_ve_source_eq"] = _t_eq
         hourly_results["Q_ve"] = _h_ve_arr * _t_air_arr - _s_ve_arr
 
+        hourly_results["Q_solar_gains"] = np.asarray(_report_q_solar_gains_all, dtype=float)
+        hourly_results["Q_internal_gains"] = np.asarray(_report_q_internal_gains_all, dtype=float)
+        hourly_results["Q_storage"] = np.asarray(_report_q_storage_all, dtype=float)
+        hourly_results["Q_tr_total"] = np.asarray(_report_q_tr_total_all, dtype=float)
+        hourly_results["Q_tr_opaque"] = np.asarray(_report_q_tr_opaque_all, dtype=float)
+        hourly_results["Q_tr_window"] = np.asarray(_report_q_tr_window_all, dtype=float)
+        hourly_results["Q_tb"] = np.asarray(_report_q_tb_all, dtype=float)
+        hourly_results["Q_ground"] = np.asarray(_report_q_ground_all, dtype=float)
+        for _surface_col, _surface_values in _report_q_tr_surface_all.items():
+            hourly_results[_surface_col] = np.asarray(_surface_values, dtype=float)
+        _ve_stream_cols, _ve_stream_q_cols = _ventilation_stream_diag_to_columns(
+            _report_ve_stream_diag_all
+        )
+        for _col_name, _col_arr in _ve_stream_cols.items():
+            hourly_results[_col_name] = _col_arr
+
         # AHU per-component diagnostics - only populated when mechanical_supply
         # components are present. NOT added to the Sankey: AHU coil heat crosses
         # the zone boundary from the system side and must not double-count Q_HC.
@@ -7826,6 +8154,11 @@ class ISO52016:
 
         hourly_results["Q_C"] = 0.0
         hourly_results.loc[hourly_results["Q_HC"] < 0, "Q_C"] = -hourly_results.loc[hourly_results["Q_HC"] < 0, "Q_HC"]
+        hourly_results = _add_need_attribution_columns(
+            hourly_results,
+            surface_cols=list(_report_q_tr_surface_all.keys()),
+            ve_cols=_ve_stream_q_cols,
+        )
 
         dt_h_annual = _infer_timestep_hours_from_index(hourly_results.index, default=1.0)
         Q_H_annual = _integrate_power_series_to_energy_wh(hourly_results["Q_H"], default_dt_h=dt_h_annual)
@@ -7843,6 +8176,7 @@ class ISO52016:
             "Q_C_annual_kWh_per_sqm": (Q_C_annual / 1000.0 / A_use) if A_use > 0 else 0.0,
             "time_step_h": dt_h_annual,
         }
+        _add_annual_balance_columns(hourly_results, annual_results_dic, A_use, dt_h_annual)
         annual_results_df = pd.DataFrame([annual_results_dic])
 
         # Sankey
@@ -8398,6 +8732,12 @@ class ISO52016:
         # --- new structures for TRASMISSIONS per element (only OP and W) ---
         surface_names = [surf["name"] for surf in building_object["building_surface"]]
         surface_types  = [surf["ISO52016_type_string"] for surf in building_object["building_surface"]]
+        surface_report_names = _unique_report_names(surface_names)
+        surface_report_cols = {
+            i: f"Q_tr_surface_{surface_report_names[i]}"
+            for i, stype in enumerate(surface_types)
+            if stype in ("OP", "W")
+        }
         E_trans_loss_by_surface_Wh = {name: 0.0 for name in surface_names}  # riempiamo solo per OP/W
 
 
@@ -8422,6 +8762,19 @@ class ISO52016:
         E_tb_loss_Wh = 0.0
         E_ground_loss_Wh = 0.0
         E_storage_Wh = 0.0
+        _report_q_solar_gains_all: list[float] = []
+        _report_q_internal_gains_all: list[float] = []
+        _report_q_storage_all: list[float] = []
+        _report_q_tb_all: list[float] = []
+        _report_q_ground_all: list[float] = []
+        _report_q_tr_total_all: list[float] = []
+        _report_q_tr_opaque_all: list[float] = []
+        _report_q_tr_window_all: list[float] = []
+        _report_q_tr_surface_all: dict[str, list[float]] = {
+            col: [] for col in surface_report_cols.values()
+        }
+        _report_ve_stream_diag_all: list[dict[str, dict[str, float]]] = []
+        _report_component_ventilation = _has_ventilation_components(building_object)
 
         # --- Commit-1 pre-loop allocations ---
         vig = VentilationInternalGains(building_object)
@@ -8583,6 +8936,7 @@ class ISO52016:
                 _H_ve_nat_tstep = 0.0
                 _S_ve_nat_tstep = 0.0
                 _ahu_coll_tstep: dict = {}   # overwritten each while iteration; final value captured after loop
+                _vent_bdy_tstep = None
                 while iterate:
 
                     iterate = False
@@ -8666,6 +9020,7 @@ class ISO52016:
                     # aligned.
                     _H_ve_nat_tstep = H_ve_nat
                     _S_ve_nat_tstep = S_ve_nat
+                    _vent_bdy_tstep = _vent_bdy
                     
                     
                     
@@ -9118,7 +9473,8 @@ class ISO52016:
                 Theta_curr_state = VecB[:, colB_act]
                 dTheta_state = Theta_curr_state - Theta_prev_state
                 if Tstepi >= Tstep_first_act:
-                    E_storage_Wh += float(np.dot(C_state, dTheta_state)) / 3600.0
+                    q_storage = float(np.dot(C_state, dTheta_state)) / float(Dtime[Tstepi])
+                    E_storage_Wh += q_storage * dt_h
                 Theta_prev_state = Theta_curr_state
 
                 if Tstepi >= Tstep_first_act:
@@ -9158,6 +9514,10 @@ class ISO52016:
                     # 7) Transmission for element (OP, W)
                     T_air = float(Theta_int_air[Tstepi, 0])
                     T_rad = float(Theta_int_r_mn[Tstepi, 0])
+                    q_tr_by_surface = {col: 0.0 for col in surface_report_cols.values()}
+                    q_tr_total = 0.0
+                    q_tr_opaque = 0.0
+                    q_tr_window = 0.0
                     for Eli in range(bui_eln):
                         if surface_types[Eli] not in ("OP", "W"):  continue
                         n_nodes_Eli = nodes.Pln[Eli]
@@ -9170,6 +9530,27 @@ class ISO52016:
                         q_cond = A * (hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int))
                         if   q_cond > 0: E_trans_loss_by_surface_Wh[surface_names[Eli]] += q_cond * dt_h
                         elif q_cond < 0: E_solar_Wh += (-q_cond) * dt_h
+                        q_tr_total += q_cond
+                        if surface_types[Eli] == "OP":
+                            q_tr_opaque += q_cond
+                        elif surface_types[Eli] == "W":
+                            q_tr_window += q_cond
+                        q_tr_by_surface[surface_report_cols[Eli]] = q_cond
+
+                    _report_q_solar_gains_all.append(phi_solar)
+                    _report_q_internal_gains_all.append(phi_int)
+                    _report_q_storage_all.append(q_storage)
+                    _report_q_tb_all.append(q_tb)
+                    _report_q_ground_all.append(q_ground)
+                    _report_q_tr_total_all.append(q_tr_total)
+                    _report_q_tr_opaque_all.append(q_tr_opaque)
+                    _report_q_tr_window_all.append(q_tr_window)
+                    for col in _report_q_tr_surface_all:
+                        _report_q_tr_surface_all[col].append(q_tr_by_surface.get(col, 0.0))
+                    if _report_component_ventilation and _vent_bdy_tstep is not None:
+                        _report_ve_stream_diag_all.append(
+                            _ventilation_stream_diag(_vent_bdy_tstep, T_in)
+                        )
 
 
                 if Tstepi < 6:  # primi 6 passi di debug
@@ -9286,6 +9667,22 @@ class ISO52016:
         hourly_results["T_ve_source_eq"] = _t_eq
         hourly_results["Q_ve"] = _h_ve_arr * _t_air_arr - _s_ve_arr
 
+        hourly_results["Q_solar_gains"] = np.asarray(_report_q_solar_gains_all, dtype=float)
+        hourly_results["Q_internal_gains"] = np.asarray(_report_q_internal_gains_all, dtype=float)
+        hourly_results["Q_storage"] = np.asarray(_report_q_storage_all, dtype=float)
+        hourly_results["Q_tr_total"] = np.asarray(_report_q_tr_total_all, dtype=float)
+        hourly_results["Q_tr_opaque"] = np.asarray(_report_q_tr_opaque_all, dtype=float)
+        hourly_results["Q_tr_window"] = np.asarray(_report_q_tr_window_all, dtype=float)
+        hourly_results["Q_tb"] = np.asarray(_report_q_tb_all, dtype=float)
+        hourly_results["Q_ground"] = np.asarray(_report_q_ground_all, dtype=float)
+        for _surface_col, _surface_values in _report_q_tr_surface_all.items():
+            hourly_results[_surface_col] = np.asarray(_surface_values, dtype=float)
+        _ve_stream_cols, _ve_stream_q_cols = _ventilation_stream_diag_to_columns(
+            _report_ve_stream_diag_all
+        )
+        for _col_name, _col_arr in _ve_stream_cols.items():
+            hourly_results[_col_name] = _col_arr
+
         # AHU per-component diagnostics - only populated when mechanical_supply
         # components are present. NOT added to the Sankey: AHU coil heat crosses
         # the zone boundary from the system side and must not double-count Q_HC.
@@ -9298,12 +9695,17 @@ class ISO52016:
 
         hourly_results["Q_C"] = 0.0
         hourly_results.loc[hourly_results["Q_HC"] < 0, "Q_C"] = -hourly_results.loc[hourly_results["Q_HC"] < 0, "Q_HC"]
+        hourly_results = _add_need_attribution_columns(
+            hourly_results,
+            surface_cols=list(_report_q_tr_surface_all.keys()),
+            ve_cols=_ve_stream_q_cols,
+        )
         if (
             external_heating_power_fn is not None
             or external_heating_power_causal_fn is not None
             or external_heating_power_series is not None
         ):
-            hourly_results["Q_H_AHU_used"] = Phi_H_AHU_act[act_slice]
+            hourly_results.loc[:, "Q_H_AHU_used"] = Phi_H_AHU_act[act_slice]
 
         dt_h_annual = _infer_timestep_hours_from_index(hourly_results.index, default=1.0)
         Q_H_annual = _integrate_power_series_to_energy_wh(hourly_results["Q_H"], default_dt_h=dt_h_annual)
@@ -9321,6 +9723,7 @@ class ISO52016:
             "Q_C_annual_kWh_per_sqm": (Q_C_annual / 1000.0 / A_use) if A_use > 0 else 0.0,
             "time_step_h": dt_h_annual,
         }
+        _add_annual_balance_columns(hourly_results, annual_results_dic, A_use, dt_h_annual)
         annual_results_df = pd.DataFrame([annual_results_dic])
 
         # Sankey

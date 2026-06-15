@@ -89,6 +89,7 @@ def test_italian_strepin_ventilation_presets_for_rmf_e1_e(
     assert airflow_rates["infiltration_rate"] == pytest.approx(0.0)
     assert parameters["ventilation_profile"]["weekday"] == [1.0] * 24
     assert parameters["ventilation_profile"]["weekend"] == [1.0] * 24
+    assert "components" not in ventilation
     assert "ventilation_system" not in metadata
 
 
