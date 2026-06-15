@@ -53,6 +53,68 @@ def test_italian_strepin_package_applies_to_bui_surfaces():
 
 
 @pytest.mark.skipif(not WORKBOOK.exists(), reason="Italian STREPIN workbook not present")
+@pytest.mark.parametrize(
+    ("preset", "expected_ach_h", "expected_hve_w_k"),
+    [
+        ("normative_reference", 0.30, 48.114),
+        ("realistic_central", 0.55, 88.209),
+        ("leaky_high_behavioral", 0.75, 120.285),
+    ],
+)
+def test_italian_strepin_ventilation_presets_for_rmf_e1_e(
+    preset,
+    expected_ach_h,
+    expected_hve_w_k,
+):
+    tables = load_italian_strepin_tables(WORKBOOK)
+    case = tables.make_case("RMF_E1_E", "P00", ventilation_preset=preset)
+
+    metadata = case.bui["strepin"]
+    parameters = case.bui["building_parameters"]
+    ventilation = parameters["ventilation"]
+    airflow_rates = parameters["airflow_rates"]
+
+    assert case.bui["building"]["volume"] == pytest.approx(486.0)
+    assert metadata["ventilation_preset"] == preset
+    assert metadata["effective_air_change_rate_h"] == pytest.approx(expected_ach_h)
+    assert metadata["air_change_rate_h"] == pytest.approx(expected_ach_h)
+    assert metadata["air_change_rate_override_h"] is None
+    assert metadata["ventilation_hve_W_K"] == pytest.approx(expected_hve_w_k)
+    assert ventilation["custom_heat_transfer_coefficient_ventilation"] == pytest.approx(
+        expected_hve_w_k
+    )
+    assert airflow_rates["total_effective_air_change_rate_h"] == pytest.approx(
+        expected_ach_h
+    )
+    assert airflow_rates["infiltration_rate"] == pytest.approx(0.0)
+    assert parameters["ventilation_profile"]["weekday"] == [1.0] * 24
+    assert parameters["ventilation_profile"]["weekend"] == [1.0] * 24
+    assert "ventilation_system" not in metadata
+
+
+@pytest.mark.skipif(not WORKBOOK.exists(), reason="Italian STREPIN workbook not present")
+def test_italian_strepin_air_change_rate_override_wins_over_preset():
+    tables = load_italian_strepin_tables(WORKBOOK)
+    case = tables.make_case(
+        "RMF_E1_E",
+        "P00",
+        ventilation_preset="realistic_central",
+        air_change_rate_h=0.42,
+    )
+
+    metadata = case.bui["strepin"]
+    ventilation = case.bui["building_parameters"]["ventilation"]
+
+    assert metadata["ventilation_preset"] == "realistic_central"
+    assert metadata["effective_air_change_rate_h"] == pytest.approx(0.42)
+    assert metadata["air_change_rate_override_h"] == pytest.approx(0.42)
+    assert metadata["ventilation_hve_W_K"] == pytest.approx(67.3596)
+    assert ventilation["custom_heat_transfer_coefficient_ventilation"] == pytest.approx(
+        67.3596
+    )
+
+
+@pytest.mark.skipif(not WORKBOOK.exists(), reason="Italian STREPIN workbook not present")
 def test_italian_strepin_engine_summary_uses_engine_demands():
     tables = load_italian_strepin_tables(WORKBOOK)
     case = tables.make_case("RMF_E1_B", "P10")

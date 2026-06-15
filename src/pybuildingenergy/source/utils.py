@@ -6953,7 +6953,7 @@ class ISO52016:
             a = np.asarray(arrlike, dtype=float)
             return np.isfinite(a).all() and a.max() > 0 and a.sum() > 0
 
-        # fallback: se heating/cooling/ventilation profili sono piatti (tutti 0), usa occupancy
+        # Fallback: if heating/cooling/ventilation profiles are flat (all 0), use occupancy
         for cat in ("heating","cooling","ventilation"):
             col = f"{cat}_profile"
             if not _has_energy(profile_df[col].values):
@@ -6975,23 +6975,7 @@ class ISO52016:
             if ext_arr.size < Tstepn:
                 ext_arr = np.pad(ext_arr, (0, Tstepn - ext_arr.size), mode="constant", constant_values=0.0)
             external_internal_gains_series = ext_arr[:Tstepn]
-
-        # ====================================
-        # Get info of porfiles
-        # ====================================
-
-        # summury_profile = gen.get_summary()
-
-        # fig = gen.plot_annual_profiles(freq="H", include_weekend_shading=True,
-        #                        title="Annual Profiles - Hourly")
-        # fig.show()
-
-        # # grafico a medie giornaliere solo per alcune categorie
-        # fig_day = gen.plot_annual_profiles(categories=["ventilation","heating","cooling","occupancy"],
-        #                                 freq="D", include_weekend_shading=True,
-        #                                 title="Annual Profiles - Daily Average")
-        # fig_day.show()
-                            
+                         
         # === ACCUMULATORS FOR SANKEY (Wh) ===
         dt_h = 1.0  # hours per timestep (Dtime is in s)
         # NB: the accumulators will be reset before the start index of the analysis (after warm-up)
@@ -7034,7 +7018,7 @@ class ISO52016:
                     win_col_for_index[i] = f"W_{nm}"
 
         # ------------------------------------------------------------------
-        # ESCLUDI IL MESE DI WARM-UP DAL SANKEY
+        # Remove warm-up period from Sankey
         # ------------------------------------------------------------------
         warmup_hours = int(kwargs.get("warmup_hours", 744))
         Tstep_first_act = max(0, min(warmup_hours, Tstepn))
@@ -7109,7 +7093,7 @@ class ISO52016:
 
                 Theta_old = VecB[:, colB_act].copy()
 
-                # firs step:
+                # first step:
                 # HEATING:
                 # if there is no set point for heating (heating system not installed) -> heating power = 0
                 # otherwise the actual power is equal to the maximum one
@@ -7177,9 +7161,9 @@ class ISO52016:
                     VecB = _VecB
                     _MatA.fill(0.0)
                     MatA = _MatA
-                    Phi_sol_dir_zt_t = 0 # inizialize solar gain
+                    Phi_sol_dir_zt_t = 0 # initialize solar gain
 
-                    # Solar  heat gain source inside the thermal zone 6.5.13.2
+                    # Solar heat gain source inside the thermal zone 6.5.13.2
                     for Eli in range(bui_eln):
 
                         if isinstance(building_object, dict):

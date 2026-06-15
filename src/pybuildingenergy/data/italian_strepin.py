@@ -5,6 +5,11 @@ pyBuildingEnergy BUI dictionaries for the 18 residential archetypes and applies
 the package levels by changing the simulated envelope/system metadata. Workbook
 performance estimates are kept as comparison metadata; they are not used to
 drive the engine-side demand calculation.
+
+STREPIN ventilation presets are total effective outdoor-air exchange rates.
+They are converted once to a custom ISO52016 ventilation heat-transfer
+coefficient and are not added again as separate infiltration, design ventilation
+or mechanical ventilation streams.
 """
 
 from __future__ import annotations
@@ -237,6 +242,124 @@ DEFAULT_HVAC_PROFILE = {
     "weekend": [0.0, 0.0, 0.0, 0.0, 0.0] + [1.0] * 18 + [0.0],
 }
 
+STREPIN_VENTILATION_PROFILE_ALWAYS_ON = {
+    "weekday": [1.0] * 24,
+    "weekend": [1.0] * 24,
+}
+
+STREPIN_VENTILATION_HEAT_CAPACITY_FACTOR_W_H_M3_K = 0.33
+
+STREPIN_VENTILATION_PRESETS = {
+    "normative_reference": {
+        "description": "STREPIN reference total effective outdoor-air exchange.",
+        "ach_h": 0.30,
+    },
+    "realistic_central": {
+        "description": (
+            "Central estimate of real total effective ACH for current Italian "
+            "residential operation."
+        ),
+        "ach_h_by_period_and_climate_zone": {
+            "existing": {"B": 0.45, "E": 0.55, "default": 0.50},
+            "newer": {"B": 0.30, "E": 0.35, "default": 0.33},
+        },
+    },
+    "leaky_high_behavioral": {
+        "description": (
+            "High-end sensitivity for leaky envelopes and/or high window airing."
+        ),
+        "ach_h_by_typology_period_and_climate_zone": {
+            "single_family_existing": {"B": 0.65, "E": 0.75, "default": 0.70},
+            "multifamily_existing": {"B": 0.55, "E": 0.65, "default": 0.60},
+            "newer": {"B": 0.40, "E": 0.45, "default": 0.43},
+        },
+    },
+}
+
+
+def classify_strepin_period(
+    archetype_code: str,
+    period_code: str | None = None,
+) -> str:
+    """Return ``existing`` or ``newer`` for STREPIN ventilation presets."""
+
+    tokens = [
+        token.strip().upper()
+        for token in [period_code, *str(archetype_code).replace("-", "_").split("_")]
+        if token is not None and str(token).strip()
+    ]
+    if any(token in {"N0", "NEW", "NEWER", "REFERENCE", "REF"} for token in tokens):
+        return "newer"
+    return "existing"
+
+
+def classify_strepin_typology(
+    archetype_code: str,
+    type_code: str | None = None,
+) -> str:
+    """Return ``single_family`` or ``multifamily`` for STREPIN ventilation presets."""
+
+    tokens = [
+        token.strip().upper()
+        for token in [type_code, *str(archetype_code).replace("-", "_").split("_")]
+        if token is not None and str(token).strip()
+    ]
+    if any(token in {"RMF", "SINGLE_FAMILY", "SF", "SFD"} for token in tokens):
+        return "single_family"
+    return "multifamily"
+
+
+def resolve_strepin_effective_ach(
+    archetype_code: str,
+    climate_zone: str,
+    ventilation_preset: str = "normative_reference",
+    air_change_rate_h: float | None = None,
+    *,
+    period_code: str | None = None,
+    type_code: str | None = None,
+) -> float:
+    """Resolve the total effective ACH used for simplified STREPIN cases.
+
+    The returned value represents the complete outdoor-air exchange assumption
+    for the case. It is converted to a custom ventilation Hve and is not added
+    again as a separate infiltration, design ventilation or mechanical stream.
+    """
+
+    if air_change_rate_h is not None and not _is_missing(air_change_rate_h):
+        ach = float(air_change_rate_h)
+        if ach < 0.0:
+            raise ValueError("air_change_rate_h must be non-negative.")
+        return ach
+
+    preset_id = _normalize_ventilation_preset(ventilation_preset)
+    preset = STREPIN_VENTILATION_PRESETS[preset_id]
+    zone = str(climate_zone).strip().upper()
+
+    if "ach_h" in preset:
+        return float(preset["ach_h"])
+
+    period = classify_strepin_period(archetype_code, period_code)
+    if preset_id == "realistic_central":
+        values = preset["ach_h_by_period_and_climate_zone"][period]
+        return float(values.get(zone, values["default"]))
+
+    typology = classify_strepin_typology(archetype_code, type_code)
+    group = "newer" if period == "newer" else f"{typology}_existing"
+    values = preset["ach_h_by_typology_period_and_climate_zone"][group]
+    return float(values.get(zone, values["default"]))
+
+
+def _normalize_ventilation_preset(ventilation_preset: str) -> str:
+    preset_id = str(ventilation_preset or "normative_reference").strip().lower()
+    preset_id = preset_id.replace("-", "_")
+    if preset_id not in STREPIN_VENTILATION_PRESETS:
+        available = ", ".join(sorted(STREPIN_VENTILATION_PRESETS))
+        raise ValueError(
+            f"Unknown STREPIN ventilation preset {ventilation_preset!r}. "
+            f"Available presets: {available}."
+        )
+    return preset_id
+
 
 @dataclass(frozen=True)
 class StrepinCase:
@@ -353,7 +476,8 @@ class ItalianStrepinTables:
         climate_locations: dict[str, dict[str, Any]] | None = None,
         window_orientation_split: dict[str, float] | None = None,
         floor_height_m: float = 3.0,
-        air_change_rate_h: float = 0.30,
+        ventilation_preset: str = "normative_reference",
+        air_change_rate_h: float | None = None,
         ideal_hvac_capacity: bool = True,
     ) -> dict[str, Any]:
         return _archetype_to_bui(
@@ -361,6 +485,7 @@ class ItalianStrepinTables:
             climate_locations=climate_locations,
             window_orientation_split=window_orientation_split,
             floor_height_m=floor_height_m,
+            ventilation_preset=ventilation_preset,
             air_change_rate_h=air_change_rate_h,
             ideal_hvac_capacity=ideal_hvac_capacity,
         )
@@ -373,7 +498,8 @@ class ItalianStrepinTables:
         climate_locations: dict[str, dict[str, Any]] | None = None,
         window_orientation_split: dict[str, float] | None = None,
         floor_height_m: float = 3.0,
-        air_change_rate_h: float = 0.30,
+        ventilation_preset: str = "normative_reference",
+        air_change_rate_h: float | None = None,
         ideal_hvac_capacity: bool = True,
     ) -> StrepinCase:
         bui = self.make_base_bui(
@@ -381,6 +507,7 @@ class ItalianStrepinTables:
             climate_locations=climate_locations,
             window_orientation_split=window_orientation_split,
             floor_height_m=floor_height_m,
+            ventilation_preset=ventilation_preset,
             air_change_rate_h=air_change_rate_h,
             ideal_hvac_capacity=ideal_hvac_capacity,
         )
@@ -406,7 +533,8 @@ class ItalianStrepinTables:
         climate_locations: dict[str, dict[str, Any]] | None = None,
         window_orientation_split: dict[str, float] | None = None,
         floor_height_m: float = 3.0,
-        air_change_rate_h: float = 0.30,
+        ventilation_preset: str = "normative_reference",
+        air_change_rate_h: float | None = None,
         ideal_hvac_capacity: bool = True,
     ) -> StrepinCase:
         """Build a case from arbitrary STREPIN workbook measure levels.
@@ -433,6 +561,7 @@ class ItalianStrepinTables:
             climate_locations=climate_locations,
             window_orientation_split=window_orientation_split,
             floor_height_m=floor_height_m,
+            ventilation_preset=ventilation_preset,
             air_change_rate_h=air_change_rate_h,
             ideal_hvac_capacity=ideal_hvac_capacity,
         )
@@ -629,7 +758,7 @@ def apply_extra_measure_specs_to_bui(
                 min(1.0, _to_float(params.get("mechanical_fraction"), 1.0)),
             )
             flow_m3_h = _to_float(params.get("nominal_flow_m3_h"), volume_m3 * ach)
-            hve_base = 0.33 * flow_m3_h
+            hve_base = STREPIN_VENTILATION_HEAT_CAPACITY_FACTOR_W_H_M3_K * flow_m3_h
             hve_effective = hve_base * (1.0 - heat_recovery * mechanical_fraction)
             ventilation = {
                 "air_change_rate_h": ach,
@@ -875,7 +1004,8 @@ def summarize_engine_performance(
     dhw_useful_kWh = _to_float(archetype.get("Baseline_DHW_Useful")) * area_m2
     aux_electricity_kWh = _to_float(archetype.get("Baseline_Aux_Elec")) * area_m2
 
-    heating_system = case.bui.get("strepin", {}).get("heating_system", {})
+    metadata = case.bui.get("strepin", {})
+    heating_system = metadata.get("heating_system", {})
     carrier = heating_system.get("carrier", "gas")
     efficiency = _to_float(
         heating_system.get("seasonal_efficiency_or_scop"),
@@ -928,6 +1058,9 @@ def summarize_engine_performance(
         "Climate_Zone": climate_zone,
         "Period_Code": archetype.get("Period_Code"),
         "Af_m2": area_m2,
+        "Ventilation_preset": metadata.get("ventilation_preset"),
+        "Effective_ACH_h": metadata.get("effective_air_change_rate_h"),
+        "Ventilation_Hve_W_K": metadata.get("ventilation_hve_W_K"),
         "Q_H_engine_kWh_a": heating_need_kWh,
         "Q_C_engine_kWh_a": cooling_need_kWh,
         "Q_H_engine_kWh_m2a": heating_need_kWh / area_m2 if area_m2 > 0 else 0.0,
@@ -978,7 +1111,8 @@ def _archetype_to_bui(
     climate_locations: dict[str, dict[str, Any]] | None,
     window_orientation_split: dict[str, float] | None,
     floor_height_m: float,
-    air_change_rate_h: float,
+    ventilation_preset: str,
+    air_change_rate_h: float | None,
     ideal_hvac_capacity: bool,
 ) -> dict[str, Any]:
     archetype_id = str(row["Archetype_ID"])
@@ -993,7 +1127,25 @@ def _archetype_to_bui(
     footprint_m2 = _to_float(row["Ground_m2"], area_m2 / floors)
     total_height_m = floor_height_m * floors
     volume_m3 = area_m2 * floor_height_m
-    ventilation_hve_w_k = 0.33 * float(air_change_rate_h) * volume_m3
+    ventilation_preset_id = _normalize_ventilation_preset(ventilation_preset)
+    effective_ach_h = resolve_strepin_effective_ach(
+        archetype_id,
+        climate_zone,
+        ventilation_preset_id,
+        air_change_rate_h,
+        period_code=period_code,
+        type_code=type_code,
+    )
+    ventilation_hve_w_k = (
+        STREPIN_VENTILATION_HEAT_CAPACITY_FACTOR_W_H_M3_K
+        * effective_ach_h
+        * volume_m3
+    )
+    ach_override_h = (
+        float(air_change_rate_h)
+        if air_change_rate_h is not None and not _is_missing(air_change_rate_h)
+        else None
+    )
 
     heating_capacity_w = (
         10_000_000.0
@@ -1141,12 +1293,19 @@ def _archetype_to_bui(
             "ventilation": {
                 "ventilation_type": "custom",
                 "custom_heat_transfer_coefficient_ventilation": ventilation_hve_w_k,
+                "effective_air_change_rate_h": effective_ach_h,
+                "ventilation_preset": ventilation_preset_id,
                 "flow_rate_per_person": 0.0,
                 "units": "W/K",
             },
             "airflow_rates": {
-                "infiltration_rate": float(air_change_rate_h),
+                "total_effective_air_change_rate_h": effective_ach_h,
+                "infiltration_rate": 0.0,
                 "units": "ACH",
+                "note": (
+                    "STREPIN ventilation presets are total effective outdoor-air "
+                    "exchange rates represented only by the custom ventilation Hve."
+                ),
             },
             "internal_gains": copy.deepcopy(DEFAULT_INTERNAL_GAINS),
             "construction": {
@@ -1160,7 +1319,7 @@ def _archetype_to_bui(
             },
             "heating_profile": copy.deepcopy(DEFAULT_HVAC_PROFILE),
             "cooling_profile": copy.deepcopy(DEFAULT_HVAC_PROFILE),
-            "ventilation_profile": copy.deepcopy(DEFAULT_HVAC_PROFILE),
+            "ventilation_profile": copy.deepcopy(STREPIN_VENTILATION_PROFILE_ALWAYS_ON),
         },
         "strepin": {
             "source": "Italian STREPIN workbook",
@@ -1170,7 +1329,20 @@ def _archetype_to_bui(
                 "equally by orientation and window area follows the configured "
                 "orientation split."
             ),
-            "air_change_rate_h": float(air_change_rate_h),
+            "ventilation_preset": ventilation_preset_id,
+            "ventilation_preset_description": STREPIN_VENTILATION_PRESETS[
+                ventilation_preset_id
+            ]["description"],
+            "ventilation_schedule": "always_on",
+            "air_change_rate_h": effective_ach_h,
+            "effective_air_change_rate_h": effective_ach_h,
+            "air_change_rate_override_h": ach_override_h,
+            "ventilation_hve_W_K": ventilation_hve_w_k,
+            "ventilation_assumption_note": (
+                "This ACH is a total effective outdoor-air exchange rate. It is "
+                "not a measured airtightness value, design ventilation rate or "
+                "separate mechanical ventilation stream."
+            ),
         },
     }
 

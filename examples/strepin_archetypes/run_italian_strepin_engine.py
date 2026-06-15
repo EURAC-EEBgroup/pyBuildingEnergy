@@ -22,6 +22,9 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 import pybuildingenergy as pybui  # noqa: E402
+from pybuildingenergy.data.italian_strepin import (  # noqa: E402
+    STREPIN_VENTILATION_PRESETS,
+)
 
 
 DEFAULT_WORKBOOK = (
@@ -804,6 +807,9 @@ def _run_strepin_standard_chain(
         "Climate_Zone": climate_zone,
         "Period_Code": case.archetype.get("Period_Code"),
         "Af_m2": area_m2,
+        "Ventilation_preset": metadata.get("ventilation_preset"),
+        "Effective_ACH_h": metadata.get("effective_air_change_rate_h"),
+        "Ventilation_Hve_W_K": metadata.get("ventilation_hve_W_K"),
         "System_chain": "en_standards",
         "Heating_generation_standard": heating_standard,
         "Cooling_generation_standard": "EN 16798-13",
@@ -926,6 +932,7 @@ def run(args: argparse.Namespace) -> Path:
                 measure_levels,
                 package_id=label,
                 ideal_hvac_capacity=not args.use_workbook_capacity,
+                ventilation_preset=args.ventilation_preset,
                 air_change_rate_h=args.air_change_rate,
             )
             for archetype_id in archetype_ids
@@ -937,6 +944,7 @@ def run(args: argparse.Namespace) -> Path:
                 archetype_id,
                 package_id,
                 ideal_hvac_capacity=not args.use_workbook_capacity,
+                ventilation_preset=args.ventilation_preset,
                 air_change_rate_h=args.air_change_rate,
             )
             for archetype_id in archetype_ids
@@ -952,12 +960,18 @@ def run(args: argparse.Namespace) -> Path:
     if args.dry_run:
         dry_rows = []
         for case in cases:
+            strepin_metadata = case.bui.get("strepin", {})
             dry_rows.append(
                 {
                     "Archetype_ID": case.archetype_id,
                     "Package_ID": case.package_id,
                     "Climate_Zone": case.archetype["Climate_Zone"],
                     "Af_m2": case.archetype["Af_m2"],
+                    "Ventilation_preset": strepin_metadata.get("ventilation_preset"),
+                    "Effective_ACH_h": strepin_metadata.get(
+                        "effective_air_change_rate_h"
+                    ),
+                    "Ventilation_Hve_W_K": strepin_metadata.get("ventilation_hve_W_K"),
                     "surface_count": len(case.bui["building_surface"]),
                     "heating_system": case.bui.get("strepin", {})
                     .get("heating_system", {})
@@ -1087,10 +1101,25 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--ventilation-preset",
+        choices=sorted(STREPIN_VENTILATION_PRESETS),
+        default="normative_reference",
+        help=(
+            "Total effective outdoor-air exchange preset used to build the "
+            "custom ISO52016 ventilation Hve. These presets are not separate "
+            "airtightness, design ventilation or mechanical ventilation streams. "
+            "Default: normative_reference."
+        ),
+    )
+    parser.add_argument(
         "--air-change-rate",
         type=float,
-        default=0.30,
-        help="Base residential air change rate [1/h] used to build custom Hve.",
+        default=None,
+        help=(
+            "Explicit total effective air change rate [1/h]. When supplied, this "
+            "overrides --ventilation-preset and is represented only through the "
+            "custom ventilation Hve."
+        ),
     )
     parser.add_argument(
         "--cooling-eer",
