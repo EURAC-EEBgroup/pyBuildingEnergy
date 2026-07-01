@@ -1,6 +1,9 @@
 import pandas as pd
 import numpy as np
 from pybuildingenergy.global_inputs import TB14 as TB14_backup
+from pybuildingenergy.source.emission_15316_2 import EmissionSystemCalculator
+from pybuildingenergy.source.distribution_15316_3 import DistributionSystemCalculator
+from pybuildingenergy.source.generation_15316_4_1 import BoilerGeneratorCalculator
 
 class HeatingSystemCalculator:
     """
@@ -63,7 +66,26 @@ class HeatingSystemCalculator:
         self.df_out_temp = inp.get('outdoor_temp_data', self._default_outdoor_data())
         self.θem_flw_sahz_i = inp.get('constant_flow_temp', [42])  # constant secondary supply (if used)
 
+        # Emission calculation mode:
+        # - 'simplified': keep the internal ISO 15316-1 emission approximation
+        # - 'en15316-2': use EmissionSystemCalculator step-by-step per hour
+        self.emission_calculation_mode = str(inp.get('emission_calculation_mode', 'simplified')).lower()
+        if self.emission_calculation_mode in ('iso_15316_2', '15316_2', 'en15316-2', 'en15316_2'):
+            self.emission_calculation_mode = 'en15316-2'
+        else:
+            self.emission_calculation_mode = 'simplified'
+        self.emission_15316_2_config = inp.get('emission_15316_2_config', inp.get('emission_config', {}))
+        self._emission_calc_cache = None
+
         # --- Distribution (between emitter and manifold) ---
+        self.distribution_calculation_mode = str(inp.get('distribution_calculation_mode', 'simplified')).lower()
+        if self.distribution_calculation_mode in ('analitico', 'analitica', 'analytical'):
+            self.distribution_calculation_mode = 'analytical'
+        elif self.distribution_calculation_mode in ('semplice', 'simplificato'):
+            self.distribution_calculation_mode = 'simplified'
+        assert self.distribution_calculation_mode in ('simplified', 'analytical')
+
+        self.analytical_distribution_config = inp.get('distribution_15316_3_config', inp.get('distribution_config'))
         self.Heat_losses_recovered = inp.get('heat_losses_recovered', True)
         self.f_h_dist_i_ls = inp.get('distribution_loss_recovery', 90)  # %
         self.simplified_or_holistic_approach = inp.get('simplified_approach', 80)  # %
@@ -74,7 +96,6 @@ class HeatingSystemCalculator:
 
         # System recoverable losses (kWh)
         self.QW_sys_ls_rbl_tz_i = inp.get('recoverable_losses', 0.0)
-
         # --- Generation (primary) ---
         self.full_load_power = inp.get('full_load_power', 24.0)                # kW
         self.max_monthly_load_factor = inp.get('max_monthly_load_factor', 100) # %
@@ -144,6 +165,136 @@ class HeatingSystemCalculator:
 
         # Constant primary flow setpoint (used by Type C)
         self.θHW_gen_flw_const = float(inp.get('θHW_gen_flw_const', 50.0))
+        self.generation_calculation_mode = str(inp.get('generation_calculation_mode', 'legacy')).lower()
+        if self.generation_calculation_mode in ('boiler_15316_4_1', 'boiler', 'normative'):
+            self.generation_calculation_mode = 'boiler_15316_4_1'
+        else:
+            self.generation_calculation_mode = 'legacy'
+
+        self.boiler_generation_config = inp.get('boiler_generation_config')
+        self._boiler_calc_cache = None
+
+        # Caches for the analytical distribution branch (performance):
+        # - ``_distribution_calc_cache`` holds a single DistributionSystemCalculator
+        #   instance, instead of rebuilding it for every hour.
+        # - ``_distribution_fast`` stores the static parameters (sections,
+        #   design flow, head loss, pump efficiency factor, control constants)
+        #   used by the scalar fast path in ``calculate_distribution_analytical``.
+        self._distribution_calc_cache = None
+        self._distribution_fast = None
+        # Cache for the precomputed EN 15316-2 emission timeseries
+        self._emission_ts_cache = None
+
+    def _get_emission_calculator(self):
+        if self._emission_calc_cache is None:
+            self._emission_calc_cache = EmissionSystemCalculator(self.emission_15316_2_config)
+        return self._emission_calc_cache
+
+    def _precompute_emission_timeseries(self, df):
+        """
+        Run EN 15316-2 emission calculation ONCE for the whole input time series
+        and cache the per-row outputs as numpy arrays. This avoids the very
+        expensive pattern of calling ``EmissionSystemCalculator.run_timeseries``
+        with a single-row DataFrame for each of the 8760 hours.
+        """
+        if self.emission_calculation_mode != 'en15316-2':
+            self._emission_ts_cache = None
+            return
+
+        emission_calc = self._get_emission_calculator()
+        time_step_hours = float(self.input_data.get('emission_time_step_hours', self.tH_em_i_ON))
+
+        df_in = df.copy()
+        if 'time_step_hours' not in df_in.columns:
+            df_in['time_step_hours'] = time_step_hours
+
+        ts = emission_calc.run_timeseries(df_in).timeseries
+        # constants (per-service config, do not depend on the row)
+        theta_inc_K = float(emission_calc.services["H"]["temperature_increase_K"])
+        f_conv = float(emission_calc.services["H"]["convective_fraction"])
+
+        self._emission_ts_cache = {
+            'q_h_em_out_kWh':     ts['Q_H_em_out_kWh'].to_numpy(dtype=float),
+            'theta_H_int_inc_C':  ts['theta_H_int_inc_C'].to_numpy(dtype=float),
+            'QH_em_i_in':         ts['Q_H_em_in_kWh'].to_numpy(dtype=float),
+            'W_H_em_aux_kWh':     ts['W_H_em_aux_kWh'].to_numpy(dtype=float),
+            'QH_em_ls_kWh':       ts['Q_H_em_ls_kWh'].to_numpy(dtype=float),
+            'q_h_em_out_inc_kWh': ts['Q_H_em_out_inc_kWh'].to_numpy(dtype=float),
+            'theta_H_int_inc_K':  theta_inc_K,
+            'fH_em_conv':         f_conv,
+            'time_step_hours':    time_step_hours,
+            'n':                  len(ts),
+        }
+        # position counter consumed by _calculate_emission_step during the loop
+        self._current_emission_pos = 0
+
+    def _calculate_emission_step(self, q_h_kWh, θint, θext):
+        """
+        Return the emission-side quantities for a single hourly step.
+
+        - ``simplified`` mode: historical internal approximation.
+        - ``en15316-2``  mode: read from the precomputed cache populated by
+          :meth:`_precompute_emission_timeseries`. If no cache is available
+          (e.g. ad-hoc call outside the time loop) a one-row fallback is used.
+        """
+        if self.emission_calculation_mode != 'en15316-2':
+            common = self.calculate_common_emission_parameters(q_h_kWh, θint)
+            qh_in = float(common['QH_em_i_in'])
+            return {
+                'q_h_em_out_kWh': float(q_h_kWh),
+                'θint_eff': float(θint),
+                'QH_em_i_in': qh_in,
+                'ΦH_em_eff': float(common['ΦH_em_eff']),
+                'W_H_em_aux_kWh': 0.0,
+                'QH_em_ls_kWh': max(qh_in - float(q_h_kWh), 0.0),
+                'q_h_em_out_inc_kWh': float(q_h_kWh),
+                'theta_H_int_inc_K': 0.0,
+                'fH_em_conv': np.nan,
+            }
+
+        cache = getattr(self, '_emission_ts_cache', None)
+        if cache is not None:
+            pos = getattr(self, '_current_emission_pos', None)
+            if pos is not None and 0 <= pos < cache['n']:
+                ts_h = cache['time_step_hours']
+                qh_in = float(cache['QH_em_i_in'][pos])
+                return {
+                    'q_h_em_out_kWh':     float(cache['q_h_em_out_kWh'][pos]),
+                    'θint_eff':           float(cache['theta_H_int_inc_C'][pos]),
+                    'QH_em_i_in':         qh_in,
+                    'ΦH_em_eff':          qh_in / max(ts_h, 1e-9),
+                    'W_H_em_aux_kWh':     float(cache['W_H_em_aux_kWh'][pos]),
+                    'QH_em_ls_kWh':       float(cache['QH_em_ls_kWh'][pos]),
+                    'q_h_em_out_inc_kWh': float(cache['q_h_em_out_inc_kWh'][pos]),
+                    'theta_H_int_inc_K':  cache['theta_H_int_inc_K'],
+                    'fH_em_conv':         cache['fH_em_conv'],
+                }
+
+        # Fallback: ad-hoc single-row call (kept for backward compatibility).
+        emission_calc = self._get_emission_calculator()
+        time_step_hours = float(self.input_data.get('emission_time_step_hours', self.tH_em_i_ON))
+        emission_input = pd.DataFrame(
+            [{
+                'Q_H_kWh': float(q_h_kWh),
+                'T_op': float(θint),
+                'T_ext': float(θext),
+                'time_step_hours': time_step_hours,
+            }]
+        )
+        result = emission_calc.run_timeseries(emission_input)
+        row = result.timeseries.iloc[0]
+        summary = result.summary
+        return {
+            'q_h_em_out_kWh': float(row.get('Q_H_em_out_kWh', q_h_kWh)),
+            'θint_eff': float(row.get('theta_H_int_inc_C', θint + summary.get('theta_H_int_inc_K', 0.0))),
+            'QH_em_i_in': float(summary.get('QH_em_in_kWh', q_h_kWh)),
+            'ΦH_em_eff': float(summary.get('QH_em_in_kWh', q_h_kWh) / max(time_step_hours, 1e-9)),
+            'W_H_em_aux_kWh': float(summary.get('WH_em_aux_kWh', 0.0)),
+            'QH_em_ls_kWh': float(summary.get('QH_em_ls_kWh', 0.0)),
+            'q_h_em_out_inc_kWh': float(summary.get('QH_em_out_inc_kWh', q_h_kWh)),
+            'theta_H_int_inc_K': float(summary.get('theta_H_int_inc_K', 0.0)),
+            'fH_em_conv': float(summary.get('fH_em_conv', np.nan)),
+        }
 
     def _idle_row(self, q_h_kWh, θint, θext):
         """
@@ -667,6 +818,15 @@ class HeatingSystemCalculator:
         - Thermal losses, auxiliaries, recoverable part
         - Required inlet energy and hydraulic flow on distribution
         """
+        if self.distribution_calculation_mode == 'analytical':
+            return self.calculate_distribution_analytical(θH_dis_flw, θH_dis_ret, θint, QH_em_i_in)
+
+        return self.calculate_distribution_simplified(θH_dis_flw, θH_dis_ret, θint, QH_em_i_in)
+
+    def calculate_distribution_simplified(self, θH_dis_flw, θH_dis_ret, θint, QH_em_i_in):
+        """
+        Simplified distribution model kept for backward compatibility.
+        """
         # Losses [kWh] ~ ( (T_tubes_avg - T_int) * U [W/K] / 1000 ) * t[h]
         T_media = (θH_dis_flw + θH_dis_ret) / 2
         Q_w_dis_i_ls = (T_media - θint) * self.Heat_loss_coefficent_dist / 1000.0 * self.tH_dis_i_ON
@@ -698,6 +858,216 @@ class HeatingSystemCalculator:
             'QH_dis_i_req': QH_dis_i_req,
             'QH_dis_i_in': QH_dis_i_in,
             'V_H_dis': V_H_dis
+        }
+
+    def _distribution_analytical_config(self, θH_dis_flw, θH_dis_ret):
+        """
+        Build a DistributionSystemCalculator configuration from either a detailed
+        user-provided config or the simplified legacy parameters.
+        """
+        if isinstance(self.analytical_distribution_config, dict):
+            return self.analytical_distribution_config
+
+        pipe_section = {
+            'length_m': float(self.input_data.get('distribution_length_m', 1.0)),
+            'equivalent_length_m': float(self.input_data.get('distribution_equivalent_length_m', 0.0)),
+            'linear_thermal_transmittance_W_mK': float(
+                self.input_data.get('distribution_loss_coeff', self.Heat_loss_coefficent_dist)
+            ),
+            'ambient_temperature_C': float(self.input_data.get('distribution_ambient_temperature_C', 20.0)),
+            'recoverable': bool(self.Heat_losses_recovered),
+        }
+
+        return {
+            'time_step_hours': float(self.tH_dis_i_ON),
+            'demand_unit': 'kWh',
+            'heating': {
+                'operation_mode': 'demand',
+                'nominal_power_kW': float(self.ΦH_em_n),
+                'design_flow_m3_h': float(self.input_data.get('distribution_design_flow_m3_h', 0.0)),
+                'design_deltaT_K': float(self.input_data.get('distribution_design_deltaT_K', 10.0)),
+                'supply_temperature_C': float(θH_dis_flw if np.isfinite(θH_dis_flw) else 45.0),
+                'return_temperature_C': float(θH_dis_ret if np.isfinite(θH_dis_ret) else 35.0),
+                'pipe_sections': [pipe_section],
+                'pump_control_code': int(self.input_data.get('distribution_pump_control_code', 4)),
+                'eei': float(self.input_data.get('distribution_eei', 0.23)),
+                'hydraulic_correction_factor': float(self.input_data.get('distribution_hydraulic_correction_factor', 1.0)),
+                'recoverable_aux_fraction': float(
+                    self.input_data.get('distribution_aux_recovery_fraction', self.f_h_dist_i_aux / 100.0)
+                ),
+                'design_flow_m3_h': float(self.input_data.get('distribution_design_flow_m3_h', 0.0)),
+                'max_length_m': float(self.input_data.get('distribution_length_m', 1.0)),
+                'pressure_loss_per_m_kPa': float(self.input_data.get('distribution_pressure_loss_per_m_kPa', 0.10)),
+                'additional_pressure_kPa': float(self.input_data.get('distribution_additional_pressure_kPa', 0.0)),
+                'resistance_ratio': float(self.input_data.get('distribution_resistance_ratio', 0.30)),
+                'design_delta_pressure_kPa': float(self.input_data.get('distribution_design_delta_pressure_kPa', 0.0)),
+                'pump_selection_factor': float(self.input_data.get('distribution_pump_selection_factor', 1.0)),
+                'pump_label_power_kW': float(self.input_data.get('distribution_pump_label_power_kW', 0.0)),
+                'part_load_mode': str(self.input_data.get('distribution_part_load_mode', 'load')),
+            },
+        }
+
+    def _init_distribution_fast(self, θH_dis_flw, θH_dis_ret):
+        """
+        Precompute the static parameters of the analytical distribution model so
+        that the per-hour call can be done in pure-scalar math without going
+        through pandas. Stored on ``self._distribution_fast``.
+        """
+        from pybuildingenergy.source.distribution_15316_3 import (
+            _pump_control_constants, _KWH_EPS,
+        )
+        cfg_full = self._distribution_analytical_config(θH_dis_flw, θH_dis_ret)
+        # Reuse a DistributionSystemCalculator just to normalize the options
+        # (handles aliases, defaults, _section_options, etc.).
+        if self._distribution_calc_cache is None:
+            self._distribution_calc_cache = DistributionSystemCalculator(cfg_full)
+        opts = self._distribution_calc_cache.services["H"]
+
+        # Static aggregates over pipe sections
+        sections = []
+        rec_mask = []
+        for s in opts["pipe_sections"]:
+            length = float(s["length_m"]) + float(s["equivalent_length_m"])
+            psi    = float(s["linear_thermal_transmittance_W_mK"])
+            ambient = float(s["ambient_temperature_C"])
+            recoverable = bool(s["recoverable"])
+            sections.append((psi * length, ambient, recoverable))
+            rec_mask.append(recoverable)
+
+        # Design flow
+        design_flow = float(opts["design_flow_m3_h"])
+        nominal_power = float(opts["nominal_power_kW"])
+        if design_flow <= _KWH_EPS and nominal_power > _KWH_EPS:
+            # _WATER_HEAT_CAPACITY_DENSITY_KWH_M3K = 1.163 by EN 15316 (kWh/(m3·K))
+            design_flow = nominal_power / (1.163 * float(opts["design_deltaT_K"]))
+
+        # Design head loss
+        delta_p = float(opts["design_delta_pressure_kPa"])
+        if delta_p <= _KWH_EPS:
+            delta_p = (
+                (1.0 + float(opts["resistance_ratio"]))
+                * float(opts["pressure_loss_per_m_kPa"])
+                * float(opts["max_length_m"])
+                + float(opts["additional_pressure_kPa"])
+            )
+
+        p_hydr = delta_p * design_flow / 3600.0 if design_flow > _KWH_EPS else 0.0
+
+        # Pump efficiency factor (constant per design point — depends only on p_hydr)
+        label_power = float(opts["pump_label_power_kW"])
+        if p_hydr <= _KWH_EPS:
+            f_e = 0.0
+        elif label_power > _KWH_EPS:
+            f_e = label_power / p_hydr
+        else:
+            p_hydr_W = p_hydr * 1000.0
+            if 1.0 < p_hydr_W < 2500.0:
+                f_e = (1.7 * p_hydr_W + 17.0 * (1.0 - np.exp(-0.3 * p_hydr_W))) / p_hydr_W
+            else:
+                f_e = max(float(opts["pump_selection_factor"]), 1.0)
+
+        cp1, cp2 = _pump_control_constants("H", int(opts["pump_control_code"]))
+
+        self._distribution_fast = {
+            'sections':            sections,      # list of (psi*L, ambient, recoverable)
+            'design_flow':         design_flow,
+            'delta_p':             delta_p,
+            'p_hydr':              p_hydr,
+            'f_e':                 f_e,
+            'cp1':                 cp1,
+            'cp2':                 cp2,
+            'eei':                 float(opts["eei"]),
+            'hyd_corr':            float(opts["hydraulic_correction_factor"]),
+            'rec_aux_fraction':    float(opts["recoverable_aux_fraction"]),
+            'operation_mode':      opts["operation_mode"],
+            'part_load_mode':      opts["part_load_mode"],
+            'nominal_power_kW':    nominal_power,
+            'time_step_hours':     float(self.tH_dis_i_ON),
+            'has_pump':            p_hydr > _KWH_EPS and design_flow > _KWH_EPS and delta_p > _KWH_EPS,
+        }
+        self._dist_eps = _KWH_EPS
+
+    def calculate_distribution_analytical(self, θH_dis_flw, θH_dis_ret, θint, QH_em_i_in):
+        """
+        Analytical distribution model — fast scalar implementation that
+        replicates DistributionSystemCalculator (EN 15316-3) for service H,
+        a single section list and a single time step. The math is identical
+        to ``_simulate_service('H')`` with all pandas overhead removed.
+        """
+        # Lazy init of the static part on first call (after secondary T is known)
+        if getattr(self, '_distribution_fast', None) is None:
+            self._init_distribution_fast(θH_dis_flw, θH_dis_ret)
+
+        S   = self._distribution_fast
+        EPS = self._dist_eps
+
+        q_out  = max(float(QH_em_i_in), 0.0)
+        hours  = S['time_step_hours']
+
+        # operation hours
+        mode = S['operation_mode']
+        if mode == 'continuous':
+            op_hours = hours
+        elif mode.startswith('fixed_fraction:'):
+            try:
+                fr = float(mode.split(':', 1)[1])
+            except Exception:
+                fr = 0.0
+            op_hours = hours * max(0.0, min(1.0, fr))
+        else:  # 'demand'
+            op_hours = hours if q_out > EPS else 0.0
+
+        mean_temp = 0.5 * (float(θH_dis_flw) + float(θH_dis_ret))
+
+        # Thermal losses
+        q_loss = 0.0
+        q_loss_rbl = 0.0
+        for psi_L, ambient, recoverable in S['sections']:
+            delta = mean_temp - ambient
+            if delta < 0.0:
+                delta = 0.0
+            loss = psi_L * delta * op_hours / 1000.0
+            q_loss += loss
+            if recoverable:
+                q_loss_rbl += loss
+
+        # Part-load fraction beta
+        if S['part_load_mode'] == 'constant_when_on':
+            beta = 1.0 if op_hours > EPS else 0.0
+        else:  # 'load'
+            nominal = S['nominal_power_kW']
+            power = q_out / hours if hours > 0.0 else 0.0
+            if nominal <= EPS:
+                nominal = max(power, EPS)
+            beta = (power / nominal) if (nominal > EPS and op_hours > EPS) else 0.0
+            if beta < 0.0:   beta = 0.0
+            elif beta > 1.0: beta = 1.0
+
+        # Pump auxiliary
+        if not S['has_pump'] or beta <= EPS:
+            w_aux = 0.0
+            w_hydr = 0.0
+            epsilon = 0.0
+        else:
+            epsilon = S['f_e'] * (S['cp1'] + S['cp2'] / beta) * S['eei'] / 0.25
+            w_hydr  = S['p_hydr'] * beta * op_hours * S['hyd_corr']
+            w_aux   = w_hydr * epsilon
+
+        aux_rbl = w_aux * S['rec_aux_fraction']
+        aux_rvd = w_aux - aux_rbl
+
+        thermal_rbl = q_loss_rbl  # service H sign
+        q_in = q_out + q_loss - aux_rvd
+        if q_in < 0.0:
+            q_in = 0.0
+
+        return {
+            'Q_w_dis_i_ls':      q_loss,
+            'Q_w_dis_i_aux':     w_aux,
+            'Q_w_dis_i_ls_rbl_H': thermal_rbl + aux_rbl,
+            'QH_dis_i_req':      q_out,
+            'QH_dis_i_in':       q_in,
+            'V_H_dis':           S['design_flow'],
         }
 
     def _efficiency_from_model(self, θflw, θret, load_frac=1.0):
@@ -817,6 +1187,9 @@ class HeatingSystemCalculator:
         return float(self.θHW_gen_flw_const)
 
     def calculate_generation(self, θH_dis_flw, θH_dis_ret, V_H_dis, QH_dis_i_in):
+        if self.generation_calculation_mode == 'boiler_15316_4_1':
+            return self.calculate_generation_boiler(θH_dis_flw, θH_dis_ret, V_H_dis, QH_dis_i_in)
+
         EPS = 1e-9
         rho = getattr(self, "rho_w", 1000.0)        # kg/m3
         cw  = self.c_w                               # Wh/(kg·K), e.g. 1.163
@@ -941,6 +1314,128 @@ class HeatingSystemCalculator:
             'EWH_gen_in(kWh)': EWH_gen_in,
         }
 
+    def _build_boiler_generation_config(self):
+        if isinstance(self.boiler_generation_config, dict):
+            return self.boiler_generation_config
+        raise ValueError(
+            "generation_calculation_mode='boiler_15316_4_1' requires boiler_generation_config "
+            "with EN 15316-4-1 case tables."
+        )
+
+    def _get_boiler_calculator(self):
+        if self._boiler_calc_cache is None:
+            self._boiler_calc_cache = BoilerGeneratorCalculator(self._build_boiler_generation_config())
+        return self._boiler_calc_cache
+
+    def _solve_primary_hydraulics(self, θH_dis_flw, θH_dis_ret, V_H_dis, QH_gen_out):
+        """
+        Compute primary-side flow temperatures (θX_gen_cr_flw/ret) and the
+        primary volumetric flow Vp using the same logic as the legacy generation
+        branch (direct / independent circuit, climatic curve A/B/C, anti-dilution).
+
+        Returns dict with keys: θX_gen_cr_flw, θX_gen_cr_ret, Vp (m3/h).
+        """
+        EPS = 1e-9
+        rho = getattr(self, "rho_w", 1000.0)
+        cw  = self.c_w
+
+        ms = rho * max(float(V_H_dis), 0.0)              # kg/h secondary mass flow
+
+        if QH_gen_out <= EPS or ms <= EPS:
+            return {
+                'θX_gen_cr_flw': float(θH_dis_flw),
+                'θX_gen_cr_ret': float(θH_dis_ret),
+                'Vp':            0.0,
+            }
+
+        if self.generator_circuit == "direct":
+            return {
+                'θX_gen_cr_flw': float(θH_dis_flw),
+                'θX_gen_cr_ret': float(θH_dis_ret),
+                'Vp':            ms / rho,
+            }
+
+        # Independent circuit
+        Ts_sup_req = float(θH_dis_flw)
+        Ts_ret     = float(θH_dis_ret)
+
+        # ΔT on primary
+        if str(self.speed_control_generator_pump) == 'deltaT_constant':
+            dTp = float(self.generator_nominal_deltaT)
+        else:
+            dTp = float(self.generator_nominal_deltaT) * (QH_gen_out / max(self.full_load_power, 1e-6))
+            dTp = max(dTp, 1.0)
+
+        # Primary supply setpoint (Type A/B/C climatic curve)
+        if self.θHW_gen_flw_set is not None:
+            Tp_sup_set = float(self.θHW_gen_flw_set)
+        else:
+            ext = getattr(self, "current_theta_ext", None)
+            Tp_sup_set = float(self._generator_flow_setpoint(θext=ext, θH_dis_flw_demand=Ts_sup_req))
+
+        Tp_sup = max(Tp_sup_set, Ts_sup_req)
+
+        # Primary line loss
+        self.primary_line_loss = getattr(self, 'primary_line_loss', 1.0)
+        Ts_sup_eff = max(Tp_sup - self.primary_line_loss, Ts_ret)
+
+        # Primary mass flow from requested energy
+        mp = QH_gen_out * 1000.0 / (cw * dTp)
+
+        # Anti-dilution iteration on the mixing valve
+        if not getattr(self, 'allow_dilution', False):
+            TOL = 0.1
+            for _ in range(20):
+                mix_sup = Tp_sup if mp >= ms else (mp * Tp_sup + (ms - mp) * Ts_ret) / max(ms, 1e-9)
+                if (Tp_sup - mix_sup) > TOL and mp < ms:
+                    mp *= 1.10
+                else:
+                    Ts_sup_eff = mix_sup
+                    break
+        else:
+            Ts_sup_eff = Tp_sup if mp >= ms else (mp * Tp_sup + (ms - mp) * Ts_ret) / max(ms, 1e-9)
+
+        Tp_ret = Tp_sup - (ms / mp) * (Ts_sup_eff - Ts_ret) if mp > EPS else Tp_sup
+        return {
+            'θX_gen_cr_flw': Tp_sup,
+            'θX_gen_cr_ret': Tp_ret,
+            'Vp':            mp / rho,
+        }
+
+    def calculate_generation_boiler(self, θH_dis_flw, θH_dis_ret, V_H_dis, QH_dis_i_in):
+        """
+        EN 15316-4-1 boiler generation branch. Computes the primary-side
+        hydraulics (θX_gen_cr_flw/ret, Vp) consistently with the legacy branch,
+        then feeds θ_avg / θ_return to the BoilerGeneratorCalculator.
+        """
+        # 1) Energy cap (kWh) — same convention as legacy branch
+        max_output_g1 = self.full_load_power * (self.max_monthly_load_factor / 100.0) * self.tH_gen_i_ON
+        QH_gen_out = min(max(float(QH_dis_i_in), 0.0), max_output_g1)
+
+        # 2) Primary-side hydraulics (climatic curve, anti-dilution, ΔT)
+        hyd = self._solve_primary_hydraulics(θH_dis_flw, θH_dis_ret, V_H_dis, QH_gen_out)
+        Tp_sup = hyd['θX_gen_cr_flw']
+        Tp_ret = hyd['θX_gen_cr_ret']
+        Vp     = hyd['Vp']
+
+        # 3) Delegate to EN 15316-4-1 boiler model using primary-side temperatures
+        calc = self._get_boiler_calculator()
+        boiler_out = calc.compute_step(
+            Q_gen_out_kWh=float(QH_gen_out),
+            t_use_h=float(self.tH_gen_i_ON),
+            theta_avg_C=(float(Tp_sup) + float(Tp_ret)) / 2.0,
+            theta_return_C=float(Tp_ret),
+            Q_H_gen_out_kWh=float(QH_gen_out),
+            Q_W_gen_out_kWh=0.0,
+        )
+
+        # 4) Merge hydraulic outputs into the boiler dict (overrides defaults)
+        boiler_out['max_output_g1(kWh)'] = max_output_g1
+        boiler_out['θX_gen_cr_flw(°C)']  = Tp_sup
+        boiler_out['θX_gen_cr_ret(°C)']  = Tp_ret
+        boiler_out['V_H_gen(m3/h)']      = Vp
+        return boiler_out
+
     # -------------------- ONE STEP EXECUTION --------------------
     def compute_step(self, q_h_kWh, θint, θext):
         """
@@ -952,32 +1447,43 @@ class HeatingSystemCalculator:
         5) generation (primary)
         Returns a dict with main outputs (temps, flows, energies).
         """
-        # 1) Common emission params
-        common = self.calculate_common_emission_parameters(q_h_kWh, θint)
+        # 1) Emission-side step, either simplified ISO 15316-1 internal logic
+        #    or delegated EN 15316-2 per hourly row.
+        em_step = self._calculate_emission_step(q_h_kWh, θint, θext)
+        q_h_em_in = float(em_step['QH_em_i_in'])
+        θint_eff = float(em_step['θint_eff'])
+        q_h_em_out = float(em_step['q_h_em_out_kWh'])
+
+        # 2) Common emission params for the internal ISO 15316-1 path.
+        #    Keep them even in EN 15316-2 mode because downstream HVAC blocks
+        #    still expect the historical emission-side power and load factor.
+        common = self.calculate_common_emission_parameters(q_h_em_out, θint_eff)
+        common['QH_em_i_in'] = q_h_em_in
+        common['ΦH_em_eff'] = float(em_step['ΦH_em_eff'])
         self.current_theta_ext = float(θext)  # stored for primary control (Type A)
 
-        # 2) Emission block per selected type
+        # 3) Emission block per selected type
         if self.selected_emm_cont_circuit == 0:
-            em = self.calculate_type_C2(common, θint)
+            em = self.calculate_type_C2(common, θint_eff)
         elif self.selected_emm_cont_circuit == 1:
-            em = self.calculate_type_C3(common, θint)
+            em = self.calculate_type_C3(common, θint_eff)
         elif self.selected_emm_cont_circuit == 2:
-            em = self.calculate_type_C4(common, θint)
+            em = self.calculate_type_C4(common, θint_eff)
         elif self.selected_emm_cont_circuit == 3:
-            em = self.calculate_type_C5(common, θint)
+            em = self.calculate_type_C5(common, θint_eff)
         else:
             raise ValueError("selected_emm_cont_circuit must be in {0,1,2,3}")
 
-        # 3) Node supply temp (secondary control)
+        # 4) Node supply temp (secondary control)
         θH_nod_out = self.calculate_circuit_node_temperature(θext, em)
 
-        # 4) Operating conditions
-        op = self.calculate_operating_conditions(em, common, θint, θH_nod_out)
+        # 5) Operating conditions
+        op = self.calculate_operating_conditions(em, common, θint_eff, θH_nod_out)
 
-        # 5) Distribution block
-        dist = self.calculate_distribution(op['θH_dis_flw'], op['θH_dis_ret'], θint, common['QH_em_i_in'])
+        # 6) Distribution block
+        dist = self.calculate_distribution(op['θH_dis_flw'], op['θH_dis_ret'], θint_eff, q_h_em_in)
 
-        # 6) Generation (primary) block
+        # 7) Generation (primary) block
         gen = self.calculate_generation(
             θH_dis_flw=op['θH_dis_flw'],
             θH_dis_ret=op['θH_dis_ret'],
@@ -985,11 +1491,17 @@ class HeatingSystemCalculator:
             QH_dis_i_in=dist['QH_dis_i_in'],
         )
 
+        def _gen_value(*keys, default=0.0):
+            for key in keys:
+                if key in gen:
+                    return gen[key]
+            return default
+
         # 7) Collect outputs
         out = {
             # per-step inputs
             'Q_h(kWh)': q_h_kWh,
-            'T_op(°C)': θint,
+            'T_op(°C)': θint_eff,
             'T_ext(°C)': θext,
 
             # emission (selected)
@@ -1016,23 +1528,30 @@ class HeatingSystemCalculator:
             'QH_dis_i_req(kWh)': dist['QH_dis_i_req'],
             'QH_dis_i_in(kWh)': dist['QH_dis_i_in'],
             'V_H_dis(m3/h)': dist['V_H_dis'],
+            'QH_em_i_in(kWh)': q_h_em_in,
+            'QH_em_ls(kWh)': em_step['QH_em_ls_kWh'],
+            'W_H_em_aux(kWh)': em_step['W_H_em_aux_kWh'],
+            'theta_H_int_inc_K': em_step['theta_H_int_inc_K'],
+            'emission_calculation_mode': self.emission_calculation_mode,
         }
 
         # merge generator outputs
         out.update({
-            'max_output_g1(kWh)': gen['max_output_g1(kWh)'],
-            'QH_gen_out(kWh)': gen['QH_gen_out(kWh)'],
-            'θX_gen_cr_flw(°C)': gen['θX_gen_cr_flw(°C)'],
-            'θX_gen_cr_ret(°C)': gen['θX_gen_cr_ret(°C)'],
-            'V_H_gen(m3/h)': gen['V_H_gen(m3/h)'],
-            'efficiency_gen(%)': gen['efficiency_gen(%)'],
-            'EHW_gen_in(kWh)': gen['EHW_gen_in(kWh)'],
-            'EHW_gen_aux(kWh)': gen['EHW_gen_aux(kWh)'],
-            'QW_gen_i_ls_rbl_H(kWh)': gen['QW_gen_i_ls_rbl_H(kWh)'],
-            'QW_gen_out(kWh)': gen['QW_gen_out(kWh)'],
-            'QHW_gen_out(kWh)': gen['QHW_gen_out(kWh)'],
-            'EH_gen_in(kWh)': gen['EH_gen_in(kWh)'],
-            'EWH_gen_in(kWh)': gen['EWH_gen_in(kWh)'],
+            'max_output_g1(kWh)': _gen_value('max_output_g1(kWh)', default=0.0),
+            # Aliases for EN 15316-4-1 boiler module: it returns 'Q_gen_out(kWh)',
+            # 'E_gen_in(kWh)', 'E_H_gen_in(kWh)', 'E_W_gen_in(kWh)', 'W_gen_aux(kWh)'.
+            'QH_gen_out(kWh)': _gen_value('QH_gen_out(kWh)', 'Q_gen_out(kWh)', 'Q_gen_out_kWh', default=0.0),
+            'θX_gen_cr_flw(°C)': _gen_value('θX_gen_cr_flw(°C)', default=op['θH_dis_flw']),
+            'θX_gen_cr_ret(°C)': _gen_value('θX_gen_cr_ret(°C)', default=op['θH_dis_ret']),
+            'V_H_gen(m3/h)': _gen_value('V_H_gen(m3/h)', default=dist['V_H_dis']),
+            'efficiency_gen(%)': _gen_value('efficiency_gen(%)', 'eta_Pn_corr(%)', default=float('nan')),
+            'EHW_gen_in(kWh)': _gen_value('EHW_gen_in(kWh)', 'E_gen_in(kWh)', 'E_gen_in_kWh', default=0.0),
+            'EHW_gen_aux(kWh)': _gen_value('EHW_gen_aux(kWh)', 'W_gen_aux(kWh)', default=0.0),
+            'QW_gen_i_ls_rbl_H(kWh)': _gen_value('QW_gen_i_ls_rbl_H(kWh)', 'Q_gen_ls_rbl(kWh)', default=0.0),
+            'QW_gen_out(kWh)': _gen_value('QW_gen_out(kWh)', default=0.0),
+            'QHW_gen_out(kWh)': _gen_value('QHW_gen_out(kWh)', default=_gen_value('QH_gen_out(kWh)', 'Q_gen_out(kWh)', 'Q_gen_out_kWh', default=0.0)),
+            'EH_gen_in(kWh)': _gen_value('EH_gen_in(kWh)', 'E_H_gen_in(kWh)', default=0.0),
+            'EWH_gen_in(kWh)': _gen_value('EWH_gen_in(kWh)', 'E_W_gen_in(kWh)', default=0.0),
         })
         return out
 
@@ -1126,49 +1645,75 @@ class HeatingSystemCalculator:
             'T_ext': ['T_ext', 'theta_ext'],
         }
 
-        def pick(series, names, default=None):
+        # --- Resolve column names ONCE (instead of per-row alias lookup) ---
+        def _resolve(cols, names):
             for n in names:
-                if n in series:
-                    return series[n]
-            return default
+                if n in cols:
+                    return n
+            return None
+
+        n = len(df)
+        cols = df.columns
+        qh_col   = _resolve(cols, alias['Q_H_kWh'])
+        top_col  = _resolve(cols, alias['T_op'])
+        text_col = _resolve(cols, alias['T_ext'])
+
+        theta_int_def = float(self.input_data.get('theta_int_default', 20))
+        theta_ext_def = float(self.input_data.get('theta_ext_default', 5))
+
+        # --- Materialize numpy arrays for the hot loop ---
+        if qh_col is not None:
+            qh_arr = pd.to_numeric(df[qh_col], errors='coerce').to_numpy(dtype=float)
+            qh_arr = np.where(np.isnan(qh_arr), 0.0, qh_arr)
+        else:
+            qh_arr = np.zeros(n, dtype=float)
+
+        top_arr  = (df[top_col].to_numpy(dtype=float)  if top_col  is not None else np.full(n, theta_int_def, dtype=float))
+        text_arr = (df[text_col].to_numpy(dtype=float) if text_col is not None else np.full(n, theta_ext_def, dtype=float))
+
+        idx_arr = df.index
+
+        # --- Precompute EN 15316-2 emission timeseries once (massive speedup) ---
+        self._precompute_emission_timeseries(df)
 
         results = []
-        for idx, row in df.iterrows():
-            qh = pick(row, alias['Q_H_kWh'])
-            θint = pick(row, alias['T_op'], default=self.input_data.get('theta_int_default', 20))
-            θext = pick(row, alias['T_ext'], default=self.input_data.get('theta_ext_default', 5))
+        for pos in range(n):
+            # Tell _calculate_emission_step which row we are on, so it can look
+            # up the precomputed cache instead of running EN 15316-2 again.
+            self._current_emission_pos = pos
 
-            if pd.isna(qh):
-                qh = 0.0
+            qh    = float(qh_arr[pos])
+            θint  = float(top_arr[pos])
+            θext  = float(text_arr[pos])
+            idx   = idx_arr[pos]
 
             # Filter by Q_H policy
-            if float(qh) <= 0:
+            if qh <= 0:
                 if not self.calc_when_QH_positive_only:
-                    # Full calculation even with zero load
-                    res = self.compute_step(0.0, float(θint), float(θext))
+                    res = self.compute_step(0.0, θint, θext)
                     res_row = {'timestamp': idx}; res_row.update(res); results.append(res_row)
                     continue
 
                 # calc_when_QH_positive_only == True
                 if self.off_compute_mode == 'idle':
                     res_row = {'timestamp': idx}
-                    res_row.update(self._idle_row(0.0, float(θint), float(θext)))
+                    res_row.update(self._idle_row(0.0, θint, θext))
                     results.append(res_row)
                     continue
                 elif self.off_compute_mode == 'temps':
                     res_row = {'timestamp': idx}
-                    res = self._temps_row_when_off(float(θint), float(θext))
-                    res_row.update({'Q_h(kWh)': 0.0, 'T_op(°C)': float(θint), 'T_ext(°C)': float(θext)})
+                    res = self._temps_row_when_off(θint, θext)
+                    res_row.update({'Q_h(kWh)': 0.0, 'T_op(°C)': θint, 'T_ext(°C)': θext})
                     res_row.update(res)
                     results.append(res_row)
                     continue
                 elif self.off_compute_mode == 'full':
-                    res = self.compute_step(0.0, float(θint), float(θext))
+                    res = self.compute_step(0.0, θint, θext)
                     res_row = {'timestamp': idx}; res_row.update(res); results.append(res_row)
                 continue
 
             # Normal step
-            res = self.compute_step(float(qh), float(θint), float(θext))
+            res = self.compute_step(qh, θint, θext)
             res_row = {'timestamp': idx}
             res_row.update(res)
             results.append(res_row)

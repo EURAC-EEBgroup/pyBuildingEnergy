@@ -832,6 +832,11 @@ def resolve_ventilation_boundary(
 
     components = vent_cfg.get("components", None)
 
+    def _float_or_default(value, default=0.0):
+        if value is None:
+            return float(default)
+        return float(value)
+
     if components is not None:
         # For component streams, each stream uses its own schedule (1.0 default)
         # so infiltration components remain active when a mechanical schedule is
@@ -859,8 +864,8 @@ def resolve_ventilation_boundary(
                     outdoor_temperature_c,
                     wind_speed_m_s,
                     type_ventilation=vent_type,
-                    flowrate_person=float(vent_cfg.get("flow_rate_per_person", 0.0)),
-                    custom_Hve_k_t=float(
+                    flowrate_person=_float_or_default(vent_cfg.get("flow_rate_per_person", 0.0)),
+                    custom_Hve_k_t=_float_or_default(
                         vent_cfg.get("custom_heat_transfer_coefficient_ventilation", 0.0)
                     ),
                     altitude=altitude_m,
