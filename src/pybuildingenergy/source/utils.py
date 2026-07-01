@@ -74,7 +74,7 @@ class numb_nodes_facade_elements:
 
 
 @dataclass
-class conduttance_elements:
+class conductance_elements:
     h_pli_eli: np.array
 
 
@@ -224,7 +224,7 @@ def _resolve_single_zone_vent_boundary(
     legacy and causal solver timestep loops.
 
     When *ahu_outputs_collector* is a dict it is passed through to
-    resolve_ventilation_boundary → _resolve_component_streams, which will write
+    resolve_ventilation_boundary -> _resolve_component_streams, which will write
     {component_name: AHUStepOutputs} entries for every mechanical_supply component.
     The caller is responsible for snapshotting the dict after each timestep.
     """
@@ -262,7 +262,7 @@ def _resolve_single_zone_vent_boundary(
 # Ordered specification of AHU diagnostic output fields: (column_prefix, attribute_name, dtype).
 # Used by both _ahu_coll_to_columns (legacy/causal paths) and the multizone buffer, so that
 # all solver paths expose the same 12 diagnostic columns.
-# AHU coil energy must NOT be added to the zone Sankey — the ventilation term already uses
+# AHU coil energy must NOT be added to the zone Sankey - the ventilation term already uses
 # the conditioned supply temperature, so adding coil energy would double-count.
 _AHU_DIAG_SPEC: tuple = (
     ("Q_ahu_coil",     "actual_heating_coil_power_w",    float),
@@ -285,7 +285,7 @@ def _ahu_coll_to_columns(ahu_coll_act):
 
     Returns {col_name: np.array} for all mechanical_supply components found in the list.
     Only called when at least one such component is present.
-    Column schema is defined by _AHU_DIAG_SPEC — identical to the multizone path.
+    Column schema is defined by _AHU_DIAG_SPEC - identical to the multizone path.
     """
     names = sorted({k for d in ahu_coll_act for k in d})
     if not names:
@@ -376,6 +376,271 @@ def _integrate_power_series_to_energy_wh(power_series, default_dt_h=1.0):
     dt_h = dt_h.fillna(fallback_dt_h)
     dt_h = dt_h.where(np.isfinite(dt_h) & (dt_h > 0.0), fallback_dt_h)
     return float((p * dt_h).sum())
+
+
+def _safe_report_name(name: str) -> str:
+    """Return a stable ASCII suffix for generated reporting columns."""
+
+    safe = re.sub(r"[^0-9A-Za-z]+", "_", str(name or "").strip()).strip("_")
+    return safe or "unnamed"
+
+
+def _unique_report_names(names) -> list[str]:
+    """Return unique safe names while preserving input order."""
+
+    used: dict[str, int] = {}
+    out: list[str] = []
+    for name in names:
+        base = _safe_report_name(name)
+        count = used.get(base, 0)
+        used[base] = count + 1
+        out.append(base if count == 0 else f"{base}_{count + 1}")
+    return out
+
+
+def _integrate_w_to_kwh(series_w, default_dt_h=1.0) -> float:
+    return _integrate_power_series_to_energy_wh(series_w, default_dt_h) / 1000.0
+
+
+def _split_pos_neg_energy_kwh(series_w, default_dt_h=1.0) -> tuple[float, float]:
+    """Return positive and negative-magnitude energy from a signed W series."""
+
+    s = pd.to_numeric(series_w, errors="coerce").fillna(0.0)
+    positive_kWh = _integrate_w_to_kwh(s.clip(lower=0.0), default_dt_h)
+    negative_kWh = _integrate_w_to_kwh((-s.clip(upper=0.0)), default_dt_h)
+    return positive_kWh, negative_kWh
+
+
+def _has_ventilation_components(building_object) -> bool:
+    if not isinstance(building_object, dict):
+        return False
+    vent_cfg = building_object.get("building_parameters", {}).get("ventilation", {}) or {}
+    components = vent_cfg.get("components")
+    return isinstance(components, list) and len(components) > 0
+
+
+def _ventilation_stream_diag(boundary: VentilationBoundary, zone_temperature_c: float) -> dict[str, dict[str, float]]:
+    """Return per-stream ventilation diagnostics for componentized boundaries."""
+
+    diag: dict[str, dict[str, float]] = {}
+    for stream in boundary.streams:
+        h = float(stream.heat_transfer_coefficient_w_k)
+        t_source = float(stream.source_temperature_c)
+        diag[str(stream.name)] = {
+            "H": h,
+            "T_source": t_source,
+            "Q": h * float(zone_temperature_c) - h * t_source,
+        }
+    return diag
+
+
+def _ventilation_stream_diag_to_columns(diag_by_timestep: list[dict[str, dict[str, float]]]) -> tuple[dict[str, np.ndarray], list[str]]:
+    """Convert per-timestep ventilation stream diagnostics to hourly columns."""
+
+    raw_names = []
+    for diag in diag_by_timestep:
+        for name in diag:
+            if name not in raw_names:
+                raw_names.append(name)
+    if not raw_names:
+        return {}, []
+
+    safe_by_raw = dict(zip(raw_names, _unique_report_names(raw_names)))
+    n = len(diag_by_timestep)
+    columns: dict[str, np.ndarray] = {}
+    q_cols: list[str] = []
+    for raw_name in raw_names:
+        safe = safe_by_raw[raw_name]
+        h_arr = np.zeros(n, dtype=float)
+        t_arr = np.full(n, np.nan, dtype=float)
+        q_arr = np.zeros(n, dtype=float)
+        for i, diag in enumerate(diag_by_timestep):
+            values = diag.get(raw_name)
+            if not values:
+                continue
+            h_arr[i] = float(values.get("H", 0.0))
+            t_arr[i] = float(values.get("T_source", np.nan))
+            q_arr[i] = float(values.get("Q", 0.0))
+        columns[f"H_ve_{safe}"] = h_arr
+        columns[f"T_ve_source_{safe}"] = t_arr
+        q_col = f"Q_ve_{safe}"
+        columns[q_col] = q_arr
+        q_cols.append(q_col)
+    return columns, q_cols
+
+
+def _proportional_part(total, part, denominator):
+    total_arr = np.asarray(total, dtype=float)
+    part_arr = np.asarray(part, dtype=float)
+    denom_arr = np.asarray(denominator, dtype=float)
+    return np.divide(
+        total_arr * part_arr,
+        denom_arr,
+        out=np.zeros_like(total_arr, dtype=float),
+        where=denom_arr > 0.0,
+    )
+
+
+def _add_need_attribution_columns(
+    hourly_results: pd.DataFrame,
+    surface_cols: list[str] | None = None,
+    ve_cols: list[str] | None = None,
+) -> pd.DataFrame:
+    """Add proportional useful-need attribution columns.
+
+    These columns are reporting attributions, not independent ISO52016 state
+    variables. Gross heat-balance terms do not generally sum to Q_H or Q_C
+    because storage, controls, setpoints and timestep dynamics intervene.
+    """
+
+    hourly_results = hourly_results.copy()
+    surface_cols = surface_cols or []
+    ve_cols = ve_cols or []
+
+    q_h = pd.to_numeric(hourly_results.get("Q_H", 0.0), errors="coerce").fillna(0.0)
+    q_c = pd.to_numeric(hourly_results.get("Q_C", 0.0), errors="coerce").fillna(0.0)
+
+    q_tr = pd.to_numeric(hourly_results.get("Q_tr_total", 0.0), errors="coerce").fillna(0.0)
+    q_tb = pd.to_numeric(hourly_results.get("Q_tb", 0.0), errors="coerce").fillna(0.0)
+    q_ground = pd.to_numeric(hourly_results.get("Q_ground", 0.0), errors="coerce").fillna(0.0)
+    q_ve = pd.to_numeric(hourly_results.get("Q_ve", 0.0), errors="coerce").fillna(0.0)
+    q_storage = pd.to_numeric(hourly_results.get("Q_storage", 0.0), errors="coerce").fillna(0.0)
+    q_solar = pd.to_numeric(hourly_results.get("Q_solar_gains", 0.0), errors="coerce").fillna(0.0)
+    q_internal = pd.to_numeric(hourly_results.get("Q_internal_gains", 0.0), errors="coerce").fillna(0.0)
+
+    heating_drivers = {
+        "transmission": q_tr.clip(lower=0.0),
+        "thermal_bridges": q_tb.clip(lower=0.0),
+        "ground": q_ground.clip(lower=0.0),
+        "ventilation": q_ve.clip(lower=0.0),
+        "storage": q_storage.clip(lower=0.0),
+    }
+    heating_den = sum(heating_drivers.values())
+    heating_cols = []
+    for name, driver in heating_drivers.items():
+        col = f"Q_H_attr_{name}"
+        hourly_results.loc[:, col] = _proportional_part(q_h, driver, heating_den)
+        heating_cols.append(col)
+    heating_sum = hourly_results[heating_cols].sum(axis=1)
+    hourly_results.loc[:, "Q_H_attr_unallocated"] = (q_h - heating_sum).where(heating_den > 0.0, q_h)
+    hourly_results.loc[:, "Q_H_attr_unallocated"] = hourly_results["Q_H_attr_unallocated"].where(
+        hourly_results["Q_H_attr_unallocated"].abs() > 1e-9,
+        0.0,
+    )
+
+    cooling_drivers = {
+        "solar": q_solar.clip(lower=0.0),
+        "internal": q_internal.clip(lower=0.0),
+        "transmission": (-q_tr.clip(upper=0.0)),
+        "thermal_bridges": (-q_tb.clip(upper=0.0)),
+        "ground": (-q_ground.clip(upper=0.0)),
+        "ventilation": (-q_ve.clip(upper=0.0)),
+        "storage": (-q_storage.clip(upper=0.0)),
+    }
+    cooling_den = sum(cooling_drivers.values())
+    cooling_cols = []
+    for name, driver in cooling_drivers.items():
+        col = f"Q_C_attr_{name}"
+        hourly_results.loc[:, col] = _proportional_part(q_c, driver, cooling_den)
+        cooling_cols.append(col)
+    cooling_sum = hourly_results[cooling_cols].sum(axis=1)
+    hourly_results.loc[:, "Q_C_attr_unallocated"] = (q_c - cooling_sum).where(cooling_den > 0.0, q_c)
+    hourly_results.loc[:, "Q_C_attr_unallocated"] = hourly_results["Q_C_attr_unallocated"].where(
+        hourly_results["Q_C_attr_unallocated"].abs() > 1e-9,
+        0.0,
+    )
+
+    q_h_tr_attr = pd.to_numeric(hourly_results["Q_H_attr_transmission"], errors="coerce").fillna(0.0)
+    q_c_tr_attr = pd.to_numeric(hourly_results["Q_C_attr_transmission"], errors="coerce").fillna(0.0)
+    l_tr = heating_drivers["transmission"]
+    g_tr = cooling_drivers["transmission"]
+    for col in surface_cols:
+        safe = col.replace("Q_tr_surface_", "", 1)
+        q_surf = pd.to_numeric(hourly_results[col], errors="coerce").fillna(0.0)
+        hourly_results.loc[:, f"Q_H_attr_tr_surface_{safe}"] = _proportional_part(
+            q_h_tr_attr, q_surf.clip(lower=0.0), l_tr
+        )
+        hourly_results.loc[:, f"Q_C_attr_tr_surface_{safe}"] = _proportional_part(
+            q_c_tr_attr, -q_surf.clip(upper=0.0), g_tr
+        )
+
+    q_h_ve_attr = pd.to_numeric(hourly_results["Q_H_attr_ventilation"], errors="coerce").fillna(0.0)
+    q_c_ve_attr = pd.to_numeric(hourly_results["Q_C_attr_ventilation"], errors="coerce").fillna(0.0)
+    l_ve = heating_drivers["ventilation"]
+    g_ve = cooling_drivers["ventilation"]
+    for col in ve_cols:
+        safe = col.replace("Q_ve_", "", 1)
+        q_stream = pd.to_numeric(hourly_results[col], errors="coerce").fillna(0.0)
+        hourly_results.loc[:, f"Q_H_attr_ve_{safe}"] = _proportional_part(
+            q_h_ve_attr, q_stream.clip(lower=0.0), l_ve
+        )
+        hourly_results.loc[:, f"Q_C_attr_ve_{safe}"] = _proportional_part(
+            q_c_ve_attr, -q_stream.clip(upper=0.0), g_ve
+        )
+
+    return hourly_results
+
+
+def _add_annual_balance_columns(
+    hourly_results: pd.DataFrame,
+    annual_results_dic: dict,
+    area_m2: float,
+    dt_h: float,
+) -> None:
+    """Add annual gross balance and attribution reporting columns."""
+
+    signed_terms = {
+        "Q_tr_total": ("Q_tr_total_loss_kWh", "Q_tr_total_gain_kWh"),
+        "Q_tr_opaque": ("Q_tr_opaque_loss_kWh", "Q_tr_opaque_gain_kWh"),
+        "Q_tr_window": ("Q_tr_window_loss_kWh", "Q_tr_window_gain_kWh"),
+        "Q_tb": ("Q_tb_loss_kWh", "Q_tb_gain_kWh"),
+        "Q_ground": ("Q_ground_loss_kWh", "Q_ground_gain_kWh"),
+        "Q_ve": ("Q_ve_loss_kWh", "Q_ve_gain_kWh"),
+    }
+    for col, (loss_key, gain_key) in signed_terms.items():
+        if col not in hourly_results:
+            continue
+        loss_kWh, gain_kWh = _split_pos_neg_energy_kwh(hourly_results[col], dt_h)
+        annual_results_dic[loss_key] = loss_kWh
+        annual_results_dic[gain_key] = gain_kWh
+
+    for col in [c for c in hourly_results.columns if c.startswith("Q_ve_")]:
+        if col.startswith(("Q_ve_loss", "Q_ve_gain")):
+            continue
+        loss_kWh, gain_kWh = _split_pos_neg_energy_kwh(hourly_results[col], dt_h)
+        annual_results_dic[f"{col}_loss_kWh"] = loss_kWh
+        annual_results_dic[f"{col}_gain_kWh"] = gain_kWh
+
+    for col in [c for c in hourly_results.columns if c.startswith("Q_tr_surface_")]:
+        loss_kWh, gain_kWh = _split_pos_neg_energy_kwh(hourly_results[col], dt_h)
+        annual_results_dic[f"{col}_loss_kWh"] = loss_kWh
+        annual_results_dic[f"{col}_gain_kWh"] = gain_kWh
+
+    if "Q_solar_gains" in hourly_results:
+        annual_results_dic["Q_solar_gains_kWh"] = _integrate_w_to_kwh(
+            pd.to_numeric(hourly_results["Q_solar_gains"], errors="coerce").fillna(0.0).clip(lower=0.0),
+            dt_h,
+        )
+    if "Q_internal_gains" in hourly_results:
+        annual_results_dic["Q_internal_gains_kWh"] = _integrate_w_to_kwh(
+            pd.to_numeric(hourly_results["Q_internal_gains"], errors="coerce").fillna(0.0).clip(lower=0.0),
+            dt_h,
+        )
+    if "Q_storage" in hourly_results:
+        q_storage = pd.to_numeric(hourly_results["Q_storage"], errors="coerce").fillna(0.0)
+        annual_results_dic["Q_storage_charge_kWh"] = _integrate_w_to_kwh(q_storage.clip(lower=0.0), dt_h)
+        annual_results_dic["Q_storage_discharge_kWh"] = _integrate_w_to_kwh((-q_storage.clip(upper=0.0)), dt_h)
+        annual_results_dic["Q_storage_net_kWh"] = _integrate_w_to_kwh(q_storage, dt_h)
+
+    for col in [
+        c for c in hourly_results.columns
+        if c.startswith("Q_H_attr_") or c.startswith("Q_C_attr_")
+    ]:
+        annual_results_dic[f"{col}_kWh"] = _integrate_w_to_kwh(hourly_results[col], dt_h)
+
+    for key, value in list(annual_results_dic.items()):
+        if key.endswith("_kWh"):
+            annual_results_dic[f"{key}_per_sqm"] = (float(value) / area_m2) if area_m2 > 0 else 0.0
 
 
 def _ground_contact_area(building_object):
@@ -914,6 +1179,219 @@ def _resolve_ground_temperature_monthly(building_object, monthly_override=None) 
     return None
 
 
+@dataclass(frozen=True)
+class _SurfaceHeatTransferCoefficient:
+    convective: float
+    radiative: float
+
+    @property
+    def total(self) -> float:
+        return self.convective + self.radiative
+
+
+@dataclass(frozen=True)
+class _Table25SurfaceHeatTransferDefaults:
+    internal_upwards: _SurfaceHeatTransferCoefficient
+    internal_horizontal: _SurfaceHeatTransferCoefficient
+    internal_downwards: _SurfaceHeatTransferCoefficient
+    external_outdoor_air: _SurfaceHeatTransferCoefficient
+    zero: _SurfaceHeatTransferCoefficient
+
+
+# EN ISO 52016-1 Table 25 conventional surface heat-transfer coefficients.
+# The upwards/horizontal/downwards labels refer to heat-flow direction at the
+# internal surface, not directly to roof/wall/floor construction type.
+_TABLE25_SURFACE_HEAT_TRANSFER_DEFAULTS = _Table25SurfaceHeatTransferDefaults(
+    internal_upwards=_SurfaceHeatTransferCoefficient(convective=5.0, radiative=5.13),
+    internal_horizontal=_SurfaceHeatTransferCoefficient(convective=2.5, radiative=5.13),
+    internal_downwards=_SurfaceHeatTransferCoefficient(convective=0.7, radiative=5.13),
+    external_outdoor_air=_SurfaceHeatTransferCoefficient(convective=20.0, radiative=4.14),
+    zero=_SurfaceHeatTransferCoefficient(convective=0.0, radiative=0.0),
+)
+
+
+_HEAT_TRANSFER_COEFFICIENT_KEYS = (
+    "convective_heat_transfer_coefficient_internal",
+    "radiative_heat_transfer_coefficient_internal",
+    "convective_heat_transfer_coefficient_external",
+    "radiative_heat_transfer_coefficient_external",
+)
+
+
+def _surface_boundary_type(surface: dict) -> str:
+    if not isinstance(surface, dict):
+        return "OUTDOORS"
+    raw = surface.get("boundary", "OUTDOORS")
+    boundary = str(raw).strip().upper().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "OUTDOOR": "OUTDOORS",
+        "OUTSIDE": "OUTDOORS",
+        "EXTERNAL": "OUTDOORS",
+        "EXTERIOR": "OUTDOORS",
+        "OUTDOOR_AIR": "OUTDOORS",
+        "GROUND_CONTACT": "GROUND",
+        "GROUNDCONTACT": "GROUND",
+        "SOIL": "GROUND",
+        "EARTH": "GROUND",
+        "BASEMENT": "GROUND",
+        "INTERIOR": "INTERNAL",
+        "INTERZONE": "INTERNAL",
+        "ADJACENT_ZONE": "INTERNAL",
+        "ADJACENT": "INTERNAL",
+        "ADIABATIC_BOUNDARY": "ADIABATIC",
+    }
+    return aliases.get(boundary, boundary)
+
+
+def _surface_iso_type(surface: dict) -> str:
+    if not isinstance(surface, dict):
+        return ""
+    return str(surface.get("ISO52016_type_string", "")).strip().upper()
+
+
+def _surface_is_adiabatic(surface: dict) -> bool:
+    if not isinstance(surface, dict):
+        return False
+    surf_type = str(surface.get("type", "")).strip().lower()
+    return (
+        _surface_boundary_type(surface) == "ADIABATIC"
+        or _surface_iso_type(surface) == "AD"
+        or surf_type == "adiabatic"
+    )
+
+
+def _surface_is_ground_contact(surface: dict) -> bool:
+    if not isinstance(surface, dict):
+        return False
+    surf_type = str(surface.get("type", "")).strip().lower().replace("-", "_").replace(" ", "_")
+    if _surface_boundary_type(surface) == "GROUND" or _surface_iso_type(surface) == "GR":
+        return True
+    return surf_type in {
+        "ground",
+        "ground_floor",
+        "ground_contact",
+        "slab_on_ground",
+        "basement_floor",
+        "basement_wall",
+        "earth_contact",
+    }
+
+
+def _surface_side_b_is_internal(surface: dict) -> bool:
+    if not isinstance(surface, dict):
+        return False
+    surf_type = str(surface.get("type", "")).strip().lower()
+    return (
+        _surface_boundary_type(surface) == "INTERNAL"
+        or _surface_iso_type(surface) == "ADJ"
+        or surf_type == "adjacent"
+    )
+
+
+def _surface_side_b_is_outdoor_air(surface: dict) -> bool:
+    if not isinstance(surface, dict):
+        return False
+    if _surface_is_adiabatic(surface) or _surface_is_ground_contact(surface):
+        return False
+    if _surface_side_b_is_internal(surface):
+        return False
+    iso_type = _surface_iso_type(surface)
+    return _surface_boundary_type(surface) == "OUTDOORS" or iso_type in {"OP", "W", "EXT"}
+
+
+def _normalize_table25_heat_flow_direction(direction_raw) -> str:
+    raw = str(direction_raw).strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "up": "upwards",
+        "upward": "upwards",
+        "upwards": "upwards",
+        "vertical_up": "upwards",
+        "vertical_upwards": "upwards",
+        "horizontal": "horizontal",
+        "sideways": "horizontal",
+        "lateral": "horizontal",
+        "wall": "horizontal",
+        "down": "downwards",
+        "downward": "downwards",
+        "downwards": "downwards",
+        "vertical_down": "downwards",
+        "vertical_downwards": "downwards",
+    }
+    try:
+        return aliases[raw]
+    except KeyError as exc:
+        raise ValueError(
+            "heat_flow_direction must be one of 'upwards', 'horizontal', or 'downwards'."
+        ) from exc
+
+
+def _surface_internal_heat_flow_direction(surface: dict) -> str:
+    if not isinstance(surface, dict):
+        return "horizontal"
+
+    for key in (
+        "internal_heat_flow_direction",
+        "heat_flow_direction",
+        "table25_internal_heat_flow_direction",
+    ):
+        value = surface.get(key, None)
+        if value is not None and str(value).strip() != "":
+            return _normalize_table25_heat_flow_direction(value)
+
+    if _surface_is_ground_contact(surface):
+        return "downwards"
+
+    tilt = _surface_tilt_for_internal_convection(surface)
+    if tilt < 45.0:
+        return "upwards"
+    if tilt > 135.0:
+        return "downwards"
+    return "horizontal"
+
+
+def _table25_internal_surface_coefficient(surface: dict) -> _SurfaceHeatTransferCoefficient:
+    direction = _surface_internal_heat_flow_direction(surface)
+    if direction == "upwards":
+        return _TABLE25_SURFACE_HEAT_TRANSFER_DEFAULTS.internal_upwards
+    if direction == "downwards":
+        return _TABLE25_SURFACE_HEAT_TRANSFER_DEFAULTS.internal_downwards
+    return _TABLE25_SURFACE_HEAT_TRANSFER_DEFAULTS.internal_horizontal
+
+
+def _surface_heat_transfer_default_values(surface: dict) -> dict[str, float]:
+    if _surface_is_adiabatic(surface):
+        internal = _TABLE25_SURFACE_HEAT_TRANSFER_DEFAULTS.zero
+    else:
+        internal = _table25_internal_surface_coefficient(surface)
+
+    if _surface_side_b_is_outdoor_air(surface):
+        side_b = _TABLE25_SURFACE_HEAT_TRANSFER_DEFAULTS.external_outdoor_air
+    elif _surface_side_b_is_internal(surface):
+        side_b = internal
+    else:
+        # Ground-contact and adiabatic side B boundaries are handled by their
+        # own boundary model; the outdoor-air h_e = 24.14 must not be applied.
+        side_b = _TABLE25_SURFACE_HEAT_TRANSFER_DEFAULTS.zero
+
+    return {
+        "convective_heat_transfer_coefficient_internal": internal.convective,
+        "radiative_heat_transfer_coefficient_internal": internal.radiative,
+        "convective_heat_transfer_coefficient_external": side_b.convective,
+        "radiative_heat_transfer_coefficient_external": side_b.radiative,
+    }
+
+
+def _surface_heat_transfer_default_value(surface: dict, key: str) -> float:
+    return float(_surface_heat_transfer_default_values(surface)[key])
+
+
+def _apply_surface_heat_transfer_defaults(surface: dict) -> None:
+    defaults = _surface_heat_transfer_default_values(surface)
+    for key in _HEAT_TRANSFER_COEFFICIENT_KEYS:
+        if surface.get(key, None) is None:
+            surface[key] = defaults[key]
+
+
 def _normalize_internal_convection_model(model_raw) -> str:
     if model_raw is None:
         return "table"
@@ -959,9 +1437,8 @@ def _surface_tilt_for_internal_convection(surface: dict) -> float:
             except Exception:
                 pass
 
-    bnd = str(surface.get("boundary", "OUTDOORS")).upper() if isinstance(surface, dict) else "OUTDOORS"
     ori_tag = str(surface.get("ISO52016_orientation_string", "")).upper() if isinstance(surface, dict) else ""
-    if bnd == "GROUND":
+    if _surface_is_ground_contact(surface):
         return 180.0
     if ori_tag in {"NV", "EV", "SV", "WV"}:
         return 90.0
@@ -1120,7 +1597,7 @@ def _dynamic_external_convection_h(
     u_wind_ms: float,
     model: str,
     h_min: float = 2.0,
-    fallback_h_ce: float = 20.0,
+    fallback_h_ce: float = _TABLE25_SURFACE_HEAT_TRANSFER_DEFAULTS.external_outdoor_air.convective,
 ) -> float:
     model_n = _normalize_external_convection_model(model)
     h_fallback = max(0.0, float(fallback_h_ce))
@@ -1392,6 +1869,7 @@ class ISO52010:
     # GET DATA FROM PVGIS
     @classmethod
     def get_tmy_data_pvgis(cls, building_object) -> WeatherDataResult:
+        from timezonefinder import TimezoneFinder  # lazy: avoids ~0.7s cold import
         """
         Get Weather data from pvgis API
 
@@ -1585,6 +2063,7 @@ class ISO52010:
     # GET WEATHER DATA FROM .epw FILE
     @classmethod
     def get_tmy_data_epw(cls, path_weather_file):
+        from pvlib.iotools import epw  # lazy: avoids ~1.9s cold import
         """
         Get Wetaher data from epw file
 
@@ -1761,30 +2240,74 @@ class ISO52010:
                 else:
                     phi_deg = 0.0
 
+                overhang_properties = window.get("overhang_properties", {}) or {}
                 F_sh_dir_k_t = shading_reduction_factor(
                     alpha_sol_t=alpha_deg,
                     phi_sol_t=phi_deg,
                     beta_k_t=90,
                     gamma_k_t=orientation_angle,
-                    D_k_ovh_q=window.get("overhang_proprieties", {}).get("width_of_horizontal_overhangs"),
+                    D_k_ovh_q=overhang_properties.get("width_of_horizontal_overhangs"),
                     L_k_ovh_q=window.get("width_or_distance_of_shading_elements"),
                     elements_shading_type=window.get("shading_type"),
                     H_k=window.get("height"),
                     W_k=window.get("width"),
                 )
 
-                # Warning: I assume F_sh_dir_k_t = (dir_factor, sun_height)
-                fatt_dir = F_sh_dir_k_t[0] if F_sh_dir_k_t is not None else 0.0
-                if fatt_dir > 0:
-                    I_dir = float(I_dir_tot.iloc[i]) if pd.notna(I_dir_tot.iloc[i]) else 0.0
-                    I_dif = float(I_dif_tot.iloc[i]) if pd.notna(I_dif_tot.iloc[i]) else 0.0
-                    denom = I_dir + I_dif
-                    F_sh_obst_k_t = 0.0 if denom == 0 else (fatt_dir * I_dir + I_dif) / denom
+                # F_sh_dir_k_t = (direct-beam factor, sunlit height).
+                # Annex F Method 1 converts that direct factor to the combined
+                # obstacle factor used with total irradiance: diffuse remains
+                # unaffected while direct irradiance is reduced.
+                direct_shading_factor = F_sh_dir_k_t[0] if F_sh_dir_k_t is not None else 0.0
+                direct_shading_factor = float(np.clip(direct_shading_factor, 0.0, 1.0)) if np.isfinite(direct_shading_factor) else 0.0
+                I_dir = float(I_dir_tot.iloc[i]) if pd.notna(I_dir_tot.iloc[i]) else 0.0
+                I_dif = float(I_dif_tot.iloc[i]) if pd.notna(I_dif_tot.iloc[i]) else 0.0
+                I_dir = max(0.0, I_dir)
+                I_dif = max(0.0, I_dif)
+                denom = I_dir + I_dif
+                if denom <= 0.0:
+                    F_sh_obst_k_t = 1.0
                 else:
-                    F_sh_obst_k_t = 0.0
+                    F_sh_obst_k_t = float(
+                        np.clip((direct_shading_factor * I_dir + I_dif) / denom, 0.0, 1.0)
+                    )
+
+                    try:
+                        solar_shading_transmittance = float(
+                            window.get(
+                                "solar_shading_transmittance",
+                                window.get("shading_transmittance", 1.0),
+                            )
+                        )
+                    except (TypeError, ValueError):
+                        solar_shading_transmittance = 1.0
+                    if not np.isfinite(solar_shading_transmittance):
+                        solar_shading_transmittance = 1.0
+                    solar_shading_transmittance = float(
+                        np.clip(solar_shading_transmittance, 0.0, 1.0)
+                    )
+
+                    activation_threshold = window.get(
+                        "solar_shading_activation_irradiance_W_m2"
+                    )
+                    try:
+                        activation_threshold = float(activation_threshold)
+                    except (TypeError, ValueError):
+                        activation_threshold = None
+                    if (
+                        activation_threshold is not None
+                        and np.isfinite(activation_threshold)
+                        and denom < max(0.0, activation_threshold)
+                    ):
+                        solar_shading_transmittance = 1.0
+
+                    F_sh_obst_k_t = float(
+                        np.clip(F_sh_obst_k_t * solar_shading_transmittance, 0.0, 1.0)
+                    )
 
                 F_sh_dir_k_ts_hour.iat[i] = F_sh_obst_k_t
-                h_k_sun_t_hour.iat[i]     = F_sh_dir_k_t[1] if F_sh_dir_k_t is not None else 0.0
+                h_k_sun_t_hour.iat[i]     = (
+                    F_sh_dir_k_t[1] if F_sh_dir_k_t is not None and I_dir > 0.0 else 0.0
+                )
 
             name = window.get('name', 'unknown')
             F_sh_dir_df[f"W_{name}"]     = F_sh_dir_k_ts_hour
@@ -1842,7 +2365,7 @@ class ISO52010:
     #                     phi_sol_t=np.degrees(solar_azimuth_angle.iloc[i]),
     #                     beta_k_t=90,
     #                     gamma_k_t=orientation_angle,
-    #                     D_k_ovh_q=window.get("overhang_proprieties", {}).get("width_of_horizontal_overhangs"),
+    #                     D_k_ovh_q=window.get("overhang_properties", {}).get("width_of_horizontal_overhangs"),
     #                     L_k_ovh_q=window.get("width_or_distance_of_shading_elements"),
     #                     elements_shading_type=window.get("shading_type"),
     #                     H_k=window.get("height"),
@@ -2103,7 +2626,8 @@ def Calculation_ISO_52010(building_object, path_weather_file, weather_source="pv
     # - PVGIS data are UTC -> convert to local civil time using site timezone.
     # - EPW read via pvlib is already in local weather-file time -> keep as-is.
     if weather_source == "pvgis":
-        from timezonefinder import TimezoneFinder  # lazy: avoids ~0.7s cold import
+        from timezonefinder import TimezoneFinder  # lazy: only needed for PVGIS timezone conversion
+
         tf = TimezoneFinder()
         tz_name = tf.timezone_at(lng=weatherData.longitude, lat=weatherData.latitude) or "UTC"
         idx = pd.DatetimeIndex(sim_df.index)
@@ -2346,6 +2870,27 @@ class ISO52016:
 
         return 1.0
 
+    @staticmethod
+    def _solar_irradiance_after_method1_shading(
+        diffuse_irradiance_w_m2: float,
+        direct_irradiance_w_m2: float,
+        shading_factor_obstacles: float,
+    ) -> float:
+        """
+        Return total irradiance after ISO 52016-1 Annex F Method 1 shading.
+
+        ``shading_factor_obstacles`` is the combined Method 1 factor
+        F_sh;obst, i.e. the direct-beam shading result already weighted with
+        the unaffected diffuse term. It therefore multiplies the total
+        irradiance, not the direct component alone.
+        """
+
+        i_dif = max(0.0, float(diffuse_irradiance_w_m2))
+        i_dir = max(0.0, float(direct_irradiance_w_m2))
+        f_sh = float(shading_factor_obstacles)
+        f_sh = float(np.clip(f_sh, 0.0, 1.0)) if np.isfinite(f_sh) else 1.0
+        return (i_dif + i_dir) * f_sh
+
     @classmethod
     def Number_of_nodes_element(cls, building_object) -> numb_nodes_facade_elements:
         """
@@ -2386,9 +2931,9 @@ class ISO52016:
         return numb_nodes_facade_elements(Rn, Pln, PlnSum)
 
     @classmethod
-    def Conduttance_node_of_element(
+    def Conductance_node_of_element(
         cls, building_object, lambda_gr=2.0
-    ) -> conduttance_elements:
+    ) -> conductance_elements:
         """
         Calculation of the conductance between node "pli" and node "pli-1", as determined per type of construction
         element in 6.5.7 in W/m2K
@@ -2415,6 +2960,8 @@ class ISO52016:
         h_pli_eli = np.zeros((4, len(el_type)))
         U_eli = [surf["u_value"] for surf in building_object["building_surface"]]
         R_c_eli = [0.0] * len(el_type)
+        for surf in building_object["building_surface"]:
+            _apply_surface_heat_transfer_defaults(surf)
         h_ci_eli = [
             surf["convective_heat_transfer_coefficient_internal"]
             for surf in building_object["building_surface"]
@@ -2423,36 +2970,31 @@ class ISO52016:
             surf["radiative_heat_transfer_coefficient_internal"]
             for surf in building_object["building_surface"]
         ]
-        convective_heat_transfer_coefficient_external = 20.0  # See ISO 13789
-        h_ce_eli = [convective_heat_transfer_coefficient_external] * len(el_type)
-        for i, surf in enumerate(building_object["building_surface"]):
-            if surf["ISO52016_type_string"] == "AD":
-                h_ce_eli[i] = 0.0
-                surf["convective_heat_transfer_coefficient_external"] = 0.0
-            else:
-                surf["convective_heat_transfer_coefficient_external"] = (
-                    convective_heat_transfer_coefficient_external
-                )
-        radiative_heat_transfer_coefficient_external = 4.14  # See ISO 13789
-        h_re_eli = [radiative_heat_transfer_coefficient_external] * len(el_type)
-        for i, surf in enumerate(building_object["building_surface"]):
-            if surf["ISO52016_type_string"] == "AD":
-                h_re_eli[i] = 0.0
-                surf["radiative_heat_transfer_coefficient_external"] = 0.0
-            else:
-                surf["radiative_heat_transfer_coefficient_external"] = (
-                    radiative_heat_transfer_coefficient_external
-                )
+        h_ce_eli = [
+            surf["convective_heat_transfer_coefficient_external"]
+            for surf in building_object["building_surface"]
+        ]
+        h_re_eli = [
+            surf["radiative_heat_transfer_coefficient_external"]
+            for surf in building_object["building_surface"]
+        ]
 
         for i in range(0, len(el_type)):
             if el_type[i] == "AD":
                 R_c_eli[i] = float("inf")
             if R_c_eli[i] == 0.0:
-                R_c_eli[i] = (
-                    1 / U_eli[i]
-                    - 1 / (h_ci_eli[i] + h_ri_eli[i])
-                    - 1 / (h_ce_eli[i] + h_re_eli[i])
-                )
+                r_si = 1 / (h_ci_eli[i] + h_ri_eli[i]) if (h_ci_eli[i] + h_ri_eli[i]) > 0 else 0.0
+                if el_type[i] == "GR":
+                    # Ground-contact surfaces use the ground/soil boundary model
+                    # downstream; do not subtract the outdoor-air surface resistance.
+                    R_c_eli[i] = 1 / U_eli[i] - r_si
+                else:
+                    r_se = (
+                        1 / (h_ce_eli[i] + h_re_eli[i])
+                        if (h_ce_eli[i] + h_re_eli[i]) > 0
+                        else 0.0
+                    )
+                    R_c_eli[i] = 1 / U_eli[i] - r_si - r_se
 
         # layer = 1
         layer_no = 0
@@ -2492,7 +3034,7 @@ class ISO52016:
                 elif el_type[i] == "GR":
                     h_pli_eli[layer_no, i] = 4 / R_c_eli[i]
 
-        return conduttance_elements(h_pli_eli=h_pli_eli)
+        return conductance_elements(h_pli_eli=h_pli_eli)
 
     @classmethod
     def Solar_absorption_of_element(cls, building_object) -> solar_absorption_elements:
@@ -2668,8 +3210,8 @@ class ISO52016:
 
             * heating: TRUE or FALSE. Is there a heating system?
             * cooling: TRUE or FALSE. Is there a cooling system?
-            * heating_setpoint: setpoint for the heating system (default 20°C)
-            * cooling_setpoint: setpoint for cooling system (default 26°C)
+            * heating_setpoint: setpoint for the heating system (default 20degC)
+            * cooling_setpoint: setpoint for cooling system (default 26degC)
             * latitude_deg: latitude of location in degrees
             * slab_on_ground_area: area of the building in contact with the ground
             * perimeter: perimeter of the building [m]
@@ -2819,7 +3361,7 @@ class ISO52016:
         """
         Calculation of temperature of the ground using:
             1. the thermal Resistance (R) and Transmittance (U) of the floor
-            2. External Temperature [°C]
+            2. External Temperature [degC]
         """
         wall_thickness = building_object["building"]["wall_thickness"]
         thermal_resistance_floor = 5.3
@@ -3350,7 +3892,7 @@ class ISO52016:
             )
 
         # ---------- VENTILATION / HEATING / COOLING ----------
-        # Rule: if no profiles in the BUI → use the OCCUPANCY default profiles (occ_wd/occ_hd)
+        # Rule: if no profiles in the BUI -> use the OCCUPANCY default profiles (occ_wd/occ_hd)
         bp = building_object["building_parameters"]
 
         # ventilation
@@ -3896,24 +4438,9 @@ class ISO52016:
 
         # coefficients and orientation defaults
         for surf in surfaces:
-            surf.setdefault("convective_heat_transfer_coefficient_internal", 2.5)
-            # Keep coherence with single-zone core defaults.
-            surf.setdefault("radiative_heat_transfer_coefficient_internal", 5.13)
-            bnd = surf.get("boundary", "OUTDOORS").upper()
-            if bnd == "INTERNAL":
-                surf.setdefault(
-                    "convective_heat_transfer_coefficient_external",
-                    float(surf.get("convective_heat_transfer_coefficient_internal", 2.5)),
-                )
-                surf.setdefault(
-                    "radiative_heat_transfer_coefficient_external",
-                    float(surf.get("radiative_heat_transfer_coefficient_internal", 5.13)),
-                )
-            else:
-                surf.setdefault("convective_heat_transfer_coefficient_external", 20.0)
-                surf.setdefault("radiative_heat_transfer_coefficient_external", 4.14)
             surf.setdefault("sky_view_factor", 0.0)
             surf["ISO52016_orientation_string"] = _orientation_string(surf)
+            _apply_surface_heat_transfer_defaults(surf)
 
         # Keep link to pre-aggregation windows so multizone transmitted solar gains
         # can use area-weighted shading factors from per-window W_<name> columns.
@@ -3971,7 +4498,7 @@ class ISO52016:
         # ------------------------
         # 4) Coefficients (ISO52016)
         # ------------------------
-        h_pli_eli = cls().Conduttance_node_of_element(building_object).h_pli_eli
+        h_pli_eli = cls().Conductance_node_of_element(building_object).h_pli_eli
         kappa_pli_eli = cls().Areal_heat_capacity_of_element(building_object).kappa_pli_eli
         a_sol_pli_eli = cls().Solar_absorption_of_element(building_object).a_sol_pli_eli
 
@@ -4114,7 +4641,14 @@ class ISO52016:
             if area_s <= 0.0:
                 continue
 
-            h_ri_a = _get(surf, "radiative_heat_transfer_coefficient_internal", 5.13)
+            h_ri_a = _get(
+                surf,
+                "radiative_heat_transfer_coefficient_internal",
+                _surface_heat_transfer_default_value(
+                    surf,
+                    "radiative_heat_transfer_coefficient_internal",
+                ),
+            )
             zA = surf.get("zone", zone_names[0])
             if zA in z_idx:
                 r_in = _sys_row_from_surface_ri(1 + nodes.PlnSum[Eli] + (n_nodes - 1))
@@ -4149,7 +4683,14 @@ class ISO52016:
                 if area_s <= 0.0:
                     continue
 
-                h_ci_tab = _get(surf, "convective_heat_transfer_coefficient_internal", 2.5)
+                h_ci_tab = _get(
+                    surf,
+                    "convective_heat_transfer_coefficient_internal",
+                    _surface_heat_transfer_default_value(
+                        surf,
+                        "convective_heat_transfer_coefficient_internal",
+                    ),
+                )
                 zA = surf.get("zone", zone_names[0])
                 if zA in z_idx:
                     r_in = _sys_row_from_surface_ri(1 + nodes.PlnSum[Eli] + (n_nodes - 1))
@@ -4640,9 +5181,30 @@ class ISO52016:
                 A_s = float(surf["area"])
                 h_ci = h_ci_internal_t[Eli]
                 if not np.isfinite(h_ci):
-                    h_ci = _get(surf, "convective_heat_transfer_coefficient_internal", 2.5)
-                h_ce_tab = _get(surf, "convective_heat_transfer_coefficient_external", 20.0)
-                h_re_tab = _get(surf, "radiative_heat_transfer_coefficient_external", 4.14)
+                    h_ci = _get(
+                        surf,
+                        "convective_heat_transfer_coefficient_internal",
+                        _surface_heat_transfer_default_value(
+                            surf,
+                            "convective_heat_transfer_coefficient_internal",
+                        ),
+                    )
+                h_ce_tab = _get(
+                    surf,
+                    "convective_heat_transfer_coefficient_external",
+                    _surface_heat_transfer_default_value(
+                        surf,
+                        "convective_heat_transfer_coefficient_external",
+                    ),
+                )
+                h_re_tab = _get(
+                    surf,
+                    "radiative_heat_transfer_coefficient_external",
+                    _surface_heat_transfer_default_value(
+                        surf,
+                        "radiative_heat_transfer_coefficient_external",
+                    ),
+                )
                 svf = _get(surf, "sky_view_factor", 0.0)
 
                 zone_A = surf.get("zone", zone_names[0])
@@ -4862,7 +5424,7 @@ class ISO52016:
             for zi, zone in enumerate(zones):
                 phi_int_z_t[zi] = _zone_internal_gain_w(zone, t)
                 # Theta[zi] is the zone AIR node (first Z rows of state vector),
-                # not the operative temperature — explicit lag, no algebraic loop.
+                # not the operative temperature - explicit lag, no algebraic loop.
                 vent_bdy, purge_factor_z_t[zi], purge_active_z_t[zi], _ahu_step = (
                     _zone_ventilation_h_wk(zone, Theta[zi], t, T_out)
                 )
@@ -5099,7 +5661,7 @@ class ISO52016:
         for surface_out in opaque_inside_surface_output_buffers:
             out_data[f"Q_opaque_inside_surface_{surface_out['surface_token']}"] = surface_out["Q_inside"]
 
-        # AHU component diagnostics — 12 fields per component (from _AHU_DIAG_SPEC).
+        # AHU component diagnostics - 12 fields per component (from _AHU_DIAG_SPEC).
         # Column names: {col_pfx}_{comp_name}_{zone_name}.  Same field set as the
         # legacy/causal paths (_ahu_coll_to_columns), different suffix convention.
         # Columns appear only when at least one mechanical_supply component ran.
@@ -5477,22 +6039,9 @@ class ISO52016:
             return "HOR" if tilt_f < 45.0 else "SV"
 
         for surf in surfaces:
-            surf.setdefault("convective_heat_transfer_coefficient_internal", 2.5)
-            surf.setdefault("radiative_heat_transfer_coefficient_internal", 5.13)
-            if surf.get("boundary", "OUTDOORS").upper() == "INTERNAL":
-                surf.setdefault(
-                    "convective_heat_transfer_coefficient_external",
-                    float(surf.get("convective_heat_transfer_coefficient_internal", 2.5)),
-                )
-                surf.setdefault(
-                    "radiative_heat_transfer_coefficient_external",
-                    float(surf.get("radiative_heat_transfer_coefficient_internal", 5.13)),
-                )
-            else:
-                surf.setdefault("convective_heat_transfer_coefficient_external", 20.0)
-                surf.setdefault("radiative_heat_transfer_coefficient_external", 4.14)
             surf.setdefault("sky_view_factor", 0.0)
             surf["ISO52016_orientation_string"] = _orientation_string(surf)
+            _apply_surface_heat_transfer_defaults(surf)
 
         def _get(surf, key, default):
             v = surf.get(key, None)
@@ -5509,7 +6058,7 @@ class ISO52016:
         nodes.PlnSum = PlnSum
         nodes.Rn = int(PlnSum[-1] + int(nodes.Pln[-1]) + 1)
 
-        h_pli_eli = cls().Conduttance_node_of_element(building_object).h_pli_eli
+        h_pli_eli = cls().Conductance_node_of_element(building_object).h_pli_eli
         kappa_pli_eli = cls().Areal_heat_capacity_of_element(building_object).kappa_pli_eli
         a_sol_pli_eli = cls().Solar_absorption_of_element(building_object).a_sol_pli_eli
 
@@ -5580,10 +6129,38 @@ class ISO52016:
                     continue
 
                 A_s = float(surf["area"])
-                h_ci_tab = _get(surf, "convective_heat_transfer_coefficient_internal", 2.5)
-                h_ri = _get(surf, "radiative_heat_transfer_coefficient_internal", 5.13)
-                h_ce_tab = _get(surf, "convective_heat_transfer_coefficient_external", 20.0)
-                h_re_tab = _get(surf, "radiative_heat_transfer_coefficient_external", 4.14)
+                h_ci_tab = _get(
+                    surf,
+                    "convective_heat_transfer_coefficient_internal",
+                    _surface_heat_transfer_default_value(
+                        surf,
+                        "convective_heat_transfer_coefficient_internal",
+                    ),
+                )
+                h_ri = _get(
+                    surf,
+                    "radiative_heat_transfer_coefficient_internal",
+                    _surface_heat_transfer_default_value(
+                        surf,
+                        "radiative_heat_transfer_coefficient_internal",
+                    ),
+                )
+                h_ce_tab = _get(
+                    surf,
+                    "convective_heat_transfer_coefficient_external",
+                    _surface_heat_transfer_default_value(
+                        surf,
+                        "convective_heat_transfer_coefficient_external",
+                    ),
+                )
+                h_re_tab = _get(
+                    surf,
+                    "radiative_heat_transfer_coefficient_external",
+                    _surface_heat_transfer_default_value(
+                        surf,
+                        "radiative_heat_transfer_coefficient_external",
+                    ),
+                )
                 svf = _get(surf, "sky_view_factor", 0.0)
 
                 zone_A = surf.get("zone", zone_names[0])
@@ -5781,7 +6358,7 @@ class ISO52016:
             for name in zone_names:
                 ext_series = coupling_map[name]
                 ext_values = None if ext_series is None else np.asarray(ext_series.values, dtype=float)
-                hourly, _, _ = cls.Temperature_and_Energy_needs_calculation(
+                hourly, _, _ = cls._Temperature_and_Energy_needs_calculation_core(
                     zone_models[name],
                     weather_source=weather_source,
                     path_weather_file=path_weather_file,
@@ -5864,7 +6441,7 @@ class ISO52016:
         final_zone_hourly = {}
         for name in zone_names:
             ext_values = np.asarray(coupling_map[name].values, dtype=float) if coupling_map[name] is not None else None
-            hourly, _, _ = cls.Temperature_and_Energy_needs_calculation(
+            hourly, _, _ = cls._Temperature_and_Energy_needs_calculation_core(
                 zone_models[name],
                 weather_source=weather_source,
                 path_weather_file=path_weather_file,
@@ -6130,7 +6707,7 @@ class ISO52016:
         Wrapper that runs the core calculation and surfaces any simulation error.
         """
         try:
-            return cls._Temperature_and_Energy_needs_calculation_core(
+            result = cls._Temperature_and_Energy_needs_calculation_core(
                 building_object,
                 nrHCmodes=nrHCmodes,
                 c_int_per_A_us=c_int_per_A_us,
@@ -6141,9 +6718,56 @@ class ISO52016:
                 delta_Theta_er=delta_Theta_er,
                 **kwargs,
             )
+            if kwargs.get("return_sankey_data", False):
+                return result
+            if isinstance(result, tuple) and len(result) == 3:
+                return result[0], result[1]
+            return result
         except Exception as exc:
-            print(f"❌ Simulation error in Temperature_and_Energy_needs_calculation: {exc}")
+            print(f"ERROR: Simulation error in Temperature_and_Energy_needs_calculation: {exc}")
             raise
+
+    @classmethod
+    def _single_zone_52016_engine(
+        cls,
+        building_object,
+        nrHCmodes=2,
+        c_int_per_A_us=10000,
+        f_int_c=0.4,
+        f_sol_c=0.1,
+        f_H_c=1,
+        f_C_c=1,
+        delta_Theta_er=11,
+        control_mode="standard",
+        sankey_graph=False,
+        **kwargs,
+    ):
+        """Shared private single-zone dispatch used by legacy wrappers and tests."""
+        control_mode = str(control_mode).strip().lower()
+        valid_control_modes = {"standard", "external_current", "external_series", "ahu_causal"}
+        if control_mode not in valid_control_modes:
+            raise ValueError(
+                f"Unsupported single-zone ISO 52016 control_mode {control_mode!r}; "
+                f"expected one of {sorted(valid_control_modes)}."
+            )
+
+        target = (
+            cls._Temperature_and_Energy_needs_calculation_core
+            if control_mode == "standard"
+            else cls._Temperature_and_Energy_needs_calculation_core_ahu_causal
+        )
+        return target(
+            building_object,
+            nrHCmodes=nrHCmodes,
+            c_int_per_A_us=c_int_per_A_us,
+            f_int_c=f_int_c,
+            f_sol_c=f_sol_c,
+            f_H_c=f_H_c,
+            f_C_c=f_C_c,
+            delta_Theta_er=delta_Theta_er,
+            sankey_graph=sankey_graph,
+            **kwargs,
+        )
 
     @classmethod
     def _Temperature_and_Energy_needs_calculation_core(
@@ -6159,30 +6783,31 @@ class ISO52016:
         sankey_graph=False,
         **kwargs,
     ):
+        from .generate_profile import HourlyProfileGenerator, get_country_code_from_latlon  # lazy
         """
-        Calcualation fo energy needs according to the equation (37) of ISO 52016:2017. Page 60.
+        Calculation of energy needs according to equation (37) of ISO 52016:2017. Page 60.
 
         [Matrix A] x [Node temperature vector X] = [State vector B]
 
         where:
-        Theta_int_air: internal air temperature [°C]
-        Theta_op_act: Actual operative temperature [°C]
+        Theta_int_air: internal air temperature [degC]
+        Theta_op_act: actual operative temperature [degC]
 
-        :param building_object: Building object create according to the method ``Building`` or ``Buildings_from_dictionary``.
-        :param nrHCmodes:  inizailization of system mode: 0 for Heating, 1 for Cooling, 2 for Heating and Cooling. Default: 2
+        :param building_object: Building object created according to the method ``Building`` or ``Buildings_from_dictionary``.
+        :param nrHCmodes: initialization of system mode: 0 for Heating, 1 for Cooling, 2 for Heating and Cooling. Default: 2
         :param k_m_int_a_zt: areal thermal capacity of air and furniture per thermally conditioned zone. Default: 10000 J/m2K
         :param f_int_c: convective fraction of the internal gains into the zone. Default: 0.4
         :param f_sol_c: convective fraction of the solar radiation into the zone. Default: 0.1
-        :param f_H_c: convective fraction of the heating system per thermally conditioned zone (if system specific). Deafult: 1
+        :param f_H_c: convective fraction of the heating system per thermally conditioned zone (if system specific). Default: 1
         :param f_C_c: convective fraction of the cooling system per thermally conditioned zone (if system specific). Default: 1
-        :param delta_Theta_er: Average difference between external air temperature and sky temperature. Default: 11 fro intermediate zones, 13 Tropics and 9 Sub polar areas
+        :param delta_Theta_er: average difference between external air temperature and sky temperature. Default: 11 for intermediate zones, 13 for tropical areas, and 9 for subpolar areas
 
-        .. note:: 
+        .. note::
             INPUT:
-            **sim_df*: dataframe with:
+            **sim_df**: dataframe with:
 
-                * index: time of simulation on hourly resolution and timeindex typology (13 months on hourly resolution)
-                * T2m: Exteranl temperarture [°C]
+                * index: time of simulation at hourly resolution and time index typology (13 months at hourly resolution)
+                * T2m: External temperature [degC]
                 * RH: External humidity [%]
                 * G(h):
                 * Gb(n):
@@ -6205,27 +6830,27 @@ class ISO52016:
                 * air_flow_rate:
                 * internal_gains
 
-            * **power_heating_max**: max power of the heating system (provided by the user) in W
-            * **power_cooling_max**: max power of the cooling system (provided by the user) in W
+            * **power_heating_max**: maximum power of the heating system (provided by the user) in W
+            * **power_cooling_max**: maximum power of the cooling system (provided by the user) in W
             * **Rn**: ... result of function ``Number_of_nodes_element``
-            * **Htb**: Heat transmission coefficient for Thermal bridges (provided by the user)
+            * **Htb**: heat transmission coefficient for thermal bridges (provided by the user)
             * **H_ve**: ... result of function ``Ventilation_heat_transfer_coefficient``
             * **Phi_int**: ... result of function ``Internal_heat_gains``
             * **a_use**: building area [m2]
             * **Pln**: ... result of function ``Number_of_nodes_element``
             * **PlnSum**: ... result of function ``Number_of_nodes_element``
-            * **a_sol_pli_eli**: ... result of function ``Solar_absorption_of_elment``
-            * **kappa_pli_eli**: ... result of function  ``Areal_heat_capacity_of_element``
-            * **heat_convective_elements_internal**: internal convective heat transfer coefficient for each element as defined int Table 25 of UNI 52016 - 7.2.2.10
-            * **heat_convective_elements_external**: external convective heat transfer coefficient for each element as defined int Table 25 of UNI 52016 - 7.2.2.10
-            * **heat_radiative_elements_external**: external radiative  heat transfer coefficient for each element as defined int Table 25 of UNI 52016 - 7.2.2.10
-            * **heat_radiative_elements_internal**: internal radiative  heat transfer coefficient for each element as defined int Table 25 of UNI 52016 - 7.2.2.10
-            * **sky_factor_elements**: View factor between element and sky
-            * **R_gr_ve**: ... result of function ``Temp_calculation_of_ground`` (Thermal Resitance of virtual layer)
+            * **a_sol_pli_eli**: ... result of function ``Solar_absorption_of_element``
+            * **kappa_pli_eli**: ... result of function ``Areal_heat_capacity_of_element``
+            * **heat_convective_elements_internal**: internal convective heat transfer coefficient for each element as defined in Table 25 of UNI 52016 - 7.2.2.10
+            * **heat_convective_elements_external**: external convective heat transfer coefficient for each element as defined in Table 25 of UNI 52016 - 7.2.2.10
+            * **heat_radiative_elements_external**: external radiative heat transfer coefficient for each element as defined in Table 25 of UNI 52016 - 7.2.2.10
+            * **heat_radiative_elements_internal**: internal radiative heat transfer coefficient for each element as defined in Table 25 of UNI 52016 - 7.2.2.10
+            * **sky_factor_elements**: view factor between element and sky
+            * **R_gr_ve**: ... result of function ``Temp_calculation_of_ground`` (thermal resistance of virtual layer)
             * **Theta_gr_ve**: ... result of function ``Temp_calculation_of_ground``
-            * **h_pli_eli**: ... result of function ``Conduttance_node_of_element``
-
+            * **h_pli_eli**: ... result of function ``Conductance_node_of_element``
         """
+
         from .generate_profile import HourlyProfileGenerator, get_country_code_from_latlon  # lazy
         _sched = _make_sched_resolver(kwargs, iso16798_profiles)
         occupants_schedule_workdays = _sched("occupants_schedule_workdays", "occupants_schedule_workdays")
@@ -6252,39 +6877,38 @@ class ISO52016:
             kwargs.get("external_emissivity_default", None),
         )
         i = 1
-        with tqdm(total=13) as pbar:
+        with tqdm(total=12) as pbar:
 
             pbar.set_postfix({"Info": f"Initialization {i}"})
 
-            # INIZIALIZATION
             path_weather_file_ = kwargs.get("path_weather_file", None)
             if kwargs["weather_source"] == "pvgis":
                 path_weather_file_ = None
             sim_df = ISO52016().Weather_data_bui(building_object, path_weather_file_, weather_source=kwargs["weather_source"]).simulation_df
-            Tstepn = len(sim_df)  # number of hours to perform the simulation
+            Tstepn = len(sim_df)  # number of timesteps
 
-            # Heating and cooling Load
-            Phi_HC_nd_calc = np.zeros(3)  # Load of Heating or Cooling needed to heat/cool the zone - calculated
-            Phi_HC_nd_act = np.zeros(Tstepn)  # Load of Heating or Cooling needed to heat/cool the zone - actual
+            # Heating/cooling load (heating +, cooling -)
+            Phi_HC_nd_calc = np.zeros(3)  # calculated
+            Phi_HC_nd_act = np.zeros(Tstepn)  # actual
 
-            # Name adjacent zones (optional in many BUI inputs)
+            # Names of adjacent zones (if any)
             name_adjacent_zones = [surface.get("name_adj_zone") for surface in building_object["building_surface"]]
 
             # Temperature (indoor and operative)
             '''
-            Initialize vector temperature
+            Initialize temperature vector
             Theta_int_air: internal air temperature
             Theta_int_r_mn: mean radiant temperature
-                caluclated as:
-                Theta_int_r_min = sum(eli=1 to n)(A_eli * teta_pli=oln,eli,t)/sum(eli=1 to n)(A_eli)
+                calculated as:
+                Theta_int_r_min = sum(eli=1 to n)(A_eli * theta_pli=pln,eli,t)/sum(eli=1 to n)(A_eli)
                 where:
                 A_eli: area of element eli
-                teta_pli=oln,eli,t: is the temperature at node pli=pln of the building element eli
+                theta_pli=pln,eli,t: is the temperature at node pli=pln of the building element eli
 
             Theta_int_op: operative temperature
             '''
             Theta_int_air = np.zeros((Tstepn, 3))
-            Theta_int_r_mn = np.zeros((Tstepn, 3))  # <---
+            Theta_int_r_mn = np.zeros((Tstepn, 3))
             Theta_int_op = np.zeros((Tstepn, 3))
             Theta_op_act = np.zeros(Tstepn)
             pbar.update(1)
@@ -6294,10 +6918,10 @@ class ISO52016:
             pbar.update(1)
 
             # Mode
-            colB_act = 0  # the vector B has 3 columns (1st column actual value, 2nd: maximum value reachable in heating, 3rd: maximum value reachbale in cooling)
+            colB_act = 0  # the vector B has 3 columns (1st column actual value, 2nd: maximum value reachable in heating, 3rd: maximum value reachable in cooling)
             pbar.update(1)
             
-            # # Number of building element
+            # # Number of building elements
             bui_eln = len(building_object["building_surface"])
 
             # Element types and orientations
@@ -6329,49 +6953,8 @@ class ISO52016:
             
             # --- HYDRATION: set the coefficients for the surfaces if missing ---
             if isinstance(building_object, dict):
-                # Typical values (ok for default robust)
-                hci_facade = 2.5   # convective internal walls
-                hci_ground = 0.7   # convective internal towards ground
-                hci_roof   = 5.0   # convective internal roofs
-                hce_facade = 20.0  # convective external walls
-                hce_roof   = 25.0  # convective external roofs
-                hce_ground = 4.0   # convective external ground/adiabatic ≈ negligible
-                hre_int    = 5.13  # radiative internal
-                hre_ext    = 5.13  # radiative external
-
-                for i, surf in enumerate(building_object["building_surface"]):
-                    svf = surf.get("sky_view_factor", 1)
-                    tstr = surf.get("ISO52016_type_string", "EXT")
-
-                    # --- convective internal ---
-                    if tstr == "AD":         # adiabatic: no exchange with the zone
-                        hci = 0.0
-                    elif svf == 0:           # towards ground
-                        hci = hci_ground
-                    elif svf == 1:           # roof
-                        hci = hci_roof
-                    else:                    # facade
-                        hci = hci_facade
-                    surf.setdefault("convective_heat_transfer_coefficient_internal", hci)
-
-                    # --- radiative internal ---
-                    surf.setdefault("radiative_heat_transfer_coefficient_internal", hre_int)
-
-                    # --- convective external ---
-                    if tstr == "AD":
-                        hce = 0.0            # external side does not exist for AD: we cancel it
-                    elif Type_eli[i] == "GR":
-                        hce = hce_ground
-                    elif svf == 1:
-                        hce = hce_roof
-                    else:
-                        hce = hce_facade
-                    surf.setdefault("convective_heat_transfer_coefficient_external", hce)
-
-                    # --- radiative external ---
-                    surf.setdefault("radiative_heat_transfer_coefficient_external", hre_ext)
-
-            #
+                for surf in building_object["building_surface"]:
+                    _apply_surface_heat_transfer_defaults(surf)
             pbar.update(1)
             if isinstance(building_object, dict):
                 g_values = np.zeros(bui_eln, dtype=float)
@@ -6382,7 +6965,7 @@ class ISO52016:
             else:
                 g_gl_wi_t = np.array(building_object.g_factor_windows)
             
-            # Building Area of elements
+            # Surface area of building elements
             if isinstance(building_object, dict):
                 area_elements = np.zeros(bui_eln, dtype=float)
                 for i, surf in enumerate(building_object["building_surface"]):
@@ -6408,7 +6991,7 @@ class ISO52016:
                 if is_close(tilt, 0.0):
                     orientation_elements[i] = "HOR"
                 elif is_close(tilt, 90.0):
-                    # normalizza azimuth in [0, 360)
+                    # normalize azimuth to [0, 360)
                     az = azimuth % 360.0
                     if is_close(az, 0.0) or is_close(az, 360.0):
                         orientation_elements[i] = "NV"
@@ -6479,31 +7062,11 @@ class ISO52016:
             C_int = (c_int_per_A_us * building_object["building"]["net_floor_area"])
             pbar.update(1)
 
-            # mean internal radiative transfer coefficient
-            if isinstance(building_object, dict):
-                radiative_heat_transfer_coefficient = 5.13
-                heat_radiative_elements_internal_mn = (
-                    np.dot(
-                        area_elements,
-                        radiative_heat_transfer_coefficient * np.ones(bui_eln),
-                    )/ area_elements_tot
-                )
-                for surf in building_object["building_surface"]:
-                    surf["radiative_heat_transfer_coefficient_internal"] = (
-                        radiative_heat_transfer_coefficient
-                    )
-            else:
-                heat_radiative_elements_internal_mn = (
-                    np.dot(
-                        area_elements,
-                        building_object.heat_radiative_elements_internal,
-                    )
-                    / area_elements_tot
-                )
-            pbar.update(1)
+            # Internal radiative coefficients are already stored per surface and
+            # used directly in the matrix assembly below.
 
             
-            # inizialiazation vectorB and temperature
+            # Initialization vectorB and temperature
             nodes = ISO52016().Number_of_nodes_element(building_object)
             Theta_old = 20 * np.ones(nodes.Rn)
             VecB = 20 * np.ones((nodes.Rn, 3))
@@ -6591,7 +7154,7 @@ class ISO52016:
             #
             pbar.set_postfix({"Info": f"Calculating ground temperature"})
             pbar.update(1)
-            h_pli_eli = (ISO52016().Conduttance_node_of_element(building_object).h_pli_eli)
+            h_pli_eli = (ISO52016().Conductance_node_of_element(building_object).h_pli_eli)
 
             pbar.set_postfix({"Info": f"Calculating conductance of elements"})
             pbar.update(1)
@@ -6614,8 +7177,8 @@ class ISO52016:
 
         """
         CALCULATION OF SENSIBLE HEATING AND COOLING LOAD (following the procedure of poin 6.5.5.2 of UNI ISO 52016)
-        For each hour and each zone the actual internal operative temperature θ and the actual int;ac;op;zt;t 6.5.5.2 Sensible heating and cooling load
-        heating or cooling load, ΦHC;ld;ztc;t, is calculated using the following step-wise procedure: 
+        For each hour and each zone the actual internal operative temperature theta and the actual int;ac;op;zt;t 6.5.5.2 Sensible heating and cooling load
+        heating or cooling load, PhiHC;ld;ztc;t, is calculated using the following step-wise procedure: 
         """
         H_ve_nat_all = [0]
         S_ve_nat_all = [0.0]
@@ -6655,7 +7218,7 @@ class ISO52016:
             a = np.asarray(arrlike, dtype=float)
             return np.isfinite(a).all() and a.max() > 0 and a.sum() > 0
 
-        # fallback: se heating/cooling/ventilation profili sono piatti (tutti 0), usa occupancy
+        # Fallback: if heating/cooling/ventilation profiles are flat (all 0), use occupancy
         for cat in ("heating","cooling","ventilation"):
             col = f"{cat}_profile"
             if not _has_energy(profile_df[col].values):
@@ -6677,23 +7240,7 @@ class ISO52016:
             if ext_arr.size < Tstepn:
                 ext_arr = np.pad(ext_arr, (0, Tstepn - ext_arr.size), mode="constant", constant_values=0.0)
             external_internal_gains_series = ext_arr[:Tstepn]
-
-        # ====================================
-        # Get info of porfiles
-        # ====================================
-
-        # summury_profile = gen.get_summary()
-
-        # fig = gen.plot_annual_profiles(freq="H", include_weekend_shading=True,
-        #                        title="Annual Profiles — Hourly")
-        # fig.show()
-
-        # # grafico a medie giornaliere solo per alcune categorie
-        # fig_day = gen.plot_annual_profiles(categories=["ventilation","heating","cooling","occupancy"],
-        #                                 freq="D", include_weekend_shading=True,
-        #                                 title="Annual Profiles — Daily Average")
-        # fig_day.show()
-                            
+                         
         # === ACCUMULATORS FOR SANKEY (Wh) ===
         dt_h = 1.0  # hours per timestep (Dtime is in s)
         # NB: the accumulators will be reset before the start index of the analysis (after warm-up)
@@ -6719,12 +7266,18 @@ class ISO52016:
                 ri_state = 1 + nodes.PlnSum[Eli] + Pli
                 C_state[ri_state] = float(kappa_pli_eli[Pli, Eli])
 
-        # Previous state for storage (°C): initialized ONCE
+        # Previous state for storage (degC): initialized ONCE
         Theta_prev_state = np.full(nodes.Rn, 20.0, dtype=float)
 
         # --- new structures for TRASMISSIONS per element (only OP and W) ---
         surface_names = [surf["name"] for surf in building_object["building_surface"]]
         surface_types  = [surf["ISO52016_type_string"] for surf in building_object["building_surface"]]
+        surface_report_names = _unique_report_names(surface_names)
+        surface_report_cols = {
+            i: f"Q_tr_surface_{surface_report_names[i]}"
+            for i, stype in enumerate(surface_types)
+            if stype in ("OP", "W")
+        }
         E_trans_loss_by_surface_Wh = {name: 0.0 for name in surface_names}  # riempiamo solo per OP/W
 
 
@@ -6736,7 +7289,7 @@ class ISO52016:
                     win_col_for_index[i] = f"W_{nm}"
 
         # ------------------------------------------------------------------
-        # ESCLUDI IL MESE DI WARM-UP DAL SANKEY
+        # Remove warm-up period from Sankey
         # ------------------------------------------------------------------
         warmup_hours = int(kwargs.get("warmup_hours", 744))
         Tstep_first_act = max(0, min(warmup_hours, Tstepn))
@@ -6749,6 +7302,19 @@ class ISO52016:
         E_tb_loss_Wh = 0.0
         E_ground_loss_Wh = 0.0
         E_storage_Wh = 0.0
+        _report_q_solar_gains_all: list[float] = []
+        _report_q_internal_gains_all: list[float] = []
+        _report_q_storage_all: list[float] = []
+        _report_q_tb_all: list[float] = []
+        _report_q_ground_all: list[float] = []
+        _report_q_tr_total_all: list[float] = []
+        _report_q_tr_opaque_all: list[float] = []
+        _report_q_tr_window_all: list[float] = []
+        _report_q_tr_surface_all: dict[str, list[float]] = {
+            col: [] for col in surface_report_cols.values()
+        }
+        _report_ve_stream_diag_all: list[dict[str, dict[str, float]]] = []
+        _report_component_ventilation = _has_ventilation_components(building_object)
 
         # --- Commit-1 pre-loop allocations ---
         vig = VentilationInternalGains(building_object)
@@ -6811,7 +7377,7 @@ class ISO52016:
 
                 Theta_old = VecB[:, colB_act].copy()
 
-                # firs step:
+                # first step:
                 # HEATING:
                 # if there is no set point for heating (heating system not installed) -> heating power = 0
                 # otherwise the actual power is equal to the maximum one
@@ -6820,7 +7386,7 @@ class ISO52016:
                 else:
                     # Reasonable caps
                     A_use = building_object["building"]["net_floor_area"]
-                    design_P = max(150.0 * A_use, 15_000.0)  # e.g., 150 W/m² or 15 kW minimum
+                    design_P = max(150.0 * A_use, 15_000.0)  # e.g., 150 W/m2 or 15 kW minimum
                     warmup_P = 3.0 * design_P
 
                     if isinstance(building_object, dict):
@@ -6871,6 +7437,7 @@ class ISO52016:
                 _H_ve_nat_tstep = 0.0
                 _S_ve_nat_tstep = 0.0
                 _ahu_coll_tstep: dict = {}   # overwritten each while iteration; final value captured after loop
+                _vent_bdy_tstep = None
                 while iterate:
 
                     iterate = False
@@ -6879,9 +7446,9 @@ class ISO52016:
                     VecB = _VecB
                     _MatA.fill(0.0)
                     MatA = _MatA
-                    Phi_sol_dir_zt_t = 0 # inizialize solar gain
+                    Phi_sol_dir_zt_t = 0 # initialize solar gain
 
-                    # Solar  heat gain source inside the thermal zone 6.5.13.2
+                    # Solar heat gain source inside the thermal zone 6.5.13.2
                     for Eli in range(bui_eln):
 
                         if isinstance(building_object, dict):
@@ -6903,7 +7470,11 @@ class ISO52016:
 
                             Phi_sol_dir_zt_t += (
                                 g_gl_wi_t[Eli]
-                                * (I_sol_dif_el[Tstepi, Eli] + I_sol_dir_el[Tstepi, Eli] * F_sh_obst_wi_t)
+                                * cls._solar_irradiance_after_method1_shading(
+                                    I_sol_dif_el[Tstepi, Eli],
+                                    I_sol_dir_el[Tstepi, Eli],
+                                    F_sh_obst_wi_t,
+                                )
                                 * area_elements[Eli] * (1 - Ffr_wi)
                             )
                             
@@ -6933,7 +7504,7 @@ class ISO52016:
                     ri = 0
                     '''
                     Energy balacne on zone level. Eq. (38) UNI 52016
-                    XTemp = Thermal capacity at specific time (t) and for  a specific degree °C [W] +
+                    XTemp = Thermal capacity at specific time (t) and for  a specific degree degC [W] +
                     + Ventilation loss (at time t)[W] + Transmission loss (at time t)[W] + intrnal gain[W] + solar gain [W]. Missed the
                     the convective fraction of the heating/cooling system
                     '''
@@ -6944,12 +7515,13 @@ class ISO52016:
                     )
                     H_ve_nat = _vent_bdy.heat_transfer_coefficient_w_k
                     S_ve_nat = _vent_bdy.source_term_w
-                    # Record for this timestep; do NOT append here — the while
+                    # Record for this timestep; do NOT append here - the while
                     # loop may iterate again for HVAC re-solving and we must
                     # emit exactly one entry per timestep to keep diagnostics
                     # aligned.
                     _H_ve_nat_tstep = H_ve_nat
                     _S_ve_nat_tstep = S_ve_nat
+                    _vent_bdy_tstep = _vent_bdy
                     
                     
                     
@@ -7209,7 +7781,7 @@ class ISO52016:
                                     Plk = nodes.Pln[Elk] - 1
                                     ck = 1 + nodes.PlnSum[Elk] + Plk
                                     Area_ratio += area_elements[Elk] / area_int_surfaces_tot
-                                    MatA[ri, ck] -= (area_elements[Elk] / area_int_surfaces_tot) * heat_radiative_elements_internal[Elk]
+                                    MatA[ri, ck] -= (area_elements[Elk] / area_int_surfaces_tot) * heat_radiative_elements_internal[Eli]
                                 '''
                                 in formula 39  [.. + h_ci_eli  + h_re_eli * sum(elk=1 to eln)(A_elk/Atot) + ..]
                                 '''
@@ -7264,7 +7836,7 @@ class ISO52016:
                         theta = np.linalg.solve(MatA, VecB)
                     except np.linalg.LinAlgError:
                         rank = np.linalg.matrix_rank(MatA)
-                        print(f"⚠️ MatA solve failed at t={Tstepi}: rank={rank}/{MatA.shape[0]}")
+                        print(f"WARNING: MatA solve failed at t={Tstepi}: rank={rank}/{MatA.shape[0]}")
                         print("MatA diagonal:", np.diag(MatA))
                         raise
                     VecB[:, :] = theta
@@ -7301,9 +7873,9 @@ class ISO52016:
                     where:
                     Phi_HC_ld_zd: unrestricted heating or cooling load to reach the required setpoint in W
                     Phi_HC_upper: is the upper value of the heating or cooling load in W  
-                    theta_int_op_set: required internal operative setpoint temperature in °C
-                    thet_int_op_0: operating temperature in free floating condition in °C
-                    theta_int_op_upper: is the internal operational temperature, obtained for the upper heating or cooling load °C
+                    theta_int_op_set: required internal operative setpoint temperature in degC
+                    thet_int_op_0: operating temperature in free floating condition in degC
+                    theta_int_op_upper: is the internal operational temperature, obtained for the upper heating or cooling load degC
                     '''
                     if nrHCmodes > 1:
                         # HEATING
@@ -7365,7 +7937,8 @@ class ISO52016:
                 Theta_curr_state = VecB[:, colB_act]
                 dTheta_state = Theta_curr_state - Theta_prev_state
                 if Tstepi >= Tstep_first_act:
-                    E_storage_Wh += float(np.dot(C_state, dTheta_state)) / 3600.0
+                    q_storage = float(np.dot(C_state, dTheta_state)) / float(Dtime[Tstepi])
+                    E_storage_Wh += q_storage * dt_h
                 Theta_prev_state = Theta_curr_state
 
                 if Tstepi >= Tstep_first_act:
@@ -7405,6 +7978,10 @@ class ISO52016:
                     # 7) Transmission for element (OP, W)
                     T_air = float(Theta_int_air[Tstepi, 0])
                     T_rad = float(Theta_int_r_mn[Tstepi, 0])
+                    q_tr_by_surface = {col: 0.0 for col in surface_report_cols.values()}
+                    q_tr_total = 0.0
+                    q_tr_opaque = 0.0
+                    q_tr_window = 0.0
                     for Eli in range(bui_eln):
                         if surface_types[Eli] not in ("OP", "W"):  continue
                         n_nodes_Eli = nodes.Pln[Eli]
@@ -7417,6 +7994,27 @@ class ISO52016:
                         q_cond = A * (hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int))
                         if   q_cond > 0: E_trans_loss_by_surface_Wh[surface_names[Eli]] += q_cond * dt_h
                         elif q_cond < 0: E_solar_Wh += (-q_cond) * dt_h
+                        q_tr_total += q_cond
+                        if surface_types[Eli] == "OP":
+                            q_tr_opaque += q_cond
+                        elif surface_types[Eli] == "W":
+                            q_tr_window += q_cond
+                        q_tr_by_surface[surface_report_cols[Eli]] = q_cond
+
+                    _report_q_solar_gains_all.append(phi_solar)
+                    _report_q_internal_gains_all.append(phi_int)
+                    _report_q_storage_all.append(q_storage)
+                    _report_q_tb_all.append(q_tb)
+                    _report_q_ground_all.append(q_ground)
+                    _report_q_tr_total_all.append(q_tr_total)
+                    _report_q_tr_opaque_all.append(q_tr_opaque)
+                    _report_q_tr_window_all.append(q_tr_window)
+                    for col in _report_q_tr_surface_all:
+                        _report_q_tr_surface_all[col].append(q_tr_by_surface.get(col, 0.0))
+                    if _report_component_ventilation and _vent_bdy_tstep is not None:
+                        _report_ve_stream_diag_all.append(
+                            _ventilation_stream_diag(_vent_bdy_tstep, T_in)
+                        )
 
 
                 if Tstepi < 6:  # primi 6 passi di debug
@@ -7528,7 +8126,23 @@ class ISO52016:
         hourly_results["T_ve_source_eq"] = _t_eq
         hourly_results["Q_ve"] = _h_ve_arr * _t_air_arr - _s_ve_arr
 
-        # AHU per-component diagnostics — only populated when mechanical_supply
+        hourly_results["Q_solar_gains"] = np.asarray(_report_q_solar_gains_all, dtype=float)
+        hourly_results["Q_internal_gains"] = np.asarray(_report_q_internal_gains_all, dtype=float)
+        hourly_results["Q_storage"] = np.asarray(_report_q_storage_all, dtype=float)
+        hourly_results["Q_tr_total"] = np.asarray(_report_q_tr_total_all, dtype=float)
+        hourly_results["Q_tr_opaque"] = np.asarray(_report_q_tr_opaque_all, dtype=float)
+        hourly_results["Q_tr_window"] = np.asarray(_report_q_tr_window_all, dtype=float)
+        hourly_results["Q_tb"] = np.asarray(_report_q_tb_all, dtype=float)
+        hourly_results["Q_ground"] = np.asarray(_report_q_ground_all, dtype=float)
+        for _surface_col, _surface_values in _report_q_tr_surface_all.items():
+            hourly_results[_surface_col] = np.asarray(_surface_values, dtype=float)
+        _ve_stream_cols, _ve_stream_q_cols = _ventilation_stream_diag_to_columns(
+            _report_ve_stream_diag_all
+        )
+        for _col_name, _col_arr in _ve_stream_cols.items():
+            hourly_results[_col_name] = _col_arr
+
+        # AHU per-component diagnostics - only populated when mechanical_supply
         # components are present. NOT added to the Sankey: AHU coil heat crosses
         # the zone boundary from the system side and must not double-count Q_HC.
         for _col_name, _col_arr in _ahu_coll_to_columns(_ahu_coll_all[act_slice]).items():
@@ -7540,6 +8154,11 @@ class ISO52016:
 
         hourly_results["Q_C"] = 0.0
         hourly_results.loc[hourly_results["Q_HC"] < 0, "Q_C"] = -hourly_results.loc[hourly_results["Q_HC"] < 0, "Q_HC"]
+        hourly_results = _add_need_attribution_columns(
+            hourly_results,
+            surface_cols=list(_report_q_tr_surface_all.keys()),
+            ve_cols=_ve_stream_q_cols,
+        )
 
         dt_h_annual = _infer_timestep_hours_from_index(hourly_results.index, default=1.0)
         Q_H_annual = _integrate_power_series_to_energy_wh(hourly_results["Q_H"], default_dt_h=dt_h_annual)
@@ -7557,6 +8176,7 @@ class ISO52016:
             "Q_C_annual_kWh_per_sqm": (Q_C_annual / 1000.0 / A_use) if A_use > 0 else 0.0,
             "time_step_h": dt_h_annual,
         }
+        _add_annual_balance_columns(hourly_results, annual_results_dic, A_use, dt_h_annual)
         annual_results_df = pd.DataFrame([annual_results_dic])
 
         # Sankey
@@ -7580,14 +8200,15 @@ class ISO52016:
         sankey_graph=False,
         **kwargs,
     ):
+        from .generate_profile import HourlyProfileGenerator, get_country_code_from_latlon  # lazy
         """
-        Calcualation fo energy needs according to the equation (37) of ISO 52016:2017. Page 60.
+        Calcualation of energy needs according to the equation (37) of ISO 52016:2017. Page 60.
 
         [Matrix A] x [Node temperature vector X] = [State vector B]
 
         where:
-        Theta_int_air: internal air temperature [°C]
-        Theta_op_act: Actual operative temperature [°C]
+        Theta_int_air: internal air temperature [degC]
+        Theta_op_act: Actual operative temperature [degC]
 
         :param building_object: Building object create according to the method ``Building`` or ``Buildings_from_dictionary``.
         :param nrHCmodes:  inizailization of system mode: 0 for Heating, 1 for Cooling, 2 for Heating and Cooling. Default: 2
@@ -7603,7 +8224,7 @@ class ISO52016:
             **sim_df*: dataframe with:
 
                 * index: time of simulation on hourly resolution and timeindex typology (13 months on hourly resolution)
-                * T2m: Exteranl temperarture [°C]
+                * T2m: Exteranl temperarture [degC]
                 * RH: External humidity [%]
                 * G(h):
                 * Gb(n):
@@ -7644,7 +8265,7 @@ class ISO52016:
             * **sky_factor_elements**: View factor between element and sky
             * **R_gr_ve**: ... result of function ``Temp_calculation_of_ground`` (Thermal Resitance of virtual layer)
             * **Theta_gr_ve**: ... result of function ``Temp_calculation_of_ground``
-            * **h_pli_eli**: ... result of function ``Conduttance_node_of_element``
+            * **h_pli_eli**: ... result of function ``Conductance_node_of_element``
 
         """
         from .generate_profile import HourlyProfileGenerator, get_country_code_from_latlon  # lazy
@@ -7681,7 +8302,7 @@ class ISO52016:
         )
         
         i = 1
-        with tqdm(total=13) as pbar:
+        with tqdm(total=12) as pbar:
 
             pbar.set_postfix({"Info": f"Initialization {i}"})
 
@@ -7767,49 +8388,8 @@ class ISO52016:
             
             # --- HYDRATION: set the coefficients for the surfaces if missing ---
             if isinstance(building_object, dict):
-                # Typical values (ok for default robust)
-                hci_facade = 2.5   # convective internal walls
-                hci_ground = 0.7   # convective internal towards ground
-                hci_roof   = 5.0   # convective internal roofs
-                hce_facade = 20.0  # convective external walls
-                hce_roof   = 25.0  # convective external roofs
-                hce_ground = 4.0   # convective external ground/adiabatic ≈ negligible
-                hre_int    = 5.13  # radiative internal
-                hre_ext    = 5.13  # radiative external
-
-                for i, surf in enumerate(building_object["building_surface"]):
-                    svf = surf.get("sky_view_factor", 1)
-                    tstr = surf.get("ISO52016_type_string", "EXT")
-
-                    # --- convective internal ---
-                    if tstr == "AD":         # adiabatic: no exchange with the zone
-                        hci = 0.0
-                    elif svf == 0:           # towards ground
-                        hci = hci_ground
-                    elif svf == 1:           # roof
-                        hci = hci_roof
-                    else:                    # facade
-                        hci = hci_facade
-                    surf.setdefault("convective_heat_transfer_coefficient_internal", hci)
-
-                    # --- radiative internal ---
-                    surf.setdefault("radiative_heat_transfer_coefficient_internal", hre_int)
-
-                    # --- convective external ---
-                    if tstr == "AD":
-                        hce = 0.0            # external side does not exist for AD: we cancel it
-                    elif Type_eli[i] == "GR":
-                        hce = hce_ground
-                    elif svf == 1:
-                        hce = hce_roof
-                    else:
-                        hce = hce_facade
-                    surf.setdefault("convective_heat_transfer_coefficient_external", hce)
-
-                    # --- radiative external ---
-                    surf.setdefault("radiative_heat_transfer_coefficient_external", hre_ext)
-
-            #
+                for surf in building_object["building_surface"]:
+                    _apply_surface_heat_transfer_defaults(surf)
             pbar.update(1)
             if isinstance(building_object, dict):
                 g_values = np.zeros(bui_eln, dtype=float)
@@ -7917,28 +8497,8 @@ class ISO52016:
             C_int = (c_int_per_A_us * building_object["building"]["net_floor_area"])
             pbar.update(1)
 
-            # mean internal radiative transfer coefficient
-            if isinstance(building_object, dict):
-                radiative_heat_transfer_coefficient = 5.13
-                heat_radiative_elements_internal_mn = (
-                    np.dot(
-                        area_elements,
-                        radiative_heat_transfer_coefficient * np.ones(bui_eln),
-                    )/ area_elements_tot
-                )
-                for surf in building_object["building_surface"]:
-                    surf["radiative_heat_transfer_coefficient_internal"] = (
-                        radiative_heat_transfer_coefficient
-                    )
-            else:
-                heat_radiative_elements_internal_mn = (
-                    np.dot(
-                        area_elements,
-                        building_object.heat_radiative_elements_internal,
-                    )
-                    / area_elements_tot
-                )
-            pbar.update(1)
+            # Internal radiative coefficients are already stored per surface and
+            # used directly in the matrix assembly below.
 
             
             # inizialiazation vectorB and temperature
@@ -8029,7 +8589,7 @@ class ISO52016:
             #
             pbar.set_postfix({"Info": f"Calculating ground temperature"})
             pbar.update(1)
-            h_pli_eli = (ISO52016().Conduttance_node_of_element(building_object).h_pli_eli)
+            h_pli_eli = (ISO52016().Conductance_node_of_element(building_object).h_pli_eli)
 
             pbar.set_postfix({"Info": f"Calculating conductance of elements"})
             pbar.update(1)
@@ -8052,8 +8612,8 @@ class ISO52016:
 
         """
         CALCULATION OF SENSIBLE HEATING AND COOLING LOAD (following the procedure of poin 6.5.5.2 of UNI ISO 52016)
-        For each hour and each zone the actual internal operative temperature θ and the actual int;ac;op;zt;t 6.5.5.2 Sensible heating and cooling load
-        heating or cooling load, ΦHC;ld;ztc;t, is calculated using the following step-wise procedure: 
+        For each hour and each zone the actual internal operative temperature theta and the actual int;ac;op;zt;t 6.5.5.2 Sensible heating and cooling load
+        heating or cooling load, PhiHC;ld;ztc;t, is calculated using the following step-wise procedure: 
         """
         H_ve_nat_all = [0]
         S_ve_nat_all = [0.0]
@@ -8128,13 +8688,13 @@ class ISO52016:
         # summury_profile = gen.get_summary()
 
         # fig = gen.plot_annual_profiles(freq="H", include_weekend_shading=True,
-        #                        title="Annual Profiles — Hourly")
+        #                        title="Annual Profiles - Hourly")
         # fig.show()
 
         # # grafico a medie giornaliere solo per alcune categorie
         # fig_day = gen.plot_annual_profiles(categories=["ventilation","heating","cooling","occupancy"],
         #                                 freq="D", include_weekend_shading=True,
-        #                                 title="Annual Profiles — Daily Average")
+        #                                 title="Annual Profiles - Daily Average")
         # fig_day.show()
                             
         # === ACCUMULATORS FOR SANKEY (Wh) ===
@@ -8162,7 +8722,7 @@ class ISO52016:
                 ri_state = 1 + nodes.PlnSum[Eli] + Pli
                 C_state[ri_state] = float(kappa_pli_eli[Pli, Eli])
 
-        # Previous state for storage (°C): initialized ONCE
+        # Previous state for storage (degC): initialized ONCE
         Theta_prev_state = np.full(nodes.Rn, 20.0, dtype=float)
         # Causal controller state: previous-step operative/air/radiant temperatures.
         theta_air_prev_causal = 20.0
@@ -8172,6 +8732,12 @@ class ISO52016:
         # --- new structures for TRASMISSIONS per element (only OP and W) ---
         surface_names = [surf["name"] for surf in building_object["building_surface"]]
         surface_types  = [surf["ISO52016_type_string"] for surf in building_object["building_surface"]]
+        surface_report_names = _unique_report_names(surface_names)
+        surface_report_cols = {
+            i: f"Q_tr_surface_{surface_report_names[i]}"
+            for i, stype in enumerate(surface_types)
+            if stype in ("OP", "W")
+        }
         E_trans_loss_by_surface_Wh = {name: 0.0 for name in surface_names}  # riempiamo solo per OP/W
 
 
@@ -8196,6 +8762,19 @@ class ISO52016:
         E_tb_loss_Wh = 0.0
         E_ground_loss_Wh = 0.0
         E_storage_Wh = 0.0
+        _report_q_solar_gains_all: list[float] = []
+        _report_q_internal_gains_all: list[float] = []
+        _report_q_storage_all: list[float] = []
+        _report_q_tb_all: list[float] = []
+        _report_q_ground_all: list[float] = []
+        _report_q_tr_total_all: list[float] = []
+        _report_q_tr_opaque_all: list[float] = []
+        _report_q_tr_window_all: list[float] = []
+        _report_q_tr_surface_all: dict[str, list[float]] = {
+            col: [] for col in surface_report_cols.values()
+        }
+        _report_ve_stream_diag_all: list[dict[str, dict[str, float]]] = []
+        _report_component_ventilation = _has_ventilation_components(building_object)
 
         # --- Commit-1 pre-loop allocations ---
         vig = VentilationInternalGains(building_object)
@@ -8267,7 +8846,7 @@ class ISO52016:
                 else:
                     # Reasonable caps
                     A_use = building_object["building"]["net_floor_area"]
-                    design_P = max(150.0 * A_use, 15_000.0)  # e.g., 150 W/m² or 15 kW minimum
+                    design_P = max(150.0 * A_use, 15_000.0)  # e.g., 150 W/m2 or 15 kW minimum
                     warmup_P = 3.0 * design_P
 
 
@@ -8357,6 +8936,7 @@ class ISO52016:
                 _H_ve_nat_tstep = 0.0
                 _S_ve_nat_tstep = 0.0
                 _ahu_coll_tstep: dict = {}   # overwritten each while iteration; final value captured after loop
+                _vent_bdy_tstep = None
                 while iterate:
 
                     iterate = False
@@ -8389,7 +8969,11 @@ class ISO52016:
 
                             Phi_sol_dir_zt_t += (
                                 g_gl_wi_t[Eli]
-                                * (I_sol_dif_el[Tstepi, Eli] + I_sol_dir_el[Tstepi, Eli] * F_sh_obst_wi_t)
+                                * cls._solar_irradiance_after_method1_shading(
+                                    I_sol_dif_el[Tstepi, Eli],
+                                    I_sol_dir_el[Tstepi, Eli],
+                                    F_sh_obst_wi_t,
+                                )
                                 * area_elements[Eli] * (1 - Ffr_wi)
                             )
                             
@@ -8419,7 +9003,7 @@ class ISO52016:
                     ri = 0
                     '''
                     Energy balacne on zone level. Eq. (38) UNI 52016
-                    XTemp = Thermal capacity at specific time (t) and for  a specific degree °C [W] +
+                    XTemp = Thermal capacity at specific time (t) and for  a specific degree degC [W] +
                     + Ventilation loss (at time t)[W] + Transmission loss (at time t)[W] + intrnal gain[W] + solar gain [W]. Missed the
                     the convective fraction of the heating/cooling system
                     '''
@@ -8430,12 +9014,13 @@ class ISO52016:
                     )
                     H_ve_nat = _vent_bdy.heat_transfer_coefficient_w_k
                     S_ve_nat = _vent_bdy.source_term_w
-                    # Record for this timestep; do NOT append here — the while
+                    # Record for this timestep; do NOT append here - the while
                     # loop may iterate again for HVAC re-solving and we must
                     # emit exactly one entry per timestep to keep diagnostics
                     # aligned.
                     _H_ve_nat_tstep = H_ve_nat
                     _S_ve_nat_tstep = S_ve_nat
+                    _vent_bdy_tstep = _vent_bdy
                     
                     
                     
@@ -8695,7 +9280,7 @@ class ISO52016:
                                     Plk = nodes.Pln[Elk] - 1
                                     ck = 1 + nodes.PlnSum[Elk] + Plk
                                     Area_ratio += area_elements[Elk] / area_int_surfaces_tot
-                                    MatA[ri, ck] -= (area_elements[Elk] / area_int_surfaces_tot) * heat_radiative_elements_internal[Elk]
+                                    MatA[ri, ck] -= (area_elements[Elk] / area_int_surfaces_tot) * heat_radiative_elements_internal[Eli]
                                 '''
                                 in formula 39  [.. + h_ci_eli  + h_re_eli * sum(elk=1 to eln)(A_elk/Atot) + ..]
                                 '''
@@ -8750,7 +9335,7 @@ class ISO52016:
                         theta = np.linalg.solve(MatA, VecB)
                     except np.linalg.LinAlgError:
                         rank = np.linalg.matrix_rank(MatA)
-                        print(f"⚠️ MatA solve failed at t={Tstepi}: rank={rank}/{MatA.shape[0]}")
+                        print(f"WARNING: MatA solve failed at t={Tstepi}: rank={rank}/{MatA.shape[0]}")
                         print("MatA diagonal:", np.diag(MatA))
                         raise
                     VecB[:, :] = theta
@@ -8787,9 +9372,9 @@ class ISO52016:
                     where:
                     Phi_HC_ld_zd: unrestricted heating or cooling load to reach the required setpoint in W
                     Phi_HC_upper: is the upper value of the heating or cooling load in W  
-                    theta_int_op_set: required internal operative setpoint temperature in °C
-                    thet_int_op_0: operating temperature in free floating condition in °C
-                    theta_int_op_upper: is the internal operational temperature, obtained for the upper heating or cooling load °C
+                    theta_int_op_set: required internal operative setpoint temperature in degC
+                    thet_int_op_0: operating temperature in free floating condition in degC
+                    theta_int_op_upper: is the internal operational temperature, obtained for the upper heating or cooling load degC
                     '''
                     if nrHCmodes > 1:
                         # HEATING
@@ -8888,7 +9473,8 @@ class ISO52016:
                 Theta_curr_state = VecB[:, colB_act]
                 dTheta_state = Theta_curr_state - Theta_prev_state
                 if Tstepi >= Tstep_first_act:
-                    E_storage_Wh += float(np.dot(C_state, dTheta_state)) / 3600.0
+                    q_storage = float(np.dot(C_state, dTheta_state)) / float(Dtime[Tstepi])
+                    E_storage_Wh += q_storage * dt_h
                 Theta_prev_state = Theta_curr_state
 
                 if Tstepi >= Tstep_first_act:
@@ -8928,6 +9514,10 @@ class ISO52016:
                     # 7) Transmission for element (OP, W)
                     T_air = float(Theta_int_air[Tstepi, 0])
                     T_rad = float(Theta_int_r_mn[Tstepi, 0])
+                    q_tr_by_surface = {col: 0.0 for col in surface_report_cols.values()}
+                    q_tr_total = 0.0
+                    q_tr_opaque = 0.0
+                    q_tr_window = 0.0
                     for Eli in range(bui_eln):
                         if surface_types[Eli] not in ("OP", "W"):  continue
                         n_nodes_Eli = nodes.Pln[Eli]
@@ -8940,6 +9530,27 @@ class ISO52016:
                         q_cond = A * (hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int))
                         if   q_cond > 0: E_trans_loss_by_surface_Wh[surface_names[Eli]] += q_cond * dt_h
                         elif q_cond < 0: E_solar_Wh += (-q_cond) * dt_h
+                        q_tr_total += q_cond
+                        if surface_types[Eli] == "OP":
+                            q_tr_opaque += q_cond
+                        elif surface_types[Eli] == "W":
+                            q_tr_window += q_cond
+                        q_tr_by_surface[surface_report_cols[Eli]] = q_cond
+
+                    _report_q_solar_gains_all.append(phi_solar)
+                    _report_q_internal_gains_all.append(phi_int)
+                    _report_q_storage_all.append(q_storage)
+                    _report_q_tb_all.append(q_tb)
+                    _report_q_ground_all.append(q_ground)
+                    _report_q_tr_total_all.append(q_tr_total)
+                    _report_q_tr_opaque_all.append(q_tr_opaque)
+                    _report_q_tr_window_all.append(q_tr_window)
+                    for col in _report_q_tr_surface_all:
+                        _report_q_tr_surface_all[col].append(q_tr_by_surface.get(col, 0.0))
+                    if _report_component_ventilation and _vent_bdy_tstep is not None:
+                        _report_ve_stream_diag_all.append(
+                            _ventilation_stream_diag(_vent_bdy_tstep, T_in)
+                        )
 
 
                 if Tstepi < 6:  # primi 6 passi di debug
@@ -9056,7 +9667,23 @@ class ISO52016:
         hourly_results["T_ve_source_eq"] = _t_eq
         hourly_results["Q_ve"] = _h_ve_arr * _t_air_arr - _s_ve_arr
 
-        # AHU per-component diagnostics — only populated when mechanical_supply
+        hourly_results["Q_solar_gains"] = np.asarray(_report_q_solar_gains_all, dtype=float)
+        hourly_results["Q_internal_gains"] = np.asarray(_report_q_internal_gains_all, dtype=float)
+        hourly_results["Q_storage"] = np.asarray(_report_q_storage_all, dtype=float)
+        hourly_results["Q_tr_total"] = np.asarray(_report_q_tr_total_all, dtype=float)
+        hourly_results["Q_tr_opaque"] = np.asarray(_report_q_tr_opaque_all, dtype=float)
+        hourly_results["Q_tr_window"] = np.asarray(_report_q_tr_window_all, dtype=float)
+        hourly_results["Q_tb"] = np.asarray(_report_q_tb_all, dtype=float)
+        hourly_results["Q_ground"] = np.asarray(_report_q_ground_all, dtype=float)
+        for _surface_col, _surface_values in _report_q_tr_surface_all.items():
+            hourly_results[_surface_col] = np.asarray(_surface_values, dtype=float)
+        _ve_stream_cols, _ve_stream_q_cols = _ventilation_stream_diag_to_columns(
+            _report_ve_stream_diag_all
+        )
+        for _col_name, _col_arr in _ve_stream_cols.items():
+            hourly_results[_col_name] = _col_arr
+
+        # AHU per-component diagnostics - only populated when mechanical_supply
         # components are present. NOT added to the Sankey: AHU coil heat crosses
         # the zone boundary from the system side and must not double-count Q_HC.
         for _col_name, _col_arr in _ahu_coll_to_columns(_ahu_coll_all[act_slice]).items():
@@ -9068,12 +9695,17 @@ class ISO52016:
 
         hourly_results["Q_C"] = 0.0
         hourly_results.loc[hourly_results["Q_HC"] < 0, "Q_C"] = -hourly_results.loc[hourly_results["Q_HC"] < 0, "Q_HC"]
+        hourly_results = _add_need_attribution_columns(
+            hourly_results,
+            surface_cols=list(_report_q_tr_surface_all.keys()),
+            ve_cols=_ve_stream_q_cols,
+        )
         if (
             external_heating_power_fn is not None
             or external_heating_power_causal_fn is not None
             or external_heating_power_series is not None
         ):
-            hourly_results["Q_H_AHU_used"] = Phi_H_AHU_act[act_slice]
+            hourly_results.loc[:, "Q_H_AHU_used"] = Phi_H_AHU_act[act_slice]
 
         dt_h_annual = _infer_timestep_hours_from_index(hourly_results.index, default=1.0)
         Q_H_annual = _integrate_power_series_to_energy_wh(hourly_results["Q_H"], default_dt_h=dt_h_annual)
@@ -9091,6 +9723,7 @@ class ISO52016:
             "Q_C_annual_kWh_per_sqm": (Q_C_annual / 1000.0 / A_use) if A_use > 0 else 0.0,
             "time_step_h": dt_h_annual,
         }
+        _add_annual_balance_columns(hourly_results, annual_results_dic, A_use, dt_h_annual)
         annual_results_df = pd.DataFrame([annual_results_dic])
 
         # Sankey

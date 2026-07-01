@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Italian STREPIN Archetype Engine Audit</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 32px; color: #1f2933; line-height: 1.5; }
+    h1, h2 { color: #102a43; }
+    table { border-collapse: collapse; width: 100%; margin: 14px 0 24px; }
+    th, td { border: 1px solid #d7dde5; padding: 8px 10px; vertical-align: top; }
+    th { background: #eef2f7; text-align: left; }
+    code { background: #eef2f7; padding: 1px 4px; border-radius: 4px; }
+    pre { background: #f8fafc; border: 1px solid #d7dde5; padding: 12px 14px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>Italian STREPIN Archetype Engine Audit</h1>
+  <p>
+    The STREPIN workbook is treated as input data. The runner builds
+    pyBuildingEnergy BUI objects for each archetype/package, runs ISO 52016 and
+    then applies the European EPB standards to calculate pre- and post-retrofit
+    performance. Workbook package levels remain available, and arbitrary
+    combinations can be built from the same measure levels.
+  </p>
+
+  <h2>Data And Code</h2>
+  <table>
+    <tr><th>Step</th><th>Location</th><th>Role</th></tr>
+    <tr><td>Workbook parser</td><td><code>src/pybuildingenergy/data/italian_strepin.py</code></td><td>Reads archetypes, packages, measure levels and workbook reference estimates.</td></tr>
+    <tr><td>Simulation runner</td><td><code>examples/strepin_archetypes/run_italian_strepin_engine.py</code></td><td>Runs ISO 52016, EN generation/cooling/renewable/accounting modules and writes one summary row per case.</td></tr>
+    <tr><td>Cross-cutting EPB modules</td><td><code>src/pybuildingenergy/source/primary_energy_52000_1.py</code>, <code>lighting_15193_1.py</code>, <code>ventilation_16798_5_7.py</code>, <code>bacs_52120_1.py</code>, <code>economics_15459_1.py</code></td><td>Primary energy/export accounting, lighting, ventilation and heat recovery, BACS factors and global cost.</td></tr>
+    <tr><td>Climate zone B weather</td><td><code>examples/Palermo_PVGIS_TMY.epw</code></td><td>PVGIS TMY EPW for Palermo, normalized to parse with <code>pvlib.read_epw</code>.</td></tr>
+  </table>
+
+  <h2>Default EN-Standards Chain</h2>
+  <pre><code>STREPIN workbook archetype/package
+  -> BUI envelope and system metadata
+  -> ISO 52016 space heating/cooling demands
+  -> EN 15316-4-1 boiler generation for gas packages
+     or EN 15316-4-2 heat-pump generation for electric heat-pump packages
+     or EN 15316-4 biomass, EN 15316-4-4 CHP, EN 15316-4-5 district heat overlays
+  -> EN 16798-13 cooling generation
+  -> EN 15316-4-3/4-6 solar thermal, PV and optional battery dispatch
+  -> EN 15193-1 lighting and EN 16798-5/7 ventilation when requested
+  -> EN 15232-1 / EN ISO 52120-1 BACS service factors when requested
+  -> EN ISO 52000-1 delivered/exported primary-energy accounting
+  -> EN 15459-1 global cost summary</code></pre>
+
+  <h2>Run Commands</h2>
+  <pre><code>python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes all --packages P00 --system-chain en-standards
+python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes RMF_E1_B --packages P00,P09 --system-chain en-standards --write-hourly
+python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes all --packages all --system-chain en-standards
+
+python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes RMF_E1_B --measure-levels wall=2,roof_floor=2,windows=2,heating=3,pv=2 --system-chain en-standards
+
+python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes RMF_E1_B --measure-levels wall=2,roof_floor=2,windows=2,heating=3,pv=2 --extra-measures lighting-controls,ventilation-hrv,bacs-b,solar-thermal,battery-5 --system-chain en-standards</code></pre>
+
+  <h2>Combination Inputs</h2>
+  <table>
+    <tr><th>Input</th><th>Meaning</th></tr>
+    <tr><td><code>--packages P00,P09</code></td><td>Uses complete package definitions from the workbook. <code>P00</code> is baseline/pre-retrofit.</td></tr>
+    <tr><td><code>--measure-levels wall=2,roof_floor=2,windows=2,heating=3,pv=2</code></td><td>Builds a custom case from workbook measure levels; omitted workbook measures default to level 1.</td></tr>
+    <tr><td><code>--extra-measures</code></td><td>Adds engine-side measures not present as workbook package levels: <code>lighting-controls</code>, <code>ventilation-hrv</code>, <code>bacs-a</code>/<code>bacs-b</code>, <code>solar-thermal</code>, <code>battery-5</code>, <code>biomass-boiler</code>, <code>district-heat</code>, <code>chp</code>, <code>pv-shading-10</code>.</td></tr>
+    <tr><td><code>--extra-measure-json</code></td><td>Supplies explicit parameter values for those overlays, for example solar-thermal area, battery capacity or BACS class.</td></tr>
+    <tr><td><code>--export-credit-method</code></td><td><code>none</code> keeps the headline primary-energy indicator comparable to STREPIN grid-delivered accounting; <code>symmetric</code> credits exported electricity in the EN ISO 52000-1 net balance.</td></tr>
+  </table>
+
+  <h2>Outputs</h2>
+  <table>
+    <tr><th>File</th><th>Meaning</th></tr>
+    <tr><td><code>examples/outputs/italian_strepin_engine/italian_strepin_engine_summary.csv</code></td><td>One row per case with useful loads, generator input, carrier delivered energy, PV/export, primary energy, global cost and active standards.</td></tr>
+    <tr><td><code>examples/outputs/italian_strepin_engine/hourly/*.csv</code></td><td>Optional hourly ISO 52016 output when <code>--write-hourly</code> is set.</td></tr>
+  </table>
+
+  <h2>Boundaries</h2>
+  <p>
+    The workbook provides explicit package levels for opaque envelope,
+    windows, heating generator and PV. Lighting, heat-recovery ventilation,
+    BACS, solar thermal, batteries, biomass, CHP, district heat and PV shading
+    are currently engine-side overlays with default costs and efficiencies.
+    They can be simulated now, but project/national-plan values should replace
+    the defaults when available. Full archetype-specific EN 15316-2/3/5 detail
+    still needs emitter types, distribution lengths, storage sizes and control
+    data for each STREPIN archetype.
+  </p>
+</body>
+</html>

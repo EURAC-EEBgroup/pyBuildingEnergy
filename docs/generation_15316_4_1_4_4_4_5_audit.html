@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>EN 15316-4-1 / 4-4 / 4-5 Generation Audit</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 32px; color: #1f2933; line-height: 1.5; }
+    h1, h2 { color: #102a43; }
+    table { border-collapse: collapse; width: 100%; margin: 14px 0 24px; }
+    th, td { border: 1px solid #d7dde5; padding: 8px 10px; vertical-align: top; }
+    th { background: #eef2f7; text-align: left; }
+    code { background: #eef2f7; padding: 1px 4px; border-radius: 4px; }
+    pre { background: #f8fafc; border: 1px solid #d7dde5; padding: 12px 14px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>EN 15316-4-1 / 4-4 / 4-5 Generation Audit</h1>
+  <p>
+    This page documents the generator alternatives added next to the existing
+    EN 15316-4-2 heat-pump path. The calculators use the same package contract
+    as the other standards modules: <code>timeseries</code>,
+    <code>summary</code> and <code>inputs</code>.
+  </p>
+
+  <h2>Implemented Modules</h2>
+  <table>
+    <tr><th>Standard</th><th>Class</th><th>Boundary</th><th>Main Outputs</th></tr>
+    <tr>
+      <td>EN 15316-4-1</td>
+      <td><code>CombustionBoilerSystemCalculator</code></td>
+      <td>Heating/DHW boiler fuel input, part-load efficiency, return-temperature correction, standby losses and auxiliaries.</td>
+      <td><code>EHW_gen_in_kWh</code>, <code>EHW_fuel_in_kWh</code>, <code>QHW_gen_loss_kWh</code>, <code>eta_HW_gen</code>.</td>
+    </tr>
+    <tr>
+      <td>EN 15316-4-4</td>
+      <td><code>CogenerationSystemCalculator</code></td>
+      <td>Thermal-led CHP, backup heat, useful electrical generation, self-consumption/export and auxiliaries.</td>
+      <td><code>E_chp_fuel_in_kWh</code>, <code>E_chp_el_generated_kWh</code>, <code>E_chp_el_self_consumed_kWh</code>, <code>eta_chp_total</code>.</td>
+    </tr>
+    <tr>
+      <td>EN 15316-4-5</td>
+      <td><code>DistrictEnergySystemCalculator</code></td>
+      <td>District heating/DHW and optional cooling substation delivered energy, losses and auxiliaries.</td>
+      <td><code>EHW_district_in_kWh</code>, <code>EC_district_in_kWh</code>, <code>QHW_gen_loss_kWh</code>, <code>SPF_HW_gen</code>.</td>
+    </tr>
+  </table>
+
+  <h2>Run Commands</h2>
+  <pre><code>python examples/heat_pump_15316_4_2_example.py --scenario athens --calculation-path boiler-full --weather-source epw --path-weather-file examples/2020_Athens.epw
+python examples/heat_pump_15316_4_2_example.py --scenario bolzano --calculation-path chp-full --weather-source epw --path-weather-file examples/2020_Milan.epw
+python examples/heat_pump_15316_4_2_example.py --scenario bolzano --calculation-path district-full --weather-source epw --path-weather-file examples/2020_Milan.epw</code></pre>
+
+  <h2>Output Files</h2>
+  <table>
+    <tr><th>File</th><th>Audit Use</th></tr>
+    <tr><td><code>heating_generation_en15316_4_1_hourly_results.csv</code></td><td>Boiler hourly fuel, losses, auxiliaries and efficiency.</td></tr>
+    <tr><td><code>heating_generation_en15316_4_4_hourly_results.csv</code></td><td>CHP fuel input, heat output, electricity generation and export.</td></tr>
+    <tr><td><code>heating_generation_en15316_4_5_hourly_results.csv</code></td><td>District heating/cooling delivered energy and substation losses.</td></tr>
+    <tr><td><code>visuals/13_en15316_4_*.html</code></td><td>Daily generator time-series inspection.</td></tr>
+  </table>
+
+  <h2>Boundaries</h2>
+  <p>
+    These modules do not embed national annex defaults. Boiler efficiencies,
+    CHP thermal/electrical efficiencies, district substation efficiencies and
+    loss factors should be supplied from project, manufacturer or approved
+    national-annex data for formal studies.
+  </p>
+</body>
+</html>

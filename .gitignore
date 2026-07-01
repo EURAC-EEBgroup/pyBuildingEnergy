@@ -1,4 +1,8 @@
-src/pybuildingenergy/data
+src/pybuildingenergy/data/
+!src/pybuildingenergy/data/
+src/pybuildingenergy/data/*
+!src/pybuildingenergy/data/__init__.py
+!src/pybuildingenergy/data/italian_strepin.py
 create_archetype.py
 profiles.py
 test_lib.py
