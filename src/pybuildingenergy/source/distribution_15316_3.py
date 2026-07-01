@@ -87,6 +87,16 @@ class DistributionSystemCalculator:
         cfg = dict(data or {})
         sections = [_section_options(item) for item in cfg.get("pipe_sections", [])]
 
+        # Derive max_length_m from pipe_sections when not provided explicitly.
+        # EN 15316-3 §6 uses the total hydraulic path length (straight + equivalent)
+        # for the head-loss calculation; falling back to 0 would zero out the
+        # pump auxiliary energy, which is non-physical.
+        _sections_length = sum(
+            float(s.get("length_m", 0.0)) + float(s.get("equivalent_length_m", 0.0))
+            for s in sections
+        )
+        _max_length_default = max(_sections_length, 0.0)
+
         return {
             "pipe_sections": sections,
             "operation_mode": str(cfg.get("operation_mode", "demand")).lower(),
@@ -97,7 +107,7 @@ class DistributionSystemCalculator:
             "return_temperature_C": float(cfg.get("return_temperature_C", 35.0)),
             "dhw_temperature_C": float(cfg.get("dhw_temperature_C", cfg.get("hot_water_temperature_C", 55.0))),
             "dhw_return_deltaT_K": max(float(cfg.get("dhw_return_deltaT_K", 5.0)), 0.0),
-            "max_length_m": max(float(cfg.get("max_length_m", 0.0)), 0.0),
+            "max_length_m": max(float(cfg.get("max_length_m", _max_length_default)), 0.0),
             "pressure_loss_per_m_kPa": max(float(cfg.get("pressure_loss_per_m_kPa", 0.10)), 0.0),
             "additional_pressure_kPa": max(float(cfg.get("additional_pressure_kPa", 0.0)), 0.0),
             "resistance_ratio": max(float(cfg.get("resistance_ratio", cfg.get("f_comp", 0.30))), 0.0),

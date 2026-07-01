@@ -91,24 +91,27 @@ def check_heating_system_inputs(system_input: dict):
         messages.append(f"✅ Emitter type '{emitter_type}' found in TB14.")
 
     # 3) Validazione gen_flow_temp_control_type (Type A, B, or C)
+    # NB: allow descriptive suffixes such as 'Type A - Based on outdoor temperature'
+    # The downstream code in iso_15316_1.calculate_circuit_node_temperature uses startswith().
     gen_flow_temp_control_type = cfg.get("gen_flow_temp_control_type", None)
-    
-    if gen_flow_temp_control_type == 'Type A':
+    _ctrl_str = str(gen_flow_temp_control_type) if gen_flow_temp_control_type is not None else ''
+
+    if _ctrl_str.startswith('Type A'):
         gen_outdoor_temp_data = cfg.get('gen_outdoor_temp_data', None)
         if not isinstance(gen_outdoor_temp_data, pd.DataFrame):
             messages.append("⚠️ For 'Type A' control, 'gen_outdoor_temp_data' must be provided as a DataFrame.")
             cfg["gen_flow_temp_control_type"] = 'Type B'  # Auto-switch to Type B
         else:
             messages.append("✅ 'gen_outdoor_temp_data' provided for 'Type A' control.")
-    
-    elif gen_flow_temp_control_type == 'Type C':
+
+    elif _ctrl_str.startswith('Type C'):
         if 'θHW_gen_flw_const' not in cfg or cfg['θHW_gen_flw_const'] is None:
             messages.append("⚠️ 'θHW_gen_flw_const' not provided for 'Type C' control; setting it to 50.")
             cfg['θHW_gen_flw_const'] = 50.0
         else:
             messages.append(f"✅ 'θHW_gen_flw_const' provided: {cfg['θHW_gen_flw_const']} for 'Type C' control.")
-    
-    elif gen_flow_temp_control_type != 'Type B':
+
+    elif not _ctrl_str.startswith('Type B'):
         messages.append(f"⚠️ Invalid value for 'gen_flow_temp_control_type': '{gen_flow_temp_control_type}'. Setting to 'Type B'.")
         cfg["gen_flow_temp_control_type"] = 'Type B'
 

@@ -7,6 +7,7 @@ from .source.iso_15316_1 import HeatingSystemCalculator
 from .source.emission_15316_2 import EmissionSimulationResult, EmissionSystemCalculator
 from .source.distribution_15316_3 import DistributionSimulationResult, DistributionSystemCalculator
 from .source.storage_15316_5 import StorageSimulationResult, StorageSystemCalculator
+from .source.generation_15316_4_1 import BoilerConfig, BoilerGeneratorCalculator
 from .source.cooling_16798_9 import CoolingSystemSimulationResult, CoolingSystemCalculator
 from .source.cooling_storage_16798_15 import (
     CoolingStorageSimulationResult,
@@ -44,6 +45,8 @@ __all__ = [
     "DistributionSystemCalculator",
     "StorageSimulationResult",
     "StorageSystemCalculator",
+    "BoilerConfig",
+    "BoilerGeneratorCalculator",
     "CoolingSystemSimulationResult",
     "CoolingSystemCalculator",
     "CoolingStorageSimulationResult",

@@ -306,6 +306,97 @@ def test_heating_system_calculator(hvac_system_config):
     assert calc is not None
 
 
+def test_heating_system_calculator_distribution_modes(hvac_system_config):
+    """Test simplified and analytical distribution modes in the heating calculator."""
+    import pybuildingenergy as pybui
+
+    simplified = pybui.HeatingSystemCalculator(
+        {
+            **hvac_system_config,
+            "distribution_calculation_mode": "simplified",
+        }
+    )
+    analytical = pybui.HeatingSystemCalculator(
+        {
+            **hvac_system_config,
+            "distribution_calculation_mode": "analytical",
+            "distribution_15316_3_config": {
+                "time_step_hours": 1.0,
+                "demand_unit": "kWh",
+                "heating": {
+                    "operation_mode": "demand",
+                    "nominal_power_kW": 8.0,
+                    "design_flow_m3_h": 0.5,
+                    "design_deltaT_K": 10.0,
+                    "pipe_sections": [
+                        {
+                            "length_m": 10.0,
+                            "equivalent_length_m": 0.0,
+                            "linear_thermal_transmittance_W_mK": 0.5,
+                            "ambient_temperature_C": 20.0,
+                            "recoverable": True,
+                        }
+                    ],
+                },
+            },
+        }
+    )
+
+    simplified_out = simplified.compute_step(4.0, 20.0, 5.0)
+    analytical_out = analytical.compute_step(4.0, 20.0, 5.0)
+
+    assert simplified_out["QH_dis_i_in(kWh)"] >= 0.0
+    assert analytical_out["QH_dis_i_in(kWh)"] >= 0.0
+    assert analytical_out["QH_gen_out(kWh)"] >= 0.0
+
+
+def test_boiler_generator_calculator_table_driven():
+    """Test boiler generator calculator with explicit non-hardcoded case tables."""
+    import pybuildingenergy as pybui
+
+    calc = pybui.BoilerGeneratorCalculator(
+        {
+            "boiler_type": "condensing",
+            "fuel_type": "natural_gas",
+            "rated_power_kW": 24.0,
+            "intermediate_load_fraction": 0.30,
+            "eta_Pn_test_pct": 98.0,
+            "eta_Pint_test_pct": 106.0,
+            "theta_test_Pn_C": 60.0,
+            "theta_test_Pint_C": 40.0,
+            "f_corr_pct_per_K": 0.04,
+            "P_gen_ls_P0_W": 100.0,
+            "P_aux_on_W": 80.0,
+            "P_aux_off_W": 5.0,
+            "f_jacket": 0.40,
+            "f_location": 1.0,
+            "f_aux_recoverable": 0.75,
+            "dew_point_C": 55.0,
+            "condensing_gain_pct": 11.0,
+            "efficiency_table": {
+                "condensing": {
+                    "eta_Pn_test_pct": 98.0,
+                    "eta_Pint_test_pct": 106.0,
+                    "theta_test_Pn_C": 60.0,
+                    "theta_test_Pint_C": 40.0,
+                }
+            },
+            "loss_table": {
+                "condensing": {
+                    "P_gen_ls_P0_W": 100.0,
+                }
+            },
+            "boiler_location": "inside_heated",
+        }
+    )
+
+    out = calc.compute_step(10.0, theta_avg_C=45.0, theta_return_C=35.0)
+
+    assert out["E_gen_in(kWh)"] > 10.0
+    assert out["Q_gen_ls(kWh)"] >= 0.0
+    assert out["eta_Pn_corr(%)"] > 0.0
+
+
 def test_heat_pump_system_calculator_heating_cooling_dhw():
     """Test heat pump generation for heating, cooling and DHW demand."""
     import pybuildingenergy as pybui
