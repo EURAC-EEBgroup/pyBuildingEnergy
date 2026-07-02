@@ -15,13 +15,21 @@ import pybuildingenergy as pybui
 import numpy as np
 import pandas as pd 
 import plotly.express as px 
-from pyecharts import options as pye_opts
-from pyecharts.charts import Line, Page, Sankey
 from pybuildingenergy.source.utils import *
 from pybuildingenergy.source.check_input import sanitize_and_validate_BUI, check_heating_system_inputs
 from pybuildingenergy.source.graphs import Graphs_and_report
 from pybuildingenergy.source.graphs import *
 from pybuildingenergy.source.iso_15316_1 import HeatingSystemCalculator
+from pybuildingenergy.source.example_inputs import (
+    get_example_cooling_input,
+    get_example_hvac_input,
+)
+from pybuildingenergy.source.hvac_html_reports import _build_temperature_report
+from pybuildingenergy.source.hvac_quality_checks import validate_hvac_input_coherence
+from pybuildingenergy.source.hvac_sankey_reports import (
+    _build_cooling_sankey_report,
+    _build_sankey_consumption_report,
+)
 from pybuildingenergy.source.generate_profile import HourlyProfileGenerator, get_country_code_from_latlon
 from pybuildingenergy.source.DHW import *
 from pybuildingenergy.source.ventilation import *
@@ -39,7 +47,10 @@ print(WEATHER_FILE)
 GENERATE_EXTRA_REPORTS = False
 
 def _run_iso52016(building_obj):
-    kwargs = {"weather_source": WEATHER_SOURCE}
+    kwargs = {
+        "weather_source": WEATHER_SOURCE,
+        "latent_indoor_rh_pct": INPUT_SYSTEM_HVAC.get("latent_indoor_rh_pct", 50.0),
+    }
     if WEATHER_SOURCE == "epw":
         kwargs["path_weather_file"] = str(WEATHER_FILE)
 
@@ -77,6 +88,13 @@ def _export_hvac_flow_results(hourly_sim: pd.DataFrame, hvac_df: pd.DataFrame, o
         if col in hourly_sim.columns:
             stage_df[f"building_{col}"] = hourly_sim[col]
 
+    if "Q_latent_W" in hourly_sim.columns:
+        stage_df["building_Q_C_sensible"] = pd.to_numeric(hourly_sim.get("Q_C", 0.0), errors="coerce").fillna(0.0)
+        stage_df["building_Q_C_latent"] = pd.to_numeric(hourly_sim["Q_latent_W"], errors="coerce").fillna(0.0)
+        stage_df["building_Q_C_total"] = (
+            stage_df["building_Q_C_sensible"].astype(float) + stage_df["building_Q_C_latent"].astype(float)
+        )
+
     hvac_cols = [
         "Q_h(kWh)",
         "QH_em_i_in(kWh)",
@@ -101,6 +119,12 @@ def _export_hvac_flow_results(hourly_sim: pd.DataFrame, hvac_df: pd.DataFrame, o
         "V_H_gen(m3/h)",
         "efficiency_gen(%)",
         "emission_calculation_mode",
+        "generation_type",
+        "HP_EH_hp_in(kWh)",
+        "HP_EH_backup_in(kWh)",
+        "HP_QH_environment_in(kWh)",
+        "HP_QH_unmet(kWh)",
+        "HP_SPF_HW_gen(-)",
     ]
     for col in hvac_cols:
         if col in hvac_df.columns:
@@ -112,243 +136,130 @@ def _export_hvac_flow_results(hourly_sim: pd.DataFrame, hvac_df: pd.DataFrame, o
     return stage_df
 
 
-def _build_sankey_consumption_report(
+def _default_heat_pump_15316_4_2_maps() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return compact default performance maps for an air-to-water heat pump."""
+
+    heating_rows = []
+    for source in [-15, -7, 2, 7, 12, 20]:
+        for sink in [35, 45, 55]:
+            capacity = 12.0 + 0.12 * source - 0.055 * (sink - 35.0)
+            cop = 4.2 + 0.055 * source - 0.045 * (sink - 35.0)
+            heating_rows.append(
+                {
+                    "source_temperature_C": source,
+                    "sink_temperature_C": sink,
+                    "capacity_kW": max(capacity, 3.0),
+                    "cop": max(cop, 1.6),
+                }
+            )
+
+    cooling_rows = []
+    for source in [20, 25, 30, 35, 40]:
+        for sink in [7, 12, 18]:
+            capacity = 10.0 - 0.08 * (source - 25.0) + 0.035 * (sink - 7.0)
+            eer = 3.7 - 0.055 * (source - 25.0) + 0.045 * (sink - 7.0)
+            cooling_rows.append(
+                {
+                    "source_temperature_C": source,
+                    "sink_temperature_C": sink,
+                    "capacity_kW": max(capacity, 3.0),
+                    "eer": max(eer, 1.7),
+                }
+            )
+
+    return pd.DataFrame(heating_rows), pd.DataFrame(cooling_rows)
+
+
+def _apply_heating_heat_pump_generation(
     hourly_sim: pd.DataFrame,
     hvac_df: pd.DataFrame,
+    input_hvac: dict,
     output_dir: str,
-    dhw_useful_df: pd.DataFrame | None = None,
-    dhw_distribution_df: pd.DataFrame | None = None,
-    dhw_storage_df: pd.DataFrame | None = None,
-) -> Path:
-    """Create a Sankey HTML report for the HVAC heating and DHW energy flow chains.
+) -> tuple[pd.DataFrame, pybui.HeatPumpSimulationResult]:
+    """Replace the heating generator stage with EN 15316-4-2 heat-pump results."""
 
-    Heating and DHW are shown as separate branches when DHW data are provided.
-    Each branch tracks demand -> emission/distribution/storage -> generator
-    input, with losses attached at every subsystem stage.
-    """
+    if not isinstance(hourly_sim, pd.DataFrame) or not isinstance(hvac_df, pd.DataFrame):
+        raise TypeError("hourly_sim and hvac_df must be pandas DataFrames.")
+    if "QH_gen_out(kWh)" not in hvac_df.columns:
+        raise KeyError("Heat-pump generation requires hvac_df['QH_gen_out(kWh)'].")
 
-    def _sum_col(df: pd.DataFrame, col: str) -> float:
-        return float(pd.to_numeric(df[col], errors="coerce").fillna(0.0).sum()) if col in df.columns else 0.0
+    hp_cfg = dict(input_hvac.get("heating_heat_pump_15316_4_2_config", {}))
+    heating_map = hp_cfg.get("heating_performance_map")
+    cooling_map = hp_cfg.get("cooling_performance_map")
+    if heating_map is None or cooling_map is None:
+        default_heating_map, default_cooling_map = _default_heat_pump_15316_4_2_maps()
+        heating_map = default_heating_map if heating_map is None else heating_map
+        cooling_map = default_cooling_map if cooling_map is None else cooling_map
 
-    same_generator_for_heating_and_dhw = bool(
-        INPUT_SYSTEM_HVAC.get("same_generator_for_heating_and_dhw", True)
+    hp_cfg.update(
+        {
+            "heating_performance_map": heating_map,
+            "cooling_performance_map": cooling_map,
+            "dhw_performance_map": hp_cfg.get("dhw_performance_map", heating_map),
+            "demand_unit": "kWh",
+            "heating_enabled": True,
+            "cooling_enabled": False,
+            "dhw_enabled": False,
+        }
     )
 
-    q_h_iso = _sum_col(hvac_df, "Q_h(kWh)")
-    q_h_fuel = _sum_col(hvac_df, "EHW_gen_in(kWh)")
-    q_h_gen_aux = _sum_col(hvac_df, "EHW_gen_aux(kWh)")
-    q_h_gen_out = _sum_col(hvac_df, "QH_gen_out(kWh)")
-    q_h_dis_ls = _sum_col(hvac_df, "Q_w_dis_i_ls(kWh)")
-    q_h_dis_aux = _sum_col(hvac_df, "Q_w_dis_i_aux(kWh)")
-    q_h_em_in = _sum_col(hvac_df, "QH_em_i_in(kWh)")
-    q_h_em_ls = _sum_col(hvac_df, "QH_em_ls(kWh)") if "QH_em_ls(kWh)" in hvac_df.columns else 0.0
-    q_h_em_aux = _sum_col(hvac_df, "W_H_em_aux(kWh)") if "W_H_em_aux(kWh)" in hvac_df.columns else 0.0
-    q_h_gen_standby = max(q_h_fuel - q_h_gen_out - q_h_gen_aux, 0.0)
-    q_h_uncovered = max(q_h_iso - q_h_em_in, 0.0)
-    coverage_pct = 100.0 * q_h_em_in / q_h_iso if q_h_iso > 0 else 0.0
+    loads = pd.DataFrame(index=hvac_df.index)
+    loads["T_ext"] = (
+        pd.to_numeric(hvac_df["T_ext(°C)"], errors="coerce")
+        if "T_ext(°C)" in hvac_df.columns
+        else pd.to_numeric(hourly_sim["T_ext"], errors="coerce").reset_index(drop=True)
+    )
+    loads["Q_H_kWh"] = pd.to_numeric(hvac_df["QH_gen_out(kWh)"], errors="coerce").fillna(0.0).clip(lower=0.0)
+    loads["Q_C_kWh"] = 0.0
+    loads["Q_W_kWh"] = 0.0
+    if "θX_gen_cr_flw(°C)" in hvac_df.columns:
+        loads["T_H_sink_C"] = pd.to_numeric(hvac_df["θX_gen_cr_flw(°C)"], errors="coerce")
+    elif "θH_dis_flw(°C)" in hvac_df.columns:
+        loads["T_H_sink_C"] = pd.to_numeric(hvac_df["θH_dis_flw(°C)"], errors="coerce")
+    if "θX_gen_cr_ret(°C)" in hvac_df.columns:
+        loads["T_H_return_C"] = pd.to_numeric(hvac_df["θX_gen_cr_ret(°C)"], errors="coerce")
+    elif "θH_dis_ret(°C)" in hvac_df.columns:
+        loads["T_H_return_C"] = pd.to_numeric(hvac_df["θH_dis_ret(°C)"], errors="coerce")
 
-    q_w_demand = _sum_col(dhw_useful_df, "Q_W_kWh") if dhw_useful_df is not None else 0.0
-    q_w_dis_in = _sum_col(dhw_distribution_df, "Q_W_dis_in_kWh") if dhw_distribution_df is not None else q_w_demand
-    q_w_dis_ls = _sum_col(dhw_distribution_df, "Q_W_dis_ls_kWh") if dhw_distribution_df is not None else 0.0
-    q_w_dis_aux = _sum_col(dhw_distribution_df, "W_W_dis_aux_kWh") if dhw_distribution_df is not None else 0.0
-    if dhw_storage_df is not None:
-        q_w_sto_in = _sum_col(dhw_storage_df, "Q_W_sto_in_kWh")
-        q_w_sto_out = _sum_col(dhw_storage_df, "Q_W_sto_out_kWh")
-        q_w_sto_ls = _sum_col(dhw_storage_df, "Q_W_sto_ls_kWh")
-        q_w_sto_aux = _sum_col(dhw_storage_df, "W_W_sto_aux_kWh")
+    hp_calc = pybui.HeatPumpSystemCalculator(hp_cfg)
+    hp_result = hp_calc.run_timeseries(loads)
+    hp_summary = dict(hp_result.summary)
+
+    q_h = float(hp_summary.get("QH_gen_out_kWh", loads["Q_H_kWh"].sum()))
+    e_hp = float(hp_summary.get("EH_hp_in_kWh", 0.0))
+    e_backup = float(hp_summary.get("EHW_backup_in_kWh", 0.0))
+    e_gen = float(hp_summary.get("EHW_gen_in_kWh", e_hp + e_backup))
+    w_aux = float(hp_summary.get("WHW_gen_aux_kWh", 0.0))
+    spf = float(hp_summary.get("SPF_HW_gen", q_h / (e_gen + w_aux) if (e_gen + w_aux) > 0 else 0.0))
+
+    out = hvac_df.copy()
+    if q_h > 0:
+        weights = pd.to_numeric(out["QH_gen_out(kWh)"], errors="coerce").fillna(0.0).clip(lower=0.0) / q_h
     else:
-        q_w_sto_in = q_w_dis_in
-        q_w_sto_out = q_w_dis_in
-        q_w_sto_ls = 0.0
-        q_w_sto_aux = 0.0
-    q_w_final_energy = q_w_sto_in if dhw_storage_df is not None else q_w_dis_in
-    nodes = [
-        {"name": "Heating useful energy"},
-        {"name": "Heating emission"},
-        {"name": "Heating distribution"},
-        {"name": "Heating generation"},
-        {"name": "DHW useful energy"},
-        {"name": "DHW distribution"},
-        {"name": "DHW storage"},
-        {"name": "DHW generation"},
-        {"name": "Final energy" if same_generator_for_heating_and_dhw else "Final energy Heating"},
-    ]
-    if not same_generator_for_heating_and_dhw:
-        nodes.append({"name": "Final energy DHW"})
-    if q_h_em_ls > 0.1:
-        nodes.append({"name": "Heating emission losses"})
-    if q_h_em_aux > 0.1:
-        nodes.append({"name": "Heating emission auxiliaries"})
-    if q_h_gen_standby > 1.0:
-        nodes.append({"name": "Heating generation losses"})
-    if q_h_gen_aux > 0.1:
-        nodes.append({"name": "Heating auxiliaries"})
-    if q_h_dis_ls > 0.1:
-        nodes.append({"name": "Heating distribution losses"})
-    if q_h_dis_aux > 0.1:
-        nodes.append({"name": "Heating distribution auxiliaries"})
-    if q_w_sto_ls > 0.1:
-        nodes.append({"name": "DHW storage losses"})
-    if q_w_sto_aux > 0.1:
-        nodes.append({"name": "DHW storage auxiliaries"})
-    if q_w_dis_ls > 0.1:
-        nodes.append({"name": "DHW distribution losses"})
-    if q_w_dis_aux > 0.1:
-        nodes.append({"name": "DHW distribution auxiliaries"})
+        weights = pd.Series(0.0, index=out.index)
+    out["generation_type"] = "heat_pump_15316_4_2"
+    out["EHW_gen_in(kWh)"] = weights * e_gen
+    out["EH_gen_in(kWh)"] = weights * e_gen
+    out["EWH_gen_in(kWh)"] = 0.0
+    out["EHW_gen_aux(kWh)"] = weights * w_aux
+    out["QW_gen_i_ls_rbl_H(kWh)"] = weights * float(hp_summary.get("QHW_gen_ls_rbl_tot_kWh", 0.0))
+    out["efficiency_gen(%)"] = spf * 100.0
+    out["HP_EH_hp_in(kWh)"] = weights * e_hp
+    out["HP_EH_backup_in(kWh)"] = weights * e_backup
+    out["HP_QH_environment_in(kWh)"] = weights * float(hp_summary.get("QHW_environment_in_kWh", 0.0))
+    out["HP_QH_unmet(kWh)"] = weights * float(hp_summary.get("QHW_unmet_kWh", 0.0))
+    out["HP_SPF_HW_gen(-)"] = spf
 
-    if same_generator_for_heating_and_dhw:
-        links = [
-            {"source": "Heating useful energy", "target": "Heating emission", "value": round(q_h_iso, 1)},
-            {"source": "Heating emission", "target": "Heating distribution", "value": round(q_h_em_in, 1)},
-            {"source": "Heating distribution", "target": "Heating generation", "value": round(q_h_gen_out, 1)},
-            {"source": "Heating generation", "target": "Final energy", "value": round(q_h_fuel, 1)},
-        ]
-    else:
-        links = [
-            {"source": "Heating useful energy", "target": "Heating emission", "value": round(q_h_iso, 1)},
-            {"source": "Heating emission", "target": "Heating distribution", "value": round(q_h_em_in, 1)},
-            {"source": "Heating distribution", "target": "Heating generation", "value": round(q_h_gen_out, 1)},
-            {"source": "Heating generation", "target": "Final energy Heating", "value": round(q_h_fuel, 1)},
-        ]
-    if q_h_em_ls > 0.1:
-        links.append({"source": "Heating emission", "target": "Heating emission losses", "value": round(q_h_em_ls, 1)})
-        links.append({"source": "Heating emission losses", "target": "Final energy" if same_generator_for_heating_and_dhw else "Final energy Heating", "value": round(q_h_em_ls, 1)})
-    if q_h_em_aux > 0.1:
-        links.append({"source": "Heating emission", "target": "Heating emission auxiliaries", "value": round(q_h_em_aux, 1)})
-        links.append({"source": "Heating emission auxiliaries", "target": "Final energy" if same_generator_for_heating_and_dhw else "Final energy Heating", "value": round(q_h_em_aux, 1)})
-    if q_h_gen_standby > 1.0:
-        links.append({"source": "Heating generation", "target": "Heating generation losses", "value": round(q_h_gen_standby, 1)})
-        links.append({"source": "Heating generation losses", "target": "Final energy" if same_generator_for_heating_and_dhw else "Final energy Heating", "value": round(q_h_gen_standby, 1)})
-    if q_h_gen_aux > 0.1:
-        links.append({"source": "Heating generation", "target": "Heating auxiliaries", "value": round(q_h_gen_aux, 1)})
-        links.append({"source": "Heating auxiliaries", "target": "Final energy" if same_generator_for_heating_and_dhw else "Final energy Heating", "value": round(q_h_gen_aux, 1)})
-    if q_h_dis_ls > 0.1:
-        links.append({"source": "Heating distribution", "target": "Heating distribution losses", "value": round(q_h_dis_ls, 1)})
-        links.append({"source": "Heating distribution losses", "target": "Final energy" if same_generator_for_heating_and_dhw else "Final energy Heating", "value": round(q_h_dis_ls, 1)})
-    if q_h_dis_aux > 0.1:
-        links.append({"source": "Heating distribution", "target": "Heating distribution auxiliaries", "value": round(q_h_dis_aux, 1)})
-        links.append({"source": "Heating distribution auxiliaries", "target": "Final energy" if same_generator_for_heating_and_dhw else "Final energy Heating", "value": round(q_h_dis_aux, 1)})
-
-    final_dhw_target = "Final energy" if same_generator_for_heating_and_dhw else "Final energy DHW"
-    if dhw_distribution_df is not None:
-        links.append({"source": "DHW useful energy", "target": "DHW distribution", "value": round(q_w_demand, 1)})
-        if dhw_storage_df is not None:
-            links.append({"source": "DHW distribution", "target": "DHW storage", "value": round(q_w_dis_in, 1)})
-            links.append({"source": "DHW storage", "target": "DHW generation", "value": round(q_w_sto_out, 1)})
-            if q_w_sto_ls > 0.1:
-                links.append({"source": "DHW storage", "target": "DHW storage losses", "value": round(q_w_sto_ls, 1)})
-                links.append({"source": "DHW storage losses", "target": final_dhw_target, "value": round(q_w_sto_ls, 1)})
-            if q_w_sto_aux > 0.1:
-                links.append({"source": "DHW storage", "target": "DHW storage auxiliaries", "value": round(q_w_sto_aux, 1)})
-                links.append({"source": "DHW storage auxiliaries", "target": final_dhw_target, "value": round(q_w_sto_aux, 1)})
-            links.append({"source": "DHW generation", "target": final_dhw_target, "value": round(q_w_final_energy, 1)})
-        else:
-            links.append({"source": "DHW distribution", "target": "DHW generation", "value": round(q_w_final_energy, 1)})
-            links.append({"source": "DHW generation", "target": final_dhw_target, "value": round(q_w_final_energy, 1)})
-        if q_w_dis_ls > 0.1:
-            links.append({"source": "DHW distribution", "target": "DHW distribution losses", "value": round(q_w_dis_ls, 1)})
-            links.append({"source": "DHW distribution losses", "target": final_dhw_target, "value": round(q_w_dis_ls, 1)})
-        if q_w_dis_aux > 0.1:
-            links.append({"source": "DHW distribution", "target": "DHW distribution auxiliaries", "value": round(q_w_dis_aux, 1)})
-            links.append({"source": "DHW distribution auxiliaries", "target": final_dhw_target, "value": round(q_w_dis_aux, 1)})
-
-    subtitle = (
-        f"Heating useful energy: {q_h_iso:.0f} kWh  |  "
-        f"Heating emission input: {q_h_em_in:.0f} kWh ({coverage_pct:.1f}%)  |  "
-        f"Heating emission losses: {q_h_em_ls:.0f} kWh  |  "
-        f"Heating final energy: {q_h_fuel:.0f} kWh  |  "
-        f"DHW useful energy: {q_w_demand:.0f} kWh  |  "
-        f"DHW final energy: {q_w_final_energy:.0f} kWh"
+    out_dir = Path(output_dir)
+    hp_result.bins.to_csv(out_dir / "heating_heat_pump_15316_4_2_bin_results.csv", index=False)
+    pd.DataFrame([hp_summary]).to_csv(out_dir / "heating_heat_pump_15316_4_2_summary.csv", index=False)
+    loads.to_csv(out_dir / "heating_heat_pump_15316_4_2_loads.csv")
+    print(
+        "[info] Heating generator: EN 15316-4-2 heat pump "
+        f"QH={q_h:.1f} kWh, final electricity={e_gen + w_aux:.1f} kWh, SPF={spf:.2f}"
     )
+    return out, hp_result
 
-    used_nodes = {link["source"] for link in links} | {link["target"] for link in links}
-    nodes = [node for node in nodes if node["name"] in used_nodes]
-
-    sankey = (
-        Sankey(init_opts=pye_opts.InitOpts(width="1150px", height="720px", page_title="HVAC Energy Sankey"))
-        .add(
-            series_name="Heating + DHW",
-            nodes=nodes,
-            links=links,
-            linestyle_opt=pye_opts.LineStyleOpts(opacity=0.4, curve=0.5, color="source"),
-            label_opts=pye_opts.LabelOpts(position="right", font_size=11),
-            node_gap=14,
-            node_width=16,
-            pos_left="8%",
-            pos_right="8%",
-            pos_top="8%",
-            pos_bottom="10%",
-        )
-        .set_global_opts(
-            title_opts=pye_opts.TitleOpts(
-                title="Energy flow heating + DHW — ISO 52016 + EN 15316",
-                subtitle=subtitle,
-            ),
-            toolbox_opts=pye_opts.ToolboxOpts(is_show=True),
-        )
-    )
-
-    out_path = Path(output_dir) / "hvac_energy_sankey.html"
-    sankey.render(str(out_path))
-    html = out_path.read_text(encoding="utf-8")
-    html = html.replace(
-        "</head>",
-        """
-<style>
-html, body { width: 100%; height: 100%; margin: 0; padding: 0; background: #faf7f2; }
-body { display: flex; justify-content: center; align-items: flex-start; }
-.chart-container { margin: 0 auto !important; }
-</style>
-</head>
-""",
-    )
-    html = html.replace('<body>', '<body><div style="width: 100%; display: flex; justify-content: center;">', 1)
-    html = html.replace('</body>', '</div></body>', 1)
-    out_path.write_text(html, encoding="utf-8")
-    print(f"[info] Sankey report written to {out_path}")
-    return out_path
-
-
-def _build_temperature_report(hvac_df: pd.DataFrame, output_dir: str) -> Path:
-    """Create an HTML report with the water temperatures across subsystems."""
-
-    if "timestamp" in hvac_df.columns:
-        index = pd.to_datetime(hvac_df["timestamp"], errors="coerce")
-    else:
-        index = pd.RangeIndex(len(hvac_df))
-
-    temp_cols = [
-        ("hvac_θH_em_flow(°C)", "Emission supply"),
-        ("hvac_θH_em_ret(°C)", "Emission return"),
-        ("hvac_θH_dis_flw(°C)", "Distribution supply"),
-        ("hvac_θH_dis_ret(°C)", "Distribution return"),
-        ("hvac_θX_gen_cr_flw(°C)", "Generator supply"),
-        ("hvac_θX_gen_cr_ret(°C)", "Generator return"),
-    ]
-
-    page = Page(layout=Page.SimplePageLayout)
-    x_data = [str(x) for x in index]
-    for col, title in temp_cols:
-        if col not in hvac_df.columns:
-            continue
-        vals = pd.to_numeric(hvac_df[col], errors="coerce").fillna(method="ffill").fillna(method="bfill").tolist()
-        chart = (
-            Line()
-            .add_xaxis(x_data)
-            .add_yaxis(title, vals, is_smooth=True, is_symbol_show=False)
-            .set_global_opts(
-                title_opts=pye_opts.TitleOpts(title=f"Water temperature - {title}"),
-                xaxis_opts=pye_opts.AxisOpts(axislabel_opts=pye_opts.LabelOpts(rotate=45)),
-                yaxis_opts=pye_opts.AxisOpts(name="°C"),
-                datazoom_opts=[pye_opts.DataZoomOpts(type_="inside"), pye_opts.DataZoomOpts()],
-            )
-        )
-        page.add(chart)
-
-    out_path = Path(output_dir) / "hvac_temperatures.html"
-    page.render(str(out_path))
-    print(f"[info] Temperature report written to {out_path}")
-    return out_path
 
 # BUI = {
 #     "building": {
@@ -1222,464 +1133,99 @@ BUI = {
 }
 
 
-INPUT_SYSTEM_HVAC = {
-    # ------------------------------------------------------------------
-    # EN 15316-2 - EMISSION SYSTEM
-    # ------------------------------------------------------------------
-    # Legacy ISO 15316-1 emission inputs.
-    'emitter_type': 'Floor heating',
-    'nominal_power': 15.0,
-    'emission_efficiency': 90.0,
-    'flow_temp_control_type': 'Type 2 - Based on outdoor temperature',
-    'selected_emm_cont_circuit': 0,
-    'mixing_valve': True,
-    'emission_calculation_mode': 'en15316-2',
-    'emission_time_step_hours': 1.0,
+INPUT_SYSTEM_HVAC = get_example_hvac_input()
 
-    # 'TB14': custom_TB14, #  <- Uncomment and provide your emitter table; otherwise the default stored in global_inputs.py is used
-    # 'heat_emission_data' : pd.DataFrame({ <- Uncomment and provide your emitter table; otherwise the default stored in global_inputs.py is used
-    #         "θH_em_flw_max_sahz_i": [45],
-    #         "ΔθH_em_w_max_sahz_i": [8],
-    #         "θH_em_ret_req_sahz_i": [20],
-    #         "βH_em_req_sahz_i": [80],
-    #         "θH_em_flw_min_tz_i": [28],
-    #     }, index=[
-    #         "Max flow temperature HZ1",
-    #         "Max Δθ flow / return HZ1",
-    #         "Desired return temperature HZ1",
-    #         "Desired load factor with ON-OFF for HZ1",
-    #         "Minimum flow temperature for HZ1"
-    #     ]),
-    # 'outdoor_temp_data': pd.DataFrame({
-    #         # If this table is provided, iso_15316_1.py uses it to build the
-    #         # secondary outdoor-temperature curve; otherwise it falls back to
-    #         # its internal _default_outdoor_data() table.
-    #         "θext_min_sahz_i": [-10],
-    #         "θext_max_sahz_i": [16],
-    #         "θem_flw_max_sahz_i": [45],
-    #         "θem_flw_min_sahz_i": [28],
-    #     }, index=[
-    #         "Minimum outdoor temperature",
-    #         "Maximum outdoor temperature",
-    #         "Maximum flow temperature",
-    #         "Minimum flow temperature"
-    #     ]),
-    'mixing_valve_delta':2,
-    # 'constant_flow_temp':42,
-
-    # Detailed EN 15316-2 emission configuration.
-    'emission_15316_2_config': {
-        # Global EN 15316-2 settings.
-        'time_step_hours': 1.0,
-        'demand_unit': 'kWh',
-        'default_heating_internal_temperature_C': 20.0,
-        'default_cooling_internal_temperature_C': 26.0,
-
-        # Heating emission parameters used by EmissionSystemCalculator.
-        'heating': {
-            'stratification_K': 0.0,
-            'control_K': 0.0,
-            'radiation_K': 0.0,
-            'hydraulic_balancing_K': 0.0,
-            'room_automation_K': 0.0,
-            'embedded_K': 0.0,
-            'nominal_power_kW': 15.0,
-            'fan_power_W': 0.0,
-            'fan_count': 0,
-            'control_power_W': 0.0,
-            'control_count': 0,
-            'convective_fraction': 0.7,
-        },
-
-        # Cooling emission parameters used by EmissionSystemCalculator.
-        'cooling': {
-            'stratification_K': 0.0,
-            'control_K': 0.0,
-            'radiation_K': 0.0,
-            'hydraulic_balancing_K': 0.0,
-            'room_automation_K': 0.0,
-            'embedded_K': 0.0,
-            'nominal_power_kW': 15.0,
-            'fan_power_W': 0.0,
-            'fan_count': 0,
-            'control_power_W': 0.0,
-            'control_count': 0,
-            'convective_fraction': 0.7,
-        },
-    },
-
-    # ------------------------------------------------------------------
-    # EN 15316-3 - DISTRIBUTION SYSTEM
-    # ------------------------------------------------------------------
-    # Inputs used by the distribution block.
-    'heat_losses_recovered': True,
-    'distribution_loss_recovery': 90,
-    'simplified_approach': 80,
-    'distribution_aux_recovery': 80,
-    'distribution_aux_power': 30,
-    'distribution_loss_coeff': 48,
-    'distribution_operation_time': 1,
-    'distribution_calculation_mode': 'analytical', # or simplified for aggregated approach
-    'distribution_15316_3_config': {
-        # EN 15316-3 step resolution and service-level configuration.
-        'time_step_hours': 1.0,
-        'demand_unit': 'kWh',
-        'heating': {
-            # Heating distribution service.
-            'operation_mode': 'demand',
-            'nominal_power_kW': 15.0,
-            'design_flow_m3_h': 1.304,
-            'design_deltaT_K': 10.0,
-            'pipe_sections': [
-                {
-                    # Single aggregated pipe section for the example building.
-                    'length_m': 12.0,
-                    'equivalent_length_m': 2.0,
-                    'linear_thermal_transmittance_W_mK': 0.45,
-                    'ambient_temperature_C': 20.0,
-                    'recoverable': True,
-                }
-            ],
-            # Pump model assumptions.
-            'pump_control_code': 4, # 0 uncontrolled, 3 = variable speed based on p∆ constant, 4 = variable speed based on p∆ variable
-            'eei': 0.23,
-            'hydraulic_correction_factor': 1.0,
-            'recoverable_aux_fraction': 0.25,
-            'pressure_loss_per_m_kPa': 0.10,
-            'additional_pressure_kPa': 0.0,
-            'resistance_ratio': 0.30,
-            'pump_selection_factor': 1.0,
-            'pump_label_power_kW': 0.0,
-            'part_load_mode': 'load',
-        },
-        'dhw': {
-            'operation_mode': 'demand',
-            'nominal_power_kW': 15.0,
-            'design_flow_m3_h': 1.304,
-            'design_deltaT_K': 10.0,
-            'dhw_temperature_C': 55.0,
-            'dhw_return_deltaT_K': 5.0,
-            'max_length_m': 25.0,
-            'pressure_loss_per_m_kPa': 0.10,
-            'additional_pressure_kPa': 0.0,
-            'resistance_ratio': 0.30,
-            'pump_control_code': 4,
-            'eei': 0.23,
-            'hydraulic_correction_factor': 1.0,
-            'recoverable_aux_fraction': 0.25,
-            'pipe_sections': [
-                {
-                    'length_m': 12.0,
-                    'equivalent_length_m': 2.0,
-                    'linear_thermal_transmittance_W_mK': 0.45,
-                    'ambient_temperature_C': 20.0,
-                    'recoverable': True,
-                }
-            ],
-        },
-    },
-
-    # DHW branch selection.
-    'same_generator_for_heating_and_dhw': True,
-    'dhw_storage_enabled': True,
-    'dhw_storage_config': {
-        'time_step_hours': 1.0,
-        'demand_unit': 'kWh',
-        'dhw': {
-            'enabled': True,
-            'storage_volume_l': 180.0,
-            'storage_setpoint_C': 55.0,
-            'output_temperature_C': 55.0,
-            'ambient_temperature_C': 20.0,
-            'standby_loss_kWh_per_day_ref': 0.90,
-            'standby_set_temperature_ref_C': 55.0,
-            'standby_ambient_temperature_ref_C': 20.0,
-            'standby_loss_adaptation_factor': 1.0,
-            'connection_loss_factor': 1.0,
-            'thermal_loss_room_fraction': 0.75,
-            'auxiliary_to_medium_fraction': 0.25,
-            'input_pump_power_kW': 0.0,
-            'input_pump_flow_m3_h': 0.0,
-            'input_pump_deltaT_K': 10.0,
-            'output_pump_power_kW': 0.0,
-            'output_pump_flow_m3_h': 0.0,
-            'output_pump_deltaT_K': 10.0,
-            'operation_mode': 'demand',
-        },
-    },
-    'dhw_generator_config': {
-        'nominal_power_kW': 8.0,
-        'rated_power_kW': 8.0,
-        'boiler_type': 'condensing',
-        'fuel_type': 'natural_gas',
-        'boiler_location': 'inside_heated',
-    },
-    
-    # ------------------------------------------------------------------
-    # EN 15316-4-1 - GENERATION SYSTEM
-    # ------------------------------------------------------------------
-    # Inputs used by the boiler/generator block.
-    'full_load_power': 27,                  # kW
-    'max_monthly_load_factor': 100,         # %
-    'tH_gen_i_ON': 1,                       # h
-    'auxiliary_power_generator': 0,         # %
-    'fraction_of_auxiliary_power_generator': 40,   # %
-    'generator_circuit': 'independent',     # 'direct' | 'independent'
-
-    # Primary flow temperature control and outdoor reset curve.
-    'gen_flow_temp_control_type': 'Type A - Based on outdoor temperature',
-    'gen_outdoor_temp_data': pd.DataFrame({
-        "θext_min_gen": [-7],
-        "θext_max_gen": [15],
-        "θflw_gen_max": [60],
-        "θflw_gen_min": [35],
-    }, index=["Generator curve"]),
-
-    'speed_control_generator_pump': 'variable',
-    'generator_nominal_deltaT': 20,         # °C
-    'mixing_valve_delta':2,
-    # 
-    'generation_calculation_mode': 'boiler_15316_4_1',
-    'boiler_generation_config': {
-        # Boiler-specific EN 15316-4-1 performance data.
-        'boiler_type': 'condensing',
-        'fuel_type': 'natural_gas',
-        'rated_power_kW': 27.0,
-        'intermediate_load_fraction': 0.30,
-        'eta_Pn_test_pct': 98.0,
-        'eta_Pint_test_pct': 106.0,
-        'theta_test_Pn_C': 60.0,
-        'theta_test_Pint_C': 40.0,
-        'f_corr_pct_per_K': 0.04,
-        'P_gen_ls_P0_W': 100.0,
-        'P_aux_on_W': 80.0,
-        'P_aux_off_W': 5.0,
-        'f_jacket': 0.40,
-        'f_location': 1.0,
-        'f_aux_recoverable': 0.75,
-        'dew_point_C': 55.0,
-        'condensing_gain_pct': 11.0,
-        'efficiency_table': {
-            'condensing': {
-                'eta_Pn_test_pct': 98.0,
-                'eta_Pint_test_pct': 106.0,
-                'theta_test_Pn_C': 60.0,
-                'theta_test_Pint_C': 40.0,
-            }
-        },
-        'loss_table': {
-            'condensing': {
-                'P_gen_ls_P0_W': 100.0,
-            }
-        },
-        'boiler_location': 'inside_heated',
-    },
-
-    # Optional explicit generator setpoints (commented by default)
-    # 'θHW_gen_flw_set': 50,
-    # 'θHW_gen_ret_set': 40,
-
-    # Efficiency model
-    'efficiency_model': 'simple',
-
-    # Calculation options
-    'calc_when_QH_positive_only': False,
-    'off_compute_mode': 'full',
+# ============================================================
+#           SYSTEM GENERATION PROFILE SELECTION
+# ============================================================
+# Pick one of the predefined generation system layouts below and let the
+# script activate only the relevant input blocks.
+#
+# 1. heating + DHW: condensing boiler
+# 2. heating + DHW: condensing boiler, cooling: air-air heat pump
+# 3. heating + cooling + DHW: reversible air-to-water heat pump
+# 4. heating: air-to-water heat pump, DHW: air-to-water heat-pump water heater,
+#    cooling: air-air heat pump
+SYSTEM_GENERATION_PROFILE = 2
 
 
+def _reshape_inputs_for_generation_profile(cfg: dict, profile: int) -> dict:
+    cfg = dict(cfg)
 
+    def _ensure_cooling_enabled(enabled: bool) -> None:
+        cfg.setdefault("cooling_storage_enabled", bool(enabled))
+        cfg.setdefault("cooling_enabled", bool(enabled))
 
-}
+    if profile == 1:
+        cfg["heating_generator_type"] = "boiler_15316_4_1"
+        cfg["generation_calculation_mode"] = "boiler_15316_4_1"
+        cfg["same_generator_for_heating_and_dhw"] = True
+        cfg["dhw_storage_enabled"] = True
+        cfg["boiler_generation_config"]["boiler_type"] = "condensing"
+        cfg["boiler_generation_config"]["fuel_type"] = "natural_gas"
+        cfg["dhw_generator_config"]["boiler_type"] = "condensing"
+        cfg["dhw_generator_config"]["fuel_type"] = "natural_gas"
+        INPUT_SYSTEM_COOLING["enabled"] = False
+        INPUT_SYSTEM_COOLING["cooling_storage_enabled"] = False
+    elif profile == 2:
+        cfg["heating_generator_type"] = "boiler_15316_4_1"
+        cfg["generation_calculation_mode"] = "boiler_15316_4_1"
+        cfg["same_generator_for_heating_and_dhw"] = True
+        cfg["dhw_storage_enabled"] = True
+        cfg["boiler_generation_config"]["boiler_type"] = "condensing"
+        cfg["boiler_generation_config"]["fuel_type"] = "natural_gas"
+        cfg["dhw_generator_config"]["boiler_type"] = "condensing"
+        cfg["dhw_generator_config"]["fuel_type"] = "natural_gas"
+        INPUT_SYSTEM_COOLING["enabled"] = True
+        INPUT_SYSTEM_COOLING["cooling_storage_enabled"] = False
+        INPUT_SYSTEM_COOLING["cooling_system_16798_9_config"]["system_type"] = "air"
+        INPUT_SYSTEM_COOLING["cooling_system_16798_9_config"]["generator_temperature_control"] = "VARIABLE"
+        INPUT_SYSTEM_COOLING["cooling_generation_16798_13_config"]["generation_type"] = "COMP"
+    elif profile == 3:
+        cfg["heating_generator_type"] = "heat_pump_15316_4_2"
+        cfg["generation_calculation_mode"] = "heat_pump_15316_4_2"
+        cfg["same_generator_for_heating_and_dhw"] = True
+        cfg["dhw_storage_enabled"] = True
+        INPUT_SYSTEM_COOLING["enabled"] = False
+        INPUT_SYSTEM_COOLING["cooling_storage_enabled"] = False
+    elif profile == 4:
+        cfg["heating_generator_type"] = "heat_pump_15316_4_2"
+        cfg["generation_calculation_mode"] = "heat_pump_15316_4_2"
+        cfg["same_generator_for_heating_and_dhw"] = True
+        cfg["dhw_storage_enabled"] = True
+        cfg["dhw_generator_config"]["nominal_power_kW"] = cfg["dhw_generator_config"].get("nominal_power_kW", 8.0)
+        INPUT_SYSTEM_COOLING["enabled"] = True
+        INPUT_SYSTEM_COOLING["cooling_storage_enabled"] = False
+        INPUT_SYSTEM_COOLING["cooling_system_16798_9_config"]["system_type"] = "air"
+        INPUT_SYSTEM_COOLING["cooling_generation_16798_13_config"]["generation_type"] = "COMP"
+    else:
+        raise ValueError("SYSTEM_GENERATION_PROFILE must be 1, 2, 3 or 4.")
+
+    return cfg
+
+# ============================================================
+#           COOLING SYSTEM CONFIGURATION
+#           EN 16798-9 (operating conditions) / EN 16798-15
+#           (chilled-water storage) / EN 16798-13 (compression
+#           generation)
+# ============================================================
+INPUT_SYSTEM_COOLING = get_example_cooling_input()
+
+INPUT_SYSTEM_HVAC = _reshape_inputs_for_generation_profile(
+    INPUT_SYSTEM_HVAC,
+    SYSTEM_GENERATION_PROFILE,
+)
 
 # ============================================================
 #           HVAC INPUT CONSISTENCY CHECK
 # ============================================================
-
-# This check verifies that the main thermal powers are coherent across
-# emission, distribution, and generation before the simulation starts.
-# If the values are not aligned, the script stops with a clear error.
-_emission_nominal = float(INPUT_SYSTEM_HVAC.get('nominal_power', 0.0))
-_emission_15316_2_nominal = float(
-    INPUT_SYSTEM_HVAC.get('emission_15316_2_config', {})
-    .get('heating', {})
-    .get('nominal_power_kW', 0.0)
-)
-_distribution_nominal = float(
-    INPUT_SYSTEM_HVAC.get('distribution_15316_3_config', {})
-    .get('heating', {})
-    .get('nominal_power_kW', 0.0)
-)
-_generator_full_load = float(INPUT_SYSTEM_HVAC.get('full_load_power', 0.0))
-_boiler_rated = float(INPUT_SYSTEM_HVAC.get('boiler_generation_config', {}).get('rated_power_kW', 0.0))
-_same_generator_for_heating_and_dhw = bool(INPUT_SYSTEM_HVAC.get('same_generator_for_heating_and_dhw', True))
-_dhw_storage_enabled = bool(INPUT_SYSTEM_HVAC.get('dhw_storage_enabled', False))
-_boiler_type = str(INPUT_SYSTEM_HVAC.get('boiler_generation_config', {}).get('boiler_type', '')).lower()
-_fuel_type = str(INPUT_SYSTEM_HVAC.get('boiler_generation_config', {}).get('fuel_type', '')).lower()
-_boiler_location = str(INPUT_SYSTEM_HVAC.get('boiler_generation_config', {}).get('boiler_location', '')).lower()
-_speed_control_generator_pump = str(INPUT_SYSTEM_HVAC.get('speed_control_generator_pump', '')).lower()
-_efficiency_model = str(INPUT_SYSTEM_HVAC.get('efficiency_model', '')).lower()
-_off_compute_mode = str(INPUT_SYSTEM_HVAC.get('off_compute_mode', '')).lower()
-
-_tolerance_pct = 0.10
-_emission_block_diff = abs(_emission_nominal - _emission_15316_2_nominal)
-_emission_distribution_diff = abs(_emission_nominal - _distribution_nominal)
-_generator_boiler_diff = abs(_generator_full_load - _boiler_rated)
-_distribution_flow = float(
-    INPUT_SYSTEM_HVAC.get('distribution_15316_3_config', {})
-    .get('heating', {})
-    .get('design_flow_m3_h', 0.0)
-)
-_distribution_deltaT = float(
-    INPUT_SYSTEM_HVAC.get('distribution_15316_3_config', {})
-    .get('heating', {})
-    .get('design_deltaT_K', 0.0)
-)
-_water_heat_capacity_density = 1.15
-_expected_flow = (
-    _emission_nominal / (_water_heat_capacity_density * _distribution_deltaT)
-    if _distribution_deltaT > 0
-    else 0.0
-)
-_flow_diff = abs(_distribution_flow - _expected_flow)
-
-if (
-    _emission_nominal <= 0
-    or _emission_15316_2_nominal <= 0
-    or _distribution_nominal <= 0
-    or _generator_full_load <= 0
-    or _boiler_rated <= 0
-):
-    raise ValueError(
-        "HVAC input error: nominal_power, emission_15316_2_config.heating.nominal_power_kW, "
-        "distribution nominal_power_kW, full_load_power and boiler rated_power_kW must all be positive."
-    )
-
-if _emission_block_diff > 0.01 * max(_emission_nominal, 1e-9):
-    raise ValueError(
-        "HVAC input error: nominal_power and emission_15316_2_config.heating.nominal_power_kW "
-        f"must match closely. Got nominal_power={_emission_nominal:.3f} kW and "
-        f"emission_15316_2_config.heating.nominal_power_kW={_emission_15316_2_nominal:.3f} kW."
-    )
-
-_generator_power_diff = abs(_generator_full_load - _boiler_rated)
-if _generator_power_diff > 0.01 * max(_generator_full_load, 1e-9):
-    raise ValueError(
-        "HVAC input error: full_load_power and boiler_generation_config.rated_power_kW "
-        f"must match closely. Got full_load_power={_generator_full_load:.3f} kW and "
-        f"rated_power_kW={_boiler_rated:.3f} kW."
-    )
-
-_dhw_nominal = float(INPUT_SYSTEM_HVAC.get('dhw_generator_config', {}).get('nominal_power_kW', 0.0))
-if not _same_generator_for_heating_and_dhw and _dhw_nominal <= 0:
-    raise ValueError(
-        "HVAC input error: dhw_generator_config.nominal_power_kW must be positive "
-        "when same_generator_for_heating_and_dhw is False."
-    )
-
-# Boiler/fuel compatibility check: this blocks incoherent generator configurations
-# before the EN 15316-4-1 model is executed.
-_allowed_fuel_map = {
-    "standard": {"natural_gas"},
-    "low_temperature": {"natural_gas"},
-    "condensing": {"natural_gas"},
-    "biomass_log": {"wood_log"},
-    "biomass_pellet": {"wood_pellet"},
-}
-
-if _boiler_type not in _allowed_fuel_map:
-    raise ValueError(
-        "HVAC input error: boiler_type is not supported. "
-        f"Expected one of {sorted(_allowed_fuel_map)}."
-    )
-
-if _fuel_type not in _allowed_fuel_map[_boiler_type]:
-    raise ValueError(
-        "HVAC input error: boiler_type and fuel_type are not compatible. "
-        f"For boiler_type='{_boiler_type}' expected one of {sorted(_allowed_fuel_map[_boiler_type])}, "
-        f"got fuel_type='{_fuel_type}'."
-    )
-
-# Boiler location check: the EN 15316-4-1 calculator only supports a closed
-# set of installation positions, so invalid values are rejected up front.
-_allowed_boiler_locations = {
-    "inside_heated",
-    "adjacent_unheated",
-    "outside_building",
-}
-
-if _boiler_location not in _allowed_boiler_locations:
-    raise ValueError(
-        "HVAC input error: boiler_location is not supported. "
-        f"Expected one of {sorted(_allowed_boiler_locations)}, got '{_boiler_location}'."
-    )
-
-# Generator control checks: these fields select the internal calculation branch
-# used by the EN 15316-4-1 / ISO 15316-1 interface, so invalid values must be
-# rejected before the solver starts.
-_allowed_speed_control_generator_pump = {
-    "variable",
-    "deltaT_constant",
-}
-if _speed_control_generator_pump not in _allowed_speed_control_generator_pump:
-    raise ValueError(
-        "HVAC input error: speed_control_generator_pump is not supported. "
-        f"Expected one of {sorted(_allowed_speed_control_generator_pump)}, "
-        f"got '{_speed_control_generator_pump}'."
-    )
-
-_allowed_efficiency_model = {
-    "simple",
-    "parametric",
-}
-if _efficiency_model not in _allowed_efficiency_model:
-    raise ValueError(
-        "HVAC input error: efficiency_model is not supported. "
-        f"Expected one of {sorted(_allowed_efficiency_model)}, got '{_efficiency_model}'."
-    )
-
-_allowed_off_compute_mode = {
-    "idle",
-    "temps",
-    "full",
-}
-if _off_compute_mode not in _allowed_off_compute_mode:
-    raise ValueError(
-        "HVAC input error: off_compute_mode is not supported. "
-        f"Expected one of {sorted(_allowed_off_compute_mode)}, got '{_off_compute_mode}'."
-    )
-
-if _emission_distribution_diff > _tolerance_pct * _emission_nominal:
-    raise ValueError(
-        "HVAC input error: emission nominal_power and distribution nominal_power_kW "
-        "are not aligned. The distribution must use the same reference power as the emitter."
-    )
-
-if _generator_boiler_diff > _tolerance_pct * _generator_full_load:
-    raise ValueError(
-        "HVAC input error: full_load_power and boiler rated_power_kW are not aligned. "
-        "The boiler configuration must match the generator sizing."
-    )
-
-# Hydraulic sizing check: validates that the design flow is coherent with the
-# nominal emitter power and the design temperature difference of the circuit.
-if _distribution_deltaT <= 0:
-    raise ValueError(
-        "HVAC input error: design_deltaT_K must be positive to validate the design flow."
-    )
-
-if _distribution_flow <= 0:
-    raise ValueError(
-        "HVAC input error: design_flow_m3_h must be positive."
-    )
-
-if _flow_diff > _tolerance_pct * max(_expected_flow, 1e-9):
-    raise ValueError(
-        "HVAC input error: design_flow_m3_h is not coherent with nominal_power and "
-        f"design_deltaT_K. Expected design_flow_m3_h is about {_expected_flow:.3f} m3/h "
-        f"from Vdot = P / (c * ΔT) = {_emission_nominal:.1f} / "
-        f"({_water_heat_capacity_density:.2f} * {_distribution_deltaT:.1f}). "
-        "Check the hydraulic sizing of the distribution circuit."
-    )
+_coherence_summary = validate_hvac_input_coherence(INPUT_SYSTEM_HVAC)
+_same_generator_for_heating_and_dhw = bool(_coherence_summary["same_generator_for_heating_and_dhw"])
+_heating_generator_type = _coherence_summary["heating_generator_type"]
+_dhw_storage_enabled = bool(INPUT_SYSTEM_HVAC.get("dhw_storage_enabled", False))
+_dhw_nominal = float(_coherence_summary["dhw_nominal"])
+_distribution_flow = float(_coherence_summary["distribution_flow_m3_h"])
+_expected_flow = float(_coherence_summary["expected_flow_m3_h"])
 
 # ============================================================
 #           QUALITY CHECK SYSTEM INPUT HVAC
@@ -1781,8 +1327,24 @@ else:
     # ISO 15316-1 calculation
     df_in = calc.load_csv_data(hourly_sim)  # columns: Q_H, T_op, T_ext (or aliases)
     df_out = calc.run_timeseries()
+    heating_heat_pump_result = None
+    if _heating_generator_type == 'heat_pump_15316_4_2':
+        df_out, heating_heat_pump_result = _apply_heating_heat_pump_generation(
+            hourly_sim,
+            df_out,
+            INPUT_SYSTEM_HVAC,
+            file_dir,
+        )
+    else:
+        df_out = df_out.copy()
+        df_out["generation_type"] = "boiler_15316_4_1"
     _export_hvac_flow_results(hourly_sim, df_out, file_dir)
-    _build_sankey_consumption_report(hourly_sim, df_out, file_dir)
+    _build_sankey_consumption_report(
+        hourly_sim,
+        df_out,
+        file_dir,
+        same_generator_for_heating_and_dhw=bool(INPUT_SYSTEM_HVAC.get("same_generator_for_heating_and_dhw", True)),
+    )
     if GENERATE_EXTRA_REPORTS:
         _build_temperature_report(df_out, file_dir)
         Graphs_and_report(df=hourly_sim, season='heating_cooling', building_area=BUI['building']['net_floor_area']).bui_analysis_page(
@@ -1790,6 +1352,96 @@ else:
             name_file="main_report",
         )
     print("[info] Column legend: examples/hvac_stage_results_legend_it.md")
+
+    # ============================================================
+    #           COOLING CHAIN: EN 16798-9 / EN 16798-15 / EN 16798-13
+    # ============================================================
+    # Cooling-side operating conditions (EN 16798-9), optional chilled-water
+    # storage (EN 16798-15) and compression cooling generation (EN 16798-13).
+    # Follows the same chaining pattern as heat_pump_15316_4_2_example.py:
+    # each stage reads/updates a shared "cooling_loads" frame via Q_C_kWh.
+    cooling_loads = pd.DataFrame(index=hourly_sim.index)
+    cooling_loads["T_ext"] = hourly_sim["T_ext"].astype(float)
+    cooling_loads["T_op"] = hourly_sim["T_op"].astype(float)
+    if "Q_C" in hourly_sim.columns:
+        cooling_loads["Q_C_kWh"] = hourly_sim["Q_C"].astype(float) / 1000.0
+    else:
+        cooling_loads["Q_C_kWh"] = (-hourly_sim["Q_HC"].clip(upper=0)).astype(float) / 1000.0
+
+    cooling_system_result = None
+    cooling_storage_result = None
+    cooling_generation_result = None
+
+    if INPUT_SYSTEM_COOLING.get("enabled", True) and cooling_loads["Q_C_kWh"].sum() > 0:
+        # EN 16798-9: cooling-side operating conditions (chilled-water temperatures,
+        # distribution volume flow and generation-side cooling request).
+        cooling_system_calc = pybui.CoolingSystemCalculator(
+            INPUT_SYSTEM_COOLING["cooling_system_16798_9_config"]
+        )
+        cooling_system_result = cooling_system_calc.run_timeseries(cooling_loads)
+        cooling_loads["Q_C_16798_9_out_kWh"] = cooling_system_result.timeseries["Q_C_dis_out_tot_req_kWh"]
+        cooling_loads["Q_C_gen_in_req_16798_9_kWh"] = cooling_system_result.timeseries["Q_C_gen_in_req_kWh"]
+        cooling_loads["theta_C_dis_supply_C"] = cooling_system_result.timeseries["theta_C_dis_supply_C"]
+        cooling_loads["theta_C_dis_return_C"] = cooling_system_result.timeseries["theta_C_dis_return_C"]
+        cooling_loads["theta_C_gen_out_req_C"] = cooling_system_result.timeseries["theta_C_gen_out_req_C"]
+        cooling_loads["T_C_sink_C"] = cooling_system_result.timeseries["T_C_sink_C"]
+        cooling_loads["Q_C_kWh"] = cooling_system_result.timeseries["Q_C_gen_in_req_kWh"]
+
+        # EN 16798-15: optional chilled-water buffer storage heat gains and pump auxiliaries.
+        if INPUT_SYSTEM_COOLING.get("cooling_storage_enabled", True):
+            cooling_storage_calc = pybui.CoolingStorageSystemCalculator(
+                INPUT_SYSTEM_COOLING["cooling_storage_16798_15_config"]
+            )
+            cooling_storage_result = cooling_storage_calc.run_timeseries(cooling_loads)
+            cooling_loads["Q_C_storage_out_kWh"] = cooling_storage_result.timeseries["Q_C_sto_out_kWh"]
+            cooling_loads["Q_C_sto_loss_kWh"] = cooling_storage_result.timeseries["Q_C_sto_ls_tot_kWh"]
+            cooling_loads["W_C_sto_aux_kWh"] = cooling_storage_result.timeseries["W_C_sto_aux_kWh"]
+            cooling_loads["Q_C_kWh"] = cooling_storage_result.timeseries["Q_C_sto_in_kWh"]
+            cooling_loads["T_C_sink_C"] = cooling_storage_result.timeseries["T_C_sink_C"]
+            cooling_loads["theta_C_gen_out_req_C"] = cooling_storage_result.timeseries["theta_C_sto_in_req_C"]
+
+        # EN 16798-13: compression cooling generation (electricity input, EER, rejected heat).
+        cooling_generation_calc = pybui.CoolingGenerationSystemCalculator(
+            INPUT_SYSTEM_COOLING["cooling_generation_16798_13_config"]
+        )
+        cooling_generation_result = cooling_generation_calc.run_timeseries(cooling_loads)
+
+        cooling_loads.to_csv(Path(file_dir) / "cooling_loads_16798.csv")
+        cooling_system_result.timeseries.to_csv(Path(file_dir) / "cooling_16798_9_hourly_results.csv")
+        pd.DataFrame([cooling_system_result.summary]).to_csv(
+            Path(file_dir) / "cooling_16798_9_summary.csv", index=False
+        )
+        if cooling_storage_result is not None:
+            cooling_storage_result.timeseries.to_csv(
+                Path(file_dir) / "cooling_storage_16798_15_hourly_results.csv"
+            )
+            pd.DataFrame([cooling_storage_result.summary]).to_csv(
+                Path(file_dir) / "cooling_storage_16798_15_summary.csv", index=False
+            )
+        cooling_generation_result.timeseries.to_csv(
+            Path(file_dir) / "cooling_generation_16798_13_hourly_results.csv"
+        )
+        pd.DataFrame([cooling_generation_result.summary]).to_csv(
+            Path(file_dir) / "cooling_generation_16798_13_summary.csv", index=False
+        )
+
+        print(f"EN 16798-9 cooling request: {cooling_system_result.summary['QC_dis_out_tot_req_kWh']:,.1f} kWh")
+        print(f"EN 16798-9 mean cooling flow: {cooling_system_result.summary['q_V_C_dis_mean_m3_h']:.3f} m3/h")
+        if cooling_storage_result is not None:
+            print(f"EN 16798-15 cooling storage heat gains: {cooling_storage_result.summary['QC_sto_ls_tot_kWh']:,.1f} kWh")
+            print(f"EN 16798-15 cooling storage auxiliaries: {cooling_storage_result.summary['WC_sto_aux_kWh']:,.1f} kWh")
+        print(f"EN 16798-13 cooling electricity: {cooling_generation_result.summary['EC_total_kWh']:,.1f} kWh")
+        print(f"EN 16798-13 cooling rejected heat: {cooling_generation_result.summary['QC_gen_out_kWh']:,.1f} kWh")
+        print(f"EN 16798-13 SEER_C_gen: {cooling_generation_result.summary['SEER_C_gen']:.2f}")
+        _build_cooling_sankey_report(
+            hourly_sim,
+            file_dir,
+            cooling_system_result=cooling_system_result,
+            cooling_storage_result=cooling_storage_result,
+            cooling_generation_result=cooling_generation_result,
+        )
+    else:
+        print("[info] Cooling chain skipped: no cooling need in hourly_sim or INPUT_SYSTEM_COOLING.enabled=False.")
 
     # ============================================================
     #           DHW CHAIN: optional storage + distribution
@@ -1856,6 +1508,15 @@ else:
             index=False,
         )
 
+    hourly_sim = hourly_sim.copy()
+    if "Q_C" in hourly_sim.columns:
+        hourly_sim["Q_C_sensible"] = pd.to_numeric(hourly_sim["Q_C"], errors="coerce").fillna(0.0)
+        hourly_sim["Q_C_latent"] = (
+            pd.to_numeric(hourly_sim["Q_latent_W"], errors="coerce").fillna(0.0)
+            if "Q_latent_W" in hourly_sim.columns
+            else 0.0
+        )
+        hourly_sim["Q_C_total"] = hourly_sim["Q_C_sensible"] + hourly_sim["Q_C_latent"]
     combined_parts = [hourly_sim.reset_index(drop=True)]
     if isinstance(df_out, pd.DataFrame):
         combined_parts.append(df_out.add_prefix("hvac_").reset_index(drop=True))
@@ -1900,85 +1561,49 @@ else:
             f"Use dhw_generator_config for generator sizing; DHW demand after distribution/storage is {dhw_generator:.2f} kWh."
         )
 
+    # ============================================================
+    #           FINAL ENERGY SUMMARY
+    # ============================================================
+    heating_final_energy = float(
+        pd.to_numeric(df_out.get("EHW_gen_in(kWh)", pd.Series(0.0, index=df_out.index)), errors="coerce")
+        .fillna(0.0)
+        .sum()
+    )
+    cooling_final_energy = (
+        float(cooling_generation_result.summary["EC_total_kWh"])
+        if cooling_generation_result is not None
+        else 0.0
+    )
+    dhw_final_energy = dhw_generator
+    total_final_energy = heating_final_energy + cooling_final_energy + dhw_final_energy
+
+    summary_df = pd.DataFrame(
+        [
+            {
+                "heating_final_energy_kWh": heating_final_energy,
+                "cooling_final_energy_kWh": cooling_final_energy,
+                "dhw_final_energy_kWh": dhw_final_energy,
+                "total_final_energy_kWh": total_final_energy,
+            }
+        ]
+    )
+    summary_df.to_csv(Path(file_dir) / "final_energy_summary.csv", index=False)
+    print(
+        "[summary] Final energy: "
+        f"heating={heating_final_energy:,.1f} kWh, "
+        f"cooling={cooling_final_energy:,.1f} kWh, "
+        f"DHW={dhw_final_energy:,.1f} kWh, "
+        f"total={total_final_energy:,.1f} kWh"
+    )
+
     _build_sankey_consumption_report(
         hourly_sim,
         df_out,
         file_dir,
+        same_generator_for_heating_and_dhw=_same_generator_for_heating_and_dhw,
         dhw_useful_df=dhw_hourly,
         dhw_distribution_df=dhw_distribution_result.timeseries,
         dhw_storage_df=(dhw_storage_result.timeseries if dhw_storage_result is not None else None),
     )
 
     raise SystemExit(0)
-
-
-# ================================================================================================================
-#                                   DHW NEEDS
-# ================================================================================================================
-
-# Water temperature of the mixed (cold and hot) water drawn at the tap
-teta_W_draw = 42 
-# Cold water temperature
-teta_W_cold = 11.2 
-# Hot water delivery temperature 60°C
-teta_w_h_ref = 60
-# Cold water supply temperature 13.5°C
-teta_w_c_ref = 13.5
-# Physical constant
-# Building inputs
-building_area = 120
-building_type = 'Dwellings'
-# Use Profiles
-hourly_fractions_examples = pd.DataFrame({
-    "Workday" : [0,0,0,0,0,0,0,0,5,10,10,10,20,10,10,10,10,5,0,0,0,0,0,0],
-    "Weekend" : [0,0,0,0,0,0,0,0,5,10,10,5,0,0,0,0,0,0,0,0,0,0,0,0],
-    "Holiday" : [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-    }
-)
-sum_fractions = pd.DataFrame(hourly_fractions_examples.sum())
-sum_fractions.columns= ["fractions"]
-# National calendar
-hourly_fractions = hourly_fractions_examples
-calendar_nation = "Italy"
-Italy_calendar = generate_calendar(calendar_nation, 2023)
-n_workdays = sum(Italy_calendar['values'] == 'Working')
-n_weekends = sum(Italy_calendar['values'] == 'Non-Working')
-n_holidays = sum(Italy_calendar['values'] == 'Holiday')
-Italy_calendar['values'].unique()
-total_days = Italy_calendar.count().values[0]
-
-# DHW needs
-DHW_calc = Volume_and_energy_DHW_calculation(
-    n_workdays, n_weekends, n_holidays,sum_fractions, total_days, hourly_fractions,
-    teta_W_draw, 
-    teta_w_c_ref,
-    teta_w_h_ref,
-    teta_W_cold,
-    mode_calc= 'number_of_units', 
-    building_type_B3= 'Residential', 
-    building_area= 142, 
-    unit_count= 10, 
-    building_type_B5= 'Dwelling',
-    residential_typology= 'residential_building - simple housing - AVG', # table B_4
-    calculation_method= 'table',
-    year= 2015,
-    country_calendar=Italy_calendar
-    )
-
-# Plot data
-t_start=24
-t_end = 48
-df = pd.DataFrame(dict(
-    x = list(range(0,len(DHW_calc[6])))[t_start:t_end],
-    y = DHW_calc[6][t_start:t_end],
-))
-fig = px.line(df, x="x", y="y", title = "DHW profile") 
-fig.show()
-
-df['z'] = df['y'].cumsum()
-fig_1 = px.line(df, x="x", y="z", title = "DHW profile cumulative") 
-fig_1.show()
-
-
-
-# PRIMARY ENERGY CALCULATION 

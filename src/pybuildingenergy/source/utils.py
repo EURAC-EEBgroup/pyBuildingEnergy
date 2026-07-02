@@ -35,6 +35,60 @@ from .table_iso_16798_1 import *
 from . import table_iso_16798_1 as iso16798_profiles
 
 
+P_ATM = 101325.0
+CP_DA = 1005.0
+L_V = 2_501_000.0
+EPS_W = 0.62198
+
+
+def _sat_vapor_pressure_pa(T_c):
+    T_c = np.asarray(T_c, dtype=float)
+    return 610.94 * np.exp((17.625 * T_c) / (T_c + 243.04))
+
+
+def _humidity_ratio_from_t_rh(T_c, RH_pct, p_pa: float = P_ATM):
+    T_c = np.asarray(T_c, dtype=float)
+    RH = np.clip(np.asarray(RH_pct, dtype=float) / 100.0, 0.0, 1.0)
+    p_ws = _sat_vapor_pressure_pa(T_c)
+    p_w = RH * p_ws
+    return EPS_W * p_w / np.maximum(1.0, (p_pa - p_w))
+
+
+def _latent_heat_load_from_air_exchange(
+    h_ve_w_k: float,
+    theta_int_c: float,
+    theta_ext_c: float,
+    rh_ext_pct: float | None,
+    rh_int_pct: float = 50.0,
+    p_pa: float = P_ATM,
+):
+    """
+    Derive moisture content and latent ventilation load from the sensible air exchange term.
+
+    Returns
+    -------
+    tuple[float, float, float, float, float]
+        (x_ext_kgkg, x_int_kgkg, mass_flow_kg_s, latent_power_w, latent_energy_wh)
+    """
+    if not np.isfinite(h_ve_w_k) or h_ve_w_k <= 0.0:
+        return 0.0, 0.0, 0.0, 0.0, 0.0
+
+    if rh_ext_pct is None or not np.isfinite(rh_ext_pct):
+        rh_ext_pct = 50.0
+
+    theta_int_c = float(theta_int_c) if np.isfinite(theta_int_c) else float(theta_ext_c)
+    theta_ext_c = float(theta_ext_c) if np.isfinite(theta_ext_c) else theta_int_c
+    rh_int_pct = float(np.clip(rh_int_pct if np.isfinite(rh_int_pct) else 50.0, 1.0, 100.0))
+    rh_ext_pct = float(np.clip(rh_ext_pct, 0.0, 100.0))
+
+    x_ext = float(_humidity_ratio_from_t_rh(theta_ext_c, rh_ext_pct, p_pa=p_pa))
+    x_int = float(_humidity_ratio_from_t_rh(theta_int_c, rh_int_pct, p_pa=p_pa))
+    mass_flow_kg_s = float(h_ve_w_k) / CP_DA
+    latent_power_w = mass_flow_kg_s * L_V * (x_ext - x_int)
+    latent_energy_wh = latent_power_w  # 1 h timestep
+    return x_ext, x_int, mass_flow_kg_s, latent_power_w, latent_energy_wh
+
+
 @dataclass
 class WeatherDataResult:
     elevation: float
@@ -6677,6 +6731,7 @@ class ISO52016:
             if ext_arr.size < Tstepn:
                 ext_arr = np.pad(ext_arr, (0, Tstepn - ext_arr.size), mode="constant", constant_values=0.0)
             external_internal_gains_series = ext_arr[:Tstepn]
+        RH_arr = _series_to_float_array(sim_df, "RH", default=np.nan)
 
         # ====================================
         # Get info of porfiles
@@ -6705,6 +6760,7 @@ class ISO52016:
         E_tb_loss_Wh = 0.0
         E_ground_loss_Wh = 0.0
         E_storage_Wh = 0.0
+        E_latent_Wh = 0.0
 
         # ------------------------------------------------------------------
         # STATE CAPACITY (J/K) aligned to the nodes of the equation
@@ -6755,6 +6811,8 @@ class ISO52016:
         _MatA = np.zeros((nodes.Rn, nodes.Rn), dtype=float)
         _VecB = np.zeros((nodes.Rn, 3), dtype=float)
         # -------------------------------------
+        int_gains_arr = np.zeros(Tstepn, dtype=float)  # stores sensible internal gains per timestep
+        f_lat_int = float(kwargs.get("latent_internal_fraction", 0.0))  # latent fraction of int. gains (ISO 52016 §6.5.6)
 
         # --- Commit-2: pre-extract time-series as NumPy arrays ---
         T2m_arr       = _series_to_float_array(sim_df, "T2m")
@@ -7374,6 +7432,7 @@ class ISO52016:
                     phi_int   = float(int_gains)
                     E_solar_Wh    += phi_solar * dt_h
                     E_internal_Wh += phi_int   * dt_h
+                    int_gains_arr[Tstepi] = phi_int  # store for latent post-processing (ISO 52016 §6.5.6)
 
                     # 3) Heating/Cooling (uses current load)
                     phi_hc = float(Phi_HC_nd_act[Tstepi])
@@ -7386,6 +7445,17 @@ class ISO52016:
                     q_vent = float(H_ve_nat) * T_in - float(S_ve_nat)
                     if q_vent > 0:  E_vent_loss_Wh += q_vent * dt_h
                     else:           E_solar_Wh     += (-q_vent) * dt_h
+
+                    rh_ext = float(RH_arr[Tstepi]) if Tstepi < len(RH_arr) else np.nan
+                    x_ext, x_int, m_dot_kg_s, phi_latent_w, e_latent_wh = _latent_heat_load_from_air_exchange(
+                        float(H_ve_nat),
+                        T_in,
+                        T_out,
+                        rh_ext,
+                        rh_int_pct=float(kwargs.get("latent_indoor_rh_pct", 50.0)),
+                    )
+                    if phi_latent_w > 0:
+                        E_latent_Wh += phi_latent_w * dt_h
 
                     # 5) Thermal bridges
                     q_tb = float(t_Th.thermal_bridge_heat) * (T_in - T_out)
@@ -7419,10 +7489,10 @@ class ISO52016:
                         elif q_cond < 0: E_solar_Wh += (-q_cond) * dt_h
 
 
-                if Tstepi < 6:  # primi 6 passi di debug
+                if Tstep_first_act <= Tstepi < Tstep_first_act + 6:  # primi 6 passi attivi di debug
                     print(f"[t={Tstepi}] T_op0={Theta_int_op[Tstepi,0]:.2f}  Phi_HC={Phi_HC_nd_act[Tstepi]:.1f}  "
                         f"int_gains={float(int_gains):.1f}  Phi_solar={float(Phi_sol_dir_zt_t):.1f}  "
-                        f"H_ve_nat={float(H_ve_nat):.3f}")
+                        f"H_ve_nat={float(H_ve_nat):.3f}  Phi_lat={phi_latent_w:.1f}")
                 pbar.update(1)
             n_w=n_w+1
 
@@ -7541,9 +7611,61 @@ class ISO52016:
         hourly_results["Q_C"] = 0.0
         hourly_results.loc[hourly_results["Q_HC"] < 0, "Q_C"] = -hourly_results.loc[hourly_results["Q_HC"] < 0, "Q_HC"]
 
+        RH_act = RH_arr[act_slice] if len(RH_arr) >= Tstepn else np.full(len(hourly_results), np.nan)
+        int_gains_act = int_gains_arr[act_slice]
+        latent_rows = []
+        for _idx, (_hve, _tint, _text, _rh, _int_g) in enumerate(
+            zip(hourly_results["H_ve"].to_numpy(dtype=float),
+                hourly_results["T_air"].to_numpy(dtype=float),
+                hourly_results["T_ext"].to_numpy(dtype=float),
+                np.asarray(RH_act, dtype=float),
+                int_gains_act)
+        ):
+            x_ext, x_int, m_dot_kg_s, phi_lat_vent_w, q_lat_vent_wh = _latent_heat_load_from_air_exchange(
+                float(_hve),
+                float(_tint),
+                float(_text),
+                float(_rh) if np.isfinite(_rh) else np.nan,
+                rh_int_pct=float(kwargs.get("latent_indoor_rh_pct", 50.0)),
+            )
+            phi_lat_int_w   = f_lat_int * float(_int_g)           # latent internal gains [W] (ISO 52016 §6.5.6)
+            phi_lat_total_w = phi_lat_vent_w + phi_lat_int_w      # net latent: >0 dehumidify, <0 humidify
+            q_lat_total_wh  = q_lat_vent_wh  + phi_lat_int_w      # 1 h timestep
+            latent_rows.append((
+                x_ext, x_int, m_dot_kg_s,
+                phi_lat_vent_w, q_lat_vent_wh,
+                phi_lat_int_w,
+                phi_lat_total_w, q_lat_total_wh,
+            ))
+
+        if latent_rows:
+            latent_arr = np.asarray(latent_rows, dtype=float)
+            hourly_results["X_ext_kg_kg_da"]         = latent_arr[:, 0]
+            hourly_results["X_int_ref_kg_kg_da"]     = latent_arr[:, 1]
+            hourly_results["m_dot_vent_kg_s"]        = latent_arr[:, 2]
+            hourly_results["Q_latent_vent_W"]        = np.clip(latent_arr[:, 3], 0.0, None)   # ventilation dehumidification only
+            hourly_results["Q_latent_vent_Wh"]       = np.clip(latent_arr[:, 4], 0.0, None)
+            hourly_results["Q_int_latent_W"]         = latent_arr[:, 5]                        # internal latent gains (signed)
+            hourly_results["Q_latent_W_signed"]      = latent_arr[:, 6]                        # total signed (vent + int)
+            hourly_results["Q_latent_W"]             = np.clip(latent_arr[:, 6], 0.0, None)   # latent cooling need
+            hourly_results["Q_latent_Wh"]            = np.clip(latent_arr[:, 7], 0.0, None)
+            hourly_results["Q_H_latent_W"]           = np.clip(-latent_arr[:, 6], 0.0, None)  # latent heating need (humidification)
+            hourly_results["Q_H_latent_Wh"]          = np.clip(-latent_arr[:, 7], 0.0, None)
+        else:
+            for _col in ("X_ext_kg_kg_da", "X_int_ref_kg_kg_da", "m_dot_vent_kg_s",
+                         "Q_latent_vent_W", "Q_latent_vent_Wh", "Q_int_latent_W",
+                         "Q_latent_W_signed", "Q_latent_W", "Q_latent_Wh",
+                         "Q_H_latent_W", "Q_H_latent_Wh"):
+                hourly_results[_col] = 0.0
+
+        hourly_results["Q_C_sensible"] = hourly_results["Q_C"]
+        hourly_results["Q_C_latent"]   = hourly_results["Q_latent_W"]   # total latent cooling need (vent + internal)
+        hourly_results["Q_C_total"]    = hourly_results["Q_C_sensible"] + hourly_results["Q_C_latent"]
+
         dt_h_annual = _infer_timestep_hours_from_index(hourly_results.index, default=1.0)
         Q_H_annual = _integrate_power_series_to_energy_wh(hourly_results["Q_H"], default_dt_h=dt_h_annual)
         Q_C_annual = _integrate_power_series_to_energy_wh(hourly_results["Q_C"], default_dt_h=dt_h_annual)
+        Q_latent_annual = _integrate_power_series_to_energy_wh(hourly_results["Q_latent_W"], default_dt_h=dt_h_annual)
         A_use = float(building_object['building']['net_floor_area'])
 
         annual_results_dic = {
@@ -7553,8 +7675,11 @@ class ISO52016:
             "Q_C_annual_per_sqm": Q_C_annual / A_use if A_use > 0 else 0.0,
             "Q_H_annual_kWh": Q_H_annual / 1000.0,
             "Q_C_annual_kWh": Q_C_annual / 1000.0,
+            "Q_latent_annual_Wh": Q_latent_annual,
+            "Q_latent_annual_kWh": Q_latent_annual / 1000.0,
             "Q_H_annual_kWh_per_sqm": (Q_H_annual / 1000.0 / A_use) if A_use > 0 else 0.0,
             "Q_C_annual_kWh_per_sqm": (Q_C_annual / 1000.0 / A_use) if A_use > 0 else 0.0,
+            "Q_latent_annual_kWh_per_sqm": (Q_latent_annual / 1000.0 / A_use) if A_use > 0 else 0.0,
             "time_step_h": dt_h_annual,
         }
         annual_results_df = pd.DataFrame([annual_results_dic])
