@@ -408,7 +408,7 @@ def _apply_heating_heat_pump_generation(
 #             "shading": False,
 #             "shading_type": "horizontal_overhang",
 #             "width_or_distance_of_shading_elements": 0.5,
-#             "overhang_proprieties": {
+#             "overhang_properties": {
 #                 "width_of_horizontal_overhangs":1
 #             },
 #             "name_adj_zone": None
@@ -430,7 +430,7 @@ def _apply_heating_heat_pump_generation(
 #             "shading": False,
 #             "shading_type": "horizontal_overhang",
 #             "width_or_distance_of_shading_elements": 0.5,
-#             "overhang_proprieties": {
+#             "overhang_properties": {
 #                 "width_of_horizontal_overhangs":1
 #             },
 #             "name_adj_zone": None
@@ -727,7 +727,7 @@ BUI = {
             "shading": False,
             "shading_type": "horizontal_overhang",
             "width_or_distance_of_shading_elements": 0.5,
-            "overhang_proprieties": {
+            "overhang_properties": {
                 "width_of_horizontal_overhangs": 1.0
             }
         },
@@ -752,7 +752,7 @@ BUI = {
             "shading": False,
             "shading_type": "horizontal_overhang",
             "width_or_distance_of_shading_elements": 0.5,
-            "overhang_proprieties": {
+            "overhang_properties": {
                 "width_of_horizontal_overhangs": 1.0
             }
         }

@@ -1370,7 +1370,7 @@ BUI = {
             "height": 2, "width": 1, "parapet": 1.1,
             "orientation": {"azimuth": 90, "tilt": 90}, "shading": False,
             "shading_type": "horizontal_overhang", "width_or_distance_of_shading_elements": 0.5,
-            "overhang_proprieties": {"width_of_horizontal_overhangs": 1},
+            "overhang_properties": {"width_of_horizontal_overhangs": 1},
             "name_adj_zone": None
         },
         {
@@ -1379,7 +1379,7 @@ BUI = {
             "height": 2, "width": 1, "parapet": 1.1,
             "orientation": {"azimuth": 270, "tilt": 90}, "shading": False,
             "shading_type": "horizontal_overhang", "width_or_distance_of_shading_elements": 0.5,
-            "overhang_proprieties": {"width_of_horizontal_overhangs": 1},
+            "overhang_properties": {"width_of_horizontal_overhangs": 1},
             "name_adj_zone": None
         }
     ],

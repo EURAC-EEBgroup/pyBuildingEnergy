@@ -184,11 +184,11 @@ class HourlyProfileGenerator:
         end_date = pd.Timestamp(self.start_date) + pd.DateOffset(months=self.num_months)
         date_range = pd.date_range(start=self.start_date, end=end_date, freq="h", inclusive="left")
 
-        df = pd.DataFrame({"datetime": date_range})
-        df["date"] = df["datetime"].dt.date
-        df["hour"] = df["datetime"].dt.hour
-        df["day_of_week"] = df["datetime"].dt.dayofweek  # 0=Mon ... 6=Sun
-        df["day_name"] = df["datetime"].dt.day_name()
+        df = pd.DataFrame({"datetime": date_range}).copy()
+        df.loc[:, "date"] = df["datetime"].dt.date
+        df.loc[:, "hour"] = df["datetime"].dt.hour
+        df.loc[:, "day_of_week"] = df["datetime"].dt.dayofweek  # 0=Mon ... 6=Sun
+        df.loc[:, "day_name"] = df["datetime"].dt.day_name()
 
         # if holidays is None:
         #     raise ImportError(
@@ -200,24 +200,28 @@ class HourlyProfileGenerator:
         years_needed = list(range(self.start_year, self.start_year + 3))
         self.country_holidays = holidays.country_holidays(self.country, years=years_needed)
 
-        df["is_holiday"] = df["date"].apply(lambda x: x in self.country_holidays)
-        df["is_weekend"] = df["day_of_week"].isin([5, 6])
-        df["is_working_day"] = ~(df["is_holiday"] | df["is_weekend"])
-        df["holiday_name"] = df["date"].apply(lambda x: self.country_holidays.get(x, ""))
+        df.loc[:, "is_holiday"] = df["date"].apply(lambda x: x in self.country_holidays)
+        df.loc[:, "is_weekend"] = df["day_of_week"].isin([5, 6])
+        df.loc[:, "is_working_day"] = ~(df["is_holiday"] | df["is_weekend"])
+        df.loc[:, "holiday_name"] = df["date"].apply(
+            lambda x: self.country_holidays.get(x, "")
+        )
 
         # Category profiles
         for cat, pair in self.profiles.items():
             wd = pair["weekday"]
             hd = pair["holiday"]
             # Apply profile based on day type
-            df[f"{cat}_profile"] = df.apply(
+            df.loc[:, f"{cat}_profile"] = df.apply(
                 lambda row: wd[row["hour"]] if row["is_working_day"] else hd[row["hour"]],
                 axis=1
             )
 
         # Historical 'profile_value' column for retro-compatibility (uses occupancy)
-        df["profile_value"] = df["occupancy_profile"]
-        df["day_type"] = df["is_working_day"].apply(lambda x: "Working Day" if x else "Holiday/Weekend")
+        df.loc[:, "profile_value"] = df["occupancy_profile"]
+        df.loc[:, "day_type"] = df["is_working_day"].apply(
+            lambda x: "Working Day" if x else "Holiday/Weekend"
+        )
 
         self.df = df
         return self.df

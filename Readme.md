@@ -102,6 +102,20 @@ The heating and DHW calculation follows the detailed EN 15316-4-2 bin-method str
 
 For a clause-by-clause audit trail between the standard, the implementation and the output files, open [Heat Pump EN 15316-4-2 Implementation Audit](docs/heat_pump_15316_4_2_audit.html).
 
+## Additional Generation And Renewable Modules - EN 15316-4-1, EN 15316-4-4, EN 15316-4-5, EN 15316-4-3/4-6 **(New)**
+
+The Athens and Bolzano system workflow can now switch the heating/DHW generator
+away from the default heat pump:
+
+- `CombustionBoilerSystemCalculator` implements an EN 15316-4-1 combustion-generator boundary with part-load/return-temperature efficiency, standby losses and auxiliaries.
+- `CogenerationSystemCalculator` implements an EN 15316-4-4 thermal-led CHP boundary with fuel input, useful electricity, self-consumption/export and backup heat.
+- `DistrictEnergySystemCalculator` implements an EN 15316-4-5 district heating/cooling substation boundary.
+- `RenewableEnergySystemCalculator` implements the EN 15316-4-3/4-6 solar thermal and PV accounting branch used by the examples and STREPIN runner.
+
+Audit pages:
+[Generation EN 15316-4-1/4-4/4-5](docs/generation_15316_4_1_4_4_4_5_audit.html) and
+[Renewables EN 15316-4-3/4-6](docs/renewables_15316_4_3_4_6_audit.html).
+
 ## Heat Pump Product Performance - EN 14511 And EN 14825 **(New)**
 
 `HeatPumpPerformanceDataCalculator` normalizes heat-pump rating data from EN
@@ -246,6 +260,19 @@ python examples/heat_pump_15316_4_2_example.py --scenario athens --calculation-p
 python examples/heat_pump_15316_4_2_example.py --scenario bolzano --calculation-path full
 ```
 
+To exercise the newly added generator and renewable branches:
+
+```bash
+python examples/heat_pump_15316_4_2_example.py --scenario athens --calculation-path full-renewables
+python examples/heat_pump_15316_4_2_example.py --scenario athens --calculation-path boiler-full
+python examples/heat_pump_15316_4_2_example.py --scenario bolzano --calculation-path chp-full
+python examples/heat_pump_15316_4_2_example.py --scenario bolzano --calculation-path district-full
+```
+
+The same choices can be made explicitly with
+`--heating-generation-method en15316-4-2|en15316-4-1|en15316-4-4|en15316-4-5`
+and `--renewable-method en15316-4-3-4-6`.
+
 To keep the full subsystem chain but use the previous synthetic product maps
 without EN 14825 part-load correction, use:
 
@@ -323,6 +350,42 @@ By default the script uses PVGIS weather for the selected scenario, so it needs 
 python examples/heat_pump_15316_4_2_example.py --scenario athens --weather-source epw --path-weather-file path/to/weather.epw
 ```
 
+## Italian STREPIN Archetypes **(New)**
+
+The STREPIN workbook in `examples/strepin_archetypes/` can be converted into
+pyBuildingEnergy BUI cases and simulated with the European-standard generator
+chain. Package IDs reproduce the workbook's pre/post cases:
+
+```bash
+python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes all --packages P00 --system-chain en-standards
+python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes RMF_E1_B --packages P00,P09 --system-chain en-standards --write-hourly
+python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes all --packages all --system-chain en-standards
+```
+
+Arbitrary combinations of the workbook measure levels can also be simulated
+without adding a new workbook package:
+
+```bash
+python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes RMF_E1_B --measure-levels wall=2,roof_floor=2,windows=2,heating=3,pv=2 --system-chain en-standards
+```
+
+Additional renovation overlays that are considered in the European EPB suite
+but are not explicit STREPIN workbook package levels can be layered on top:
+
+```bash
+python examples/strepin_archetypes/run_italian_strepin_engine.py --archetypes RMF_E1_B --measure-levels wall=2,roof_floor=2,windows=2,heating=3,pv=2 --extra-measures lighting-controls,ventilation-hrv,bacs-b,solar-thermal,battery-5 --system-chain en-standards
+```
+
+The STREPIN runner now reports EN ISO 52000-1 delivered/exported primary
+energy, EN 15193-1 lighting, EN 16798-5/7 ventilation and heat recovery,
+EN 15232-1 / EN ISO 52120-1 BACS factors, EN 15459-1 global cost, and deeper
+EN 15316-4 options for biomass, CHP and district heat where selected.
+
+Climate zone B now defaults to `examples/Palermo_PVGIS_TMY.epw`, downloaded from
+PVGIS and normalized for `pvlib.read_epw`. Open
+[Italian STREPIN Archetype Engine Audit](docs/strepin_archetype_engine_audit.html)
+for the data and workflow crosswalk.
+
 The script checks that the ISO52016 run produces both heating and cooling demand and that DHW demand is non-zero before running the heat-pump calculation.
 
 ## Primary Energy - Heating System **(New)**
@@ -335,14 +398,22 @@ The EN 15316 series covers the calculation method for system energy requirements
 - [x] EN 15316-1: General and expression of energy performance (Modules M3-1, M3-4, M3-9, M8-1, M8-4)
 - [x] EN 15316-2: Emission systems (heating and cooling)
 - [x] EN 15316-3: Distribution systems (DHW, heating, cooling)
-- [ ] EN 15316-4-X: Heat generation systems:
-  - 4-1: Combustion boilers
+- [x] EN 15316-4-X: Heat generation systems:
+  - [x] 4-1: Combustion boilers
   - [x] 4-2: Heat pumps
-  - 4-3: Solar thermal and photovoltaic systems
-  - 4-4: Cogeneration systems
-  - 4-5: District heating
-  - 4-7: Biomass
+  - [x] 4-3: Solar thermal and photovoltaic systems
+  - [x] 4-4: Cogeneration systems
+  - [x] 4-5: District heating
+  - [x] Biomass/solid-fuel default wrapper for EN 15316-4 generation workflows
 - [x] EN 15316-5: Storage systems
+
+## Cross-Cutting EPB Accounting **(New)**
+
+- [x] EN ISO 52000-1: delivered/exported energy and primary-energy accounting
+- [x] EN 15193-1: lighting energy and LENI-style indicators
+- [x] EN 16798-5/7: mechanical ventilation, heat recovery and fan electricity
+- [x] EN 15232-1 / EN ISO 52120-1: BACS service factors
+- [x] EN 15459-1: global cost and annualized cost calculation
 
 ## EN 16798 Cooling Modular Structure **(New)**
 
@@ -516,7 +587,11 @@ The DHW calculation was developed with data and methods from the EPB Center spre
 - EN 15316-1:2018 - System energy requirements and efficiencies  
 - EN 15316-2:2017 - Space emission systems
 - EN 15316-3:2017 - Distribution systems
+- EN 15316-4-1:2017 - Combustion generation systems
 - EN 15316-4-2:2008 - Heat-pump generation systems
+- EN 15316-4-3 / EN 15316-4-6 - Thermal solar systems and photovoltaic systems
+- EN 15316-4-4:2007/2008 - Cogeneration systems
+- EN 15316-4-5:2017 - District heating and cooling
 - EN 15316-5:2017 - Storage systems
 - EN 16798-9:2017 - Cooling systems
 - EN 16798-13:2017 - Cooling generation
