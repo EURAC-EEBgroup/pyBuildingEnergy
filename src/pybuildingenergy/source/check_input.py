@@ -2,6 +2,11 @@ from copy import deepcopy
 import numpy as np
 from pybuildingenergy.global_inputs import TB14 as TB14_backup
 import pandas as pd
+from pybuildingenergy.source.emitter_442 import (
+    EN442RadiatorCharacteristic,
+    EmitterCharacteristic,
+    normalize_emitter_characteristic_method,
+)
 from pybuildingenergy.source.table_iso_16798_1 import internal_gains_occupants
 
 def _dir_from_orientation(azimuth: float, tilt: float) -> str:
@@ -77,11 +82,109 @@ def check_heating_system_inputs(system_input: dict):
         TB14 = TB14_backup
         messages.append("⚙️ Default TB14 table loaded from global_inputs.py.")
 
-    # 2) Validate emitter_type against TB14
+    required_tb14_columns = {
+        "Emitters_nominale_deltaTeta_air_C",
+        "Emitters_exponent_n",
+        "Emitters_nominal_deltaTeta_Water_C",
+    }
+    missing_tb14_columns = required_tb14_columns.difference(TB14.columns)
+    if missing_tb14_columns:
+        raise ValueError(
+            "TB14 is missing required columns: "
+            + ", ".join(sorted(missing_tb14_columns))
+        )
+    numeric_tb14 = TB14.loc[:, sorted(required_tb14_columns)].apply(
+        pd.to_numeric, errors="coerce"
+    )
+    if numeric_tb14.isna().any().any() or (numeric_tb14 <= 0.0).any().any():
+        raise ValueError("All TB14 emitter parameters must be finite positive numbers.")
+
+    # 2) Validate emitter_type against TB14 or an explicit EN 442 rating.
     emitter_type = cfg.get("emitter_type", None)
     valid_emitters = list(TB14.index)
 
-    if emitter_type not in valid_emitters:
+    supplied_characteristic = cfg.get("emitter_characteristic")
+    configured_method = cfg.get(
+        "emitter_calculation_method",
+        cfg.get("emitter_characteristic_method"),
+    )
+    if configured_method is None and isinstance(
+        supplied_characteristic, EmitterCharacteristic
+    ):
+        configured_method = supplied_characteristic.method
+    method = normalize_emitter_characteristic_method(configured_method)
+    cfg["emitter_calculation_method"] = method
+
+    if isinstance(supplied_characteristic, EmitterCharacteristic):
+        supplied_method = normalize_emitter_characteristic_method(
+            supplied_characteristic.method
+        )
+        if supplied_method != method:
+            raise ValueError(
+                "emitter_characteristic.method conflicts with "
+                "emitter_calculation_method."
+            )
+
+    if method == "en442":
+        if emitter_type is None:
+            emitter_type = "Radiator"
+            cfg["emitter_type"] = emitter_type
+        emitter_label = str(emitter_type).strip().lower()
+        excluded = ("floor", "fan coil", "fan-coil", "fan assisted", "trench")
+        if any(label in emitter_label for label in excluded):
+            raise ValueError(
+                "EN 442 is not applicable to floor heating, fan-assisted emitters, "
+                "or trench convectors."
+            )
+        rating = cfg.get("emitter_rating")
+        if isinstance(supplied_characteristic, EmitterCharacteristic):
+            validated_rating = supplied_characteristic
+        elif isinstance(rating, dict):
+            validated_rating = EN442RadiatorCharacteristic.from_dict(rating)
+        else:
+            raise ValueError(
+                "emitter_calculation_method='en442' requires emitter_rating "
+                "or an EN 442 emitter_characteristic object."
+            )
+        messages.append(
+            "EN 442 product rating validated: "
+            f"phi_50={validated_rating.nominal_power_kW:g} kW, "
+            f"n={validated_rating.exponent_n:g}."
+        )
+        if validated_rating.maximum_operating_temperature_C is None:
+            messages.append(
+                "EN 442 product rating has no maximum operating temperature; "
+                "temperature-based capacity limiting will be unavailable."
+            )
+    elif method == "custom":
+        characteristic = cfg.get("emitter_characteristic", cfg.get("emitter_rating"))
+        if isinstance(characteristic, EmitterCharacteristic):
+            missing = []
+        elif not isinstance(characteristic, dict):
+            raise ValueError(
+                "emitter_calculation_method='custom' requires an "
+                "emitter_characteristic object or dictionary."
+            )
+        else:
+            missing = []
+            if (
+                characteristic.get("nominal_excess_temperature_K") is None
+                and characteristic.get("rated_excess_temperature_K") is None
+            ):
+                missing.append("nominal_excess_temperature_K")
+            if (
+                characteristic.get("exponent_n") is None
+                and characteristic.get("rated_exponent_n") is None
+            ):
+                missing.append("exponent_n")
+        if missing:
+            raise ValueError(
+                "Custom emitter characteristic is missing: " + ", ".join(missing)
+            )
+        if emitter_type is None:
+            cfg["emitter_type"] = "Custom emitter"
+        messages.append("Custom emitter characteristic validated.")
+    elif emitter_type not in valid_emitters:
         fallback = valid_emitters[0] if valid_emitters else None
         messages.append(
             f"⚠️ Emitter type '{emitter_type}' not found in TB14; auto-set to '{fallback}'."

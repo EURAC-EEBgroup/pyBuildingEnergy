@@ -4,6 +4,11 @@ from .source.check_input import sanitize_and_validate_BUI
 from .source.utils import ISO52016
 from .source.graphs import Graphs_and_report
 from .source.iso_15316_1 import HeatingSystemCalculator
+from .source.emitter_442 import (
+    EN442RadiatorCharacteristic,
+    EmitterCharacteristic,
+    GenericEmitterCharacteristic,
+)
 from .source.emission_15316_2 import EmissionSimulationResult, EmissionSystemCalculator
 from .source.distribution_15316_3 import DistributionSimulationResult, DistributionSystemCalculator
 from .source.storage_15316_5 import StorageSimulationResult, StorageSystemCalculator
@@ -87,6 +92,9 @@ __version__ = '2.0.3'
 __all__ = [
     "check_heating_system_inputs",
     "HeatingSystemCalculator",
+    "EmitterCharacteristic",
+    "GenericEmitterCharacteristic",
+    "EN442RadiatorCharacteristic",
     "EmissionSimulationResult",
     "EmissionSystemCalculator",
     "DistributionSimulationResult",

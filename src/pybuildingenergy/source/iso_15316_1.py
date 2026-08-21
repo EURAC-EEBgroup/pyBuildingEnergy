@@ -4,6 +4,12 @@ from pybuildingenergy.global_inputs import TB14 as TB14_backup
 from pybuildingenergy.source.emission_15316_2 import EmissionSystemCalculator
 from pybuildingenergy.source.distribution_15316_3 import DistributionSystemCalculator
 from pybuildingenergy.source.generation_15316_4_1 import BoilerGeneratorCalculator
+from pybuildingenergy.source.emitter_442 import (
+    EN442RadiatorCharacteristic,
+    EmitterCharacteristic,
+    GenericEmitterCharacteristic,
+    normalize_emitter_characteristic_method,
+)
 
 class HeatingSystemCalculator:
     """
@@ -43,8 +49,52 @@ class HeatingSystemCalculator:
         inp = self.input_data
 
         # --- Emission (secondary) ---
-        self.EMitter_type = inp.get('emitter_type', 'Floor heating')
-        self.ΦH_em_n = inp.get('nominal_power', 8)  # kW
+        supplied_characteristic = inp.get('emitter_characteristic')
+        configured_method = inp.get(
+            'emitter_calculation_method',
+            inp.get('emitter_characteristic_method'),
+        )
+        if configured_method is None and isinstance(
+            supplied_characteristic, EmitterCharacteristic
+        ):
+            configured_method = supplied_characteristic.method
+        self.emitter_calculation_method = normalize_emitter_characteristic_method(
+            configured_method
+        )
+        default_emitter_type = (
+            'Radiator'
+            if self.emitter_calculation_method == 'en442'
+            else 'Floor heating'
+        )
+        self.EMitter_type = inp.get('emitter_type', default_emitter_type)
+        self.emitter_characteristic = self._build_emitter_characteristic(inp)
+        # Backward-compatible public attribute used throughout this module.
+        self.ΦH_em_n = self.emitter_characteristic.nominal_power_kW
+        circuit_design = dict(inp.get('circuit_design', {}) or {})
+        if self.EMitter_type in self.TB14.index:
+            default_design_delta = float(
+                self.TB14.loc[
+                    self.EMitter_type,
+                    "Emitters_nominal_deltaTeta_Water_C",
+                ]
+            )
+        else:
+            # Product catalogue names need not be rows in the generic TB14 table.
+            default_design_delta = 20.0
+        self.emitter_design_water_deltaT_K = float(
+            circuit_design.get(
+                'design_water_deltaT_K',
+                inp.get('design_water_deltaT_K', default_design_delta),
+            )
+        )
+        if not np.isfinite(self.emitter_design_water_deltaT_K) or self.emitter_design_water_deltaT_K <= 0:
+            raise ValueError("design_water_deltaT_K must be a finite positive number.")
+        self.enforce_emitter_operating_limits = bool(
+            inp.get(
+                'enforce_emitter_operating_limits',
+                self.emitter_calculation_method == 'en442',
+            )
+        )
         self.emission_efficiency = inp.get('emission_efficiency', 90)  # %
         self.MIX_EM = inp.get('mixing_valve', True)
         self.flow_temp_control_type = inp.get('flow_temp_control_type',
@@ -185,6 +235,69 @@ class HeatingSystemCalculator:
         # Cache for the precomputed EN 15316-2 emission timeseries
         self._emission_ts_cache = None
 
+    def _build_emitter_characteristic(self, inp) -> EmitterCharacteristic:
+        """Create the rating model while preserving the historical defaults."""
+
+        supplied = inp.get('emitter_characteristic')
+        method = self.emitter_calculation_method
+
+        if method == 'en442':
+            emitter_label = str(self.EMitter_type).strip().lower()
+            excluded = ('floor', 'fan coil', 'fan-coil', 'fan assisted', 'trench')
+            if any(label in emitter_label for label in excluded):
+                raise ValueError(
+                    "The EN 442 calculation method is not applicable to floor heating, "
+                    "fan-assisted emitters, or trench convectors."
+                )
+
+        if isinstance(supplied, EmitterCharacteristic):
+            supplied_method = normalize_emitter_characteristic_method(supplied.method)
+            if supplied_method != method:
+                raise ValueError(
+                    "emitter_characteristic.method conflicts with "
+                    "emitter_calculation_method."
+                )
+            return supplied
+
+        if method == 'en442':
+            rating = inp.get('emitter_rating')
+            if not isinstance(rating, dict):
+                raise ValueError(
+                    "emitter_calculation_method='en442' requires an emitter_rating dictionary."
+                )
+            return EN442RadiatorCharacteristic.from_dict(rating)
+
+        if method == 'custom':
+            cfg = supplied if isinstance(supplied, dict) else inp.get('emitter_rating', {})
+            cfg = dict(cfg or {})
+            nominal_excess = cfg.get(
+                'nominal_excess_temperature_K',
+                cfg.get('rated_excess_temperature_K'),
+            )
+            exponent = cfg.get('exponent_n', cfg.get('rated_exponent_n'))
+            if nominal_excess is None or exponent is None:
+                raise ValueError(
+                    "The custom emitter characteristic requires "
+                    "nominal_excess_temperature_K and exponent_n."
+                )
+            return GenericEmitterCharacteristic(
+                rated_power_kW=cfg.get(
+                    'nominal_power_kW', cfg.get('nominal_power', inp.get('nominal_power', 8))
+                ),
+                rated_excess_temperature_K=nominal_excess,
+                rated_exponent_n=exponent,
+                product_reference=cfg.get('product_reference'),
+                method='custom',
+            )
+
+        row = self.TB14.loc[self.EMitter_type]
+        return GenericEmitterCharacteristic(
+            rated_power_kW=inp.get('nominal_power', 8),
+            rated_excess_temperature_K=row["Emitters_nominale_deltaTeta_air_C"],
+            rated_exponent_n=row["Emitters_exponent_n"],
+            product_reference=f"EN 15316-1 Table B.14 default: {self.EMitter_type}",
+        )
+
     def _get_emission_calculator(self):
         if self._emission_calc_cache is None:
             self._emission_calc_cache = EmissionSystemCalculator(self.emission_15316_2_config)
@@ -309,6 +422,13 @@ class HeatingSystemCalculator:
             'T_ext(°C)': θext,
 
             'ΦH_em_eff(kW)': _nan,
+            'ΦH_em_requested(kW)': _nan,
+            'ΦH_em_available(kW)': _nan,
+            'ΦH_em_available_at_operating_conditions(kW)': _nan,
+            'QH_em_unmet(kWh)': 0.0,
+            'emitter_limited': False,
+            'emitter_calculation_method': self.emitter_calculation_method,
+            'emitter_product_reference': self.emitter_characteristic.product_reference,
             'θH_em_flow(°C)': _nan,
             'θH_em_ret(°C)': _nan,
             'V_H_em_eff(m3/h)': _nan,
@@ -433,11 +553,12 @@ class HeatingSystemCalculator:
         else:
             ΦH_em_eff = QH_em_i_in / self.tH_em_i_ON
 
-        # Nominal hydraulic parameters from TB14
-        ΔθH_em_n = float(self.TB14.loc[self.EMitter_type, "Emitters_nominal_deltaTeta_Water_C"])
+        # The product rating and the system-design water delta are deliberately
+        # separate.  EN 442 supplies phi_50/n; EN 15316 supplies circuit design.
+        ΔθH_em_n = self.emitter_design_water_deltaT_K
         V_H_em_nom = self.ΦH_em_n / (ΔθH_em_n * self.c_w) if ΔθH_em_n > 0 else 0.0
-        ΔθH_em_air = float(self.TB14.loc[self.EMitter_type, "Emitters_nominale_deltaTeta_air_C"])
-        nH_em = float(self.TB14.loc[self.EMitter_type, "Emitters_exponent_n"])
+        ΔθH_em_air = self.emitter_characteristic.nominal_excess_temperature_K
+        nH_em = self.emitter_characteristic.exponent_n
 
         return {
             'QH_sys_out_hz_i': QH_sys_out_hz_i,
@@ -448,6 +569,19 @@ class HeatingSystemCalculator:
             'ΔθH_em_air': ΔθH_em_air,
             'nH_em': nH_em
         }
+
+    def _emitter_water_flow_ratio(self, volume_flow_m3_h):
+        """Convert circuit volume flow to the EN 442 catalogue flow ratio."""
+
+        standard_mass_flow = getattr(
+            self.emitter_characteristic, 'standard_water_flow_kg_s', None
+        )
+        if standard_mass_flow is None:
+            return 1.0
+        mass_flow_kg_s = max(float(volume_flow_m3_h), 0.0) * 1000.0 / 3600.0
+        if mass_flow_kg_s <= 0.0:
+            return 0.0
+        return mass_flow_kg_s / float(standard_mass_flow)
 
     def calculate_type_C2(self, common_params, θint):
         """
@@ -463,10 +597,10 @@ class HeatingSystemCalculator:
         V_H_em_eff = V_H_em_nom
 
         # Emitter-air temperature difference (nonlinear exponent)
-        if ΦH_em_eff > 0 and self.ΦH_em_n > 0:
-            ΔθH_em_air_eff = ΔθH_em_air * ((ΦH_em_eff / self.ΦH_em_n) ** (1 / nH_em))
-        else:
-            ΔθH_em_air_eff = 0.0
+        flow_ratio = self._emitter_water_flow_ratio(V_H_em_eff)
+        ΔθH_em_air_eff = self.emitter_characteristic.required_excess_temperature(
+            ΦH_em_eff, water_flow_ratio=flow_ratio
+        )
 
         # Average emitter temperature
         θH_em_avg = ΔθH_em_air_eff + θint
@@ -515,23 +649,33 @@ class HeatingSystemCalculator:
         ΔθH_em_w_max = float(self.df_heat_emm_data.loc["Max Δθ flow / return HZ1",
                                                        "ΔθH_em_w_max_sahz_i"])
 
-        # Nonlinear emitter-air delta
-        if ΦH_em_eff > 0 and self.ΦH_em_n > 0:
-            ΔθH_em_air_eff = ΔθH_em_air * ((ΦH_em_eff / self.ΦH_em_n) ** (1 / nH_em))
-        else:
-            ΔθH_em_air_eff = 0.0
-
-        # Average emitter temperature and supply limit
-        θH_em_avg = ΔθH_em_air_eff + θint
-        θH_em_flw_lim = min(θH_em_flw_max, θH_em_avg + ΔθH_em_w_max / 2)
-
-        # Supply/return constrained by return setpoint
-        θH_em_flw = min(θH_em_flw_lim, 2 * θH_em_avg - θH_em_ret_set)
-        θH_em_ret = 2 * θH_em_avg - θH_em_flw
-
-        # Effective ΔT and mass flow
-        ΔθH_em_w_eff = θH_em_flw - θH_em_ret
-        V_H_em_act = ΦH_em_eff / (ΔθH_em_w_eff * self.c_w) if ΔθH_em_w_eff > 0 else 0.0
+        # Nonlinear emitter-air delta.  Flow-dependent convectors require a
+        # short fixed-point iteration because their output curve and the
+        # variable-flow circuit determine each other.
+        flow_ratio = 1.0
+        V_H_em_act = 0.0
+        for _ in range(30):
+            ΔθH_em_air_eff = self.emitter_characteristic.required_excess_temperature(
+                ΦH_em_eff, water_flow_ratio=flow_ratio
+            )
+            θH_em_avg = ΔθH_em_air_eff + θint
+            θH_em_flw_lim = min(
+                θH_em_flw_max, θH_em_avg + ΔθH_em_w_max / 2
+            )
+            θH_em_flw = min(
+                θH_em_flw_lim, 2 * θH_em_avg - θH_em_ret_set
+            )
+            θH_em_ret = 2 * θH_em_avg - θH_em_flw
+            ΔθH_em_w_eff = θH_em_flw - θH_em_ret
+            V_H_em_act = (
+                ΦH_em_eff / (ΔθH_em_w_eff * self.c_w)
+                if ΔθH_em_w_eff > 0
+                else 0.0
+            )
+            new_ratio = self._emitter_water_flow_ratio(V_H_em_act)
+            if abs(new_ratio - flow_ratio) <= 1e-8:
+                break
+            flow_ratio = new_ratio
 
         # Minimum distribution supply
         θH_em_flw_min = θH_em_flw + self.ΔθH_em_mix_sahz_i if self.MIX_EM else θH_em_flw
@@ -562,18 +706,22 @@ class HeatingSystemCalculator:
 
         # Nominal mass flow
         V_H_em_eff = V_H_em_nom
+        flow_ratio = self._emitter_water_flow_ratio(V_H_em_eff)
 
         # Nonlinear emitter-air delta
-        if ΦH_em_eff > 0 and self.ΦH_em_n > 0:
-            ΔθH_em_air_eff = ΔθH_em_air * ((ΦH_em_eff / self.ΦH_em_n) ** (1 / nH_em))
-        else:
-            ΔθH_em_air_eff = 0.0
+        ΔθH_em_air_eff = self.emitter_characteristic.required_excess_temperature(
+            ΦH_em_eff, water_flow_ratio=flow_ratio
+        )
 
         # Theoretical supply during ON
         if ΦH_em_eff > 0 and self.ΦH_em_n > 0 and βH_em_req > 0:
+            on_power_kW = ΦH_em_eff * (100 / βH_em_req)
+            relative_temperature = self.emitter_characteristic.relative_temperature_factor(
+                on_power_kW, water_flow_ratio=flow_ratio
+            )
             θH_em_flw_calc = (
                 θint + (ΔθH_em_air + ΔθH_em_w_n / 2) *
-                (((ΦH_em_eff / self.ΦH_em_n) * (100 / βH_em_req)) ** (1 / nH_em))
+                relative_temperature
             )
         else:
             θH_em_flw_calc = θint
@@ -612,12 +760,17 @@ class HeatingSystemCalculator:
 
         # Nominal mass flow
         V_H_em_eff = V_H_em_nom
+        flow_ratio = self._emitter_water_flow_ratio(V_H_em_eff)
 
         # Supply calculation (similar to C.4)
         if ΦH_em_eff > 0 and self.ΦH_em_n > 0 and βH_em_req > 0:
+            on_power_kW = ΦH_em_eff * (100 / βH_em_req)
+            relative_temperature = self.emitter_characteristic.relative_temperature_factor(
+                on_power_kW, water_flow_ratio=flow_ratio
+            )
             θH_em_flw_calc = (
                 θint + (ΔθH_em_air + ΔθH_em_w_n / 2) *
-                (((ΦH_em_eff / self.ΦH_em_n) * (100 / βH_em_req)) ** (1 / nH_em))
+                relative_temperature
             )
         else:
             θH_em_flw_calc = θint
@@ -638,6 +791,135 @@ class HeatingSystemCalculator:
             'θH_em_flw_calc': θH_em_flw_calc,
             'ΔθH_em_air_eff': 0
         }
+
+    def _calculate_selected_emitter_circuit(self, common_params, θint):
+        """Dispatch to the selected EN 15316-1 circuit calculation."""
+
+        if self.selected_emm_cont_circuit == 0:
+            return self.calculate_type_C2(common_params, θint)
+        if self.selected_emm_cont_circuit == 1:
+            return self.calculate_type_C3(common_params, θint)
+        if self.selected_emm_cont_circuit == 2:
+            return self.calculate_type_C4(common_params, θint)
+        if self.selected_emm_cont_circuit == 3:
+            return self.calculate_type_C5(common_params, θint)
+        raise ValueError("selected_emm_cont_circuit must be in {0,1,2,3}")
+
+    def _maximum_emitter_output_at_operating_limit(self, common_params, θint):
+        """Return the maximum output compatible with the product temperature.
+
+        The product maximum temperature and the circuit design water delta are
+        intentionally independent.  The selected circuit equations are used in
+        the bisection so a 20 K system design is not replaced by the EN 442 test
+        condition.
+        """
+
+        maximum = self.emitter_characteristic.maximum_operating_temperature_C
+        if maximum is None or maximum <= θint:
+            return np.inf if maximum is None else 0.0
+
+        # Even with zero water-side delta, the mean water temperature cannot be
+        # above the product maximum.  This is a safe upper bound for bisection.
+        upper_flow_ratio = self._emitter_water_flow_ratio(
+            common_params.get('V_H_em_nom', 0.0)
+        )
+        upper = self.emitter_characteristic.output_at_excess_temperature(
+            maximum - θint, water_flow_ratio=upper_flow_ratio
+        )
+        if upper <= 0.0:
+            return 0.0
+
+        def feasible(power_kW):
+            trial = dict(common_params)
+            trial['ΦH_em_eff'] = float(power_kW)
+            circuit = self._calculate_selected_emitter_circuit(trial, θint)
+            supply = float(circuit.get('θH_em_flow', θint))
+            return_temp = float(circuit.get('θH_em_ret', θint))
+            return (
+                np.isfinite(supply)
+                and np.isfinite(return_temp)
+                and supply <= maximum + 1e-9
+                and return_temp <= supply + 1e-9
+            )
+
+        if feasible(upper):
+            return upper
+
+        lower = 0.0
+        for _ in range(70):
+            middle = (lower + upper) / 2.0
+            if feasible(middle):
+                lower = middle
+            else:
+                upper = middle
+        return lower
+
+    def _apply_emitter_operating_limit(self, common_params, θint):
+        """Cap detailed product output and expose requested/unmet quantities."""
+
+        common = dict(common_params)
+        requested_power = max(float(common.get('ΦH_em_eff', 0.0)), 0.0)
+        requested_energy = max(float(common.get('QH_em_i_in', 0.0)), 0.0)
+        common['ΦH_em_requested'] = requested_power
+        common['QH_em_i_in_requested'] = requested_energy
+        common['QH_sys_out_hz_i_requested'] = float(
+            common.get('QH_sys_out_hz_i', 0.0)
+        )
+        common['ΦH_em_available'] = np.nan
+        common['ΦH_em_available_at_operating_conditions'] = np.nan
+        common['QH_em_unmet'] = 0.0
+        common['emitter_limited'] = False
+
+        maximum = self.emitter_characteristic.maximum_operating_temperature_C
+        if (
+            not self.enforce_emitter_operating_limits
+            or maximum is None
+            or requested_power <= 0.0
+        ):
+            return common
+
+        available_power = self._maximum_emitter_output_at_operating_limit(
+            common, θint
+        )
+        common['ΦH_em_available'] = available_power
+        delivered_power = min(requested_power, available_power)
+        if delivered_power >= requested_power - 1e-9:
+            return common
+
+        return self._set_emitter_delivered_power(common, delivered_power)
+
+    def _set_emitter_delivered_power(self, common_params, delivered_power_kW):
+        """Update energy and unmet-load fields from a delivered emitter power."""
+
+        common = dict(common_params)
+        requested_power = max(float(common.get('ΦH_em_requested', 0.0)), 0.0)
+        requested_energy = max(
+            float(common.get('QH_em_i_in_requested', 0.0)), 0.0
+        )
+        delivered_power = min(max(float(delivered_power_kW), 0.0), requested_power)
+        fraction = delivered_power / requested_power if requested_power > 0.0 else 1.0
+        delivered_energy = requested_energy * fraction
+        common['ΦH_em_eff'] = delivered_power
+        common['QH_em_i_in'] = delivered_energy
+        common['QH_em_unmet'] = max(requested_energy - delivered_energy, 0.0)
+        common['QH_sys_out_hz_i'] = (
+            float(common.get('QH_sys_out_hz_i_requested', 0.0)) * fraction
+        )
+        common['emitter_limited'] = delivered_power < requested_power - 1e-9
+        return common
+
+    def _available_output_at_operating_conditions(self, operating, emitter, θint):
+        """Evaluate EN 442 output from actual emitter supply/return temperatures."""
+
+        supply = float(operating['θH_dis_flw'])
+        return_temp = float(operating['θH_em_ret_eff'])
+        mean_water = (supply + return_temp) / 2.0
+        flow_ratio = self._emitter_water_flow_ratio(
+            emitter.get('V_H_em_eff', 0.0)
+        )
+        return self.emitter_characteristic.output_at_excess_temperature(
+            max(mean_water - θint, 0.0), water_flow_ratio=flow_ratio
+        )
 
     def calculate_circuit_node_temperature(self, θext, emission_results):
         """
@@ -732,11 +1014,19 @@ class HeatingSystemCalculator:
 
             # Relative output when ON
             if (ΔθH_em_air + ΔθH_em_w_n / 2) > 0:
-                βH_em_ON = max((θH_em_flw_eff - θint) / (ΔθH_em_air + ΔθH_em_w_n / 2), 0) ** nH_em
+                equivalent_mean_excess = max(θH_em_flw_eff - θint, 0.0) * (
+                    ΔθH_em_air / (ΔθH_em_air + ΔθH_em_w_n / 2)
+                )
+                flow_ratio = self._emitter_water_flow_ratio(
+                    emission_results['V_H_em_eff']
+                )
+                ΦH_em_ON = self.emitter_characteristic.output_at_excess_temperature(
+                    equivalent_mean_excess, water_flow_ratio=flow_ratio
+                )
+                βH_em_ON = ΦH_em_ON / self.ΦH_em_n
             else:
                 βH_em_ON = 0.0
-
-            ΦH_em_ON = self.ΦH_em_n * βH_em_ON
+                ΦH_em_ON = 0.0
 
             # ON time to meet hourly energy
             t_H_cr_ON = QH_sys_out_hz_i / ΦH_em_ON if ΦH_em_ON > 0 else 0.0
@@ -779,7 +1069,11 @@ class HeatingSystemCalculator:
             try:
                 ΔθH_em_air = common_params['ΔθH_em_air']
                 nH_em = common_params['nH_em']
-                ΦH_em_ON = self.ΦH_em_n * (((θH_em_avg - θint) / ΔθH_em_air) ** nH_em) if ΔθH_em_air > 0 else 0.0
+                flow_ratio = self._emitter_water_flow_ratio(V_H_em_eff)
+                ΦH_em_ON = self.emitter_characteristic.output_at_excess_temperature(
+                    max(θH_em_avg - θint, 0.0),
+                    water_flow_ratio=flow_ratio,
+                )
             except Exception:
                 ΦH_em_ON = 0.0
 
@@ -878,6 +1172,16 @@ class HeatingSystemCalculator:
             'recoverable': bool(self.Heat_losses_recovered),
         }
 
+        nominal_emitter_flow_m3_h = self.ΦH_em_n / (
+            self.c_w * self.emitter_design_water_deltaT_K
+        )
+        emitter_pressure_drop_kPa = self.emitter_characteristic.pressure_drop_kPa(
+            nominal_emitter_flow_m3_h * 1000.0 / 3600.0
+        )
+        additional_pressure_kPa = float(
+            self.input_data.get('distribution_additional_pressure_kPa', 0.0)
+        ) + float(emitter_pressure_drop_kPa or 0.0)
+
         return {
             'time_step_hours': float(self.tH_dis_i_ON),
             'demand_unit': 'kWh',
@@ -898,7 +1202,7 @@ class HeatingSystemCalculator:
                 'design_flow_m3_h': float(self.input_data.get('distribution_design_flow_m3_h', 0.0)),
                 'max_length_m': float(self.input_data.get('distribution_length_m', 1.0)),
                 'pressure_loss_per_m_kPa': float(self.input_data.get('distribution_pressure_loss_per_m_kPa', 0.10)),
-                'additional_pressure_kPa': float(self.input_data.get('distribution_additional_pressure_kPa', 0.0)),
+                'additional_pressure_kPa': additional_pressure_kPa,
                 'resistance_ratio': float(self.input_data.get('distribution_resistance_ratio', 0.30)),
                 'design_delta_pressure_kPa': float(self.input_data.get('distribution_design_delta_pressure_kPa', 0.0)),
                 'pump_selection_factor': float(self.input_data.get('distribution_pump_selection_factor', 1.0)),
@@ -1460,25 +1764,50 @@ class HeatingSystemCalculator:
         common = self.calculate_common_emission_parameters(q_h_em_out, θint_eff)
         common['QH_em_i_in'] = q_h_em_in
         common['ΦH_em_eff'] = float(em_step['ΦH_em_eff'])
+        common = self._apply_emitter_operating_limit(common, θint_eff)
+        q_h_em_in = float(common['QH_em_i_in'])
         self.current_theta_ext = float(θext)  # stored for primary control (Type A)
 
         # 3) Emission block per selected type
-        if self.selected_emm_cont_circuit == 0:
-            em = self.calculate_type_C2(common, θint_eff)
-        elif self.selected_emm_cont_circuit == 1:
-            em = self.calculate_type_C3(common, θint_eff)
-        elif self.selected_emm_cont_circuit == 2:
-            em = self.calculate_type_C4(common, θint_eff)
-        elif self.selected_emm_cont_circuit == 3:
-            em = self.calculate_type_C5(common, θint_eff)
-        else:
-            raise ValueError("selected_emm_cont_circuit must be in {0,1,2,3}")
+        em = self._calculate_selected_emitter_circuit(common, θint_eff)
 
         # 4) Node supply temp (secondary control)
         θH_nod_out = self.calculate_circuit_node_temperature(θext, em)
 
         # 5) Operating conditions
         op = self.calculate_operating_conditions(em, common, θint_eff, θH_nod_out)
+
+        # For continuous radiator circuits, verify the requested output against
+        # the actual water temperatures selected by demand/outdoor/constant
+        # control.  Iterate only downward; the emitter never creates load that
+        # was not requested.
+        if (
+            self.emitter_calculation_method == 'en442'
+            and self.enforce_emitter_operating_limits
+            and self.selected_emm_cont_circuit in (0, 1)
+        ):
+            for _ in range(30):
+                available_at_operating = self._available_output_at_operating_conditions(
+                    op, em, θint_eff
+                )
+                common['ΦH_em_available_at_operating_conditions'] = (
+                    available_at_operating
+                )
+                if available_at_operating >= common['ΦH_em_eff'] - 1e-8:
+                    break
+                previous = float(common['ΦH_em_eff'])
+                common = self._set_emitter_delivered_power(
+                    common, available_at_operating
+                )
+                em = self._calculate_selected_emitter_circuit(common, θint_eff)
+                θH_nod_out = self.calculate_circuit_node_temperature(θext, em)
+                op = self.calculate_operating_conditions(
+                    em, common, θint_eff, θH_nod_out
+                )
+                if abs(previous - common['ΦH_em_eff']) <= 1e-8:
+                    break
+
+        q_h_em_in = float(common['QH_em_i_in'])
 
         # 6) Distribution block
         dist = self.calculate_distribution(op['θH_dis_flw'], op['θH_dis_ret'], θint_eff, q_h_em_in)
@@ -1506,6 +1835,15 @@ class HeatingSystemCalculator:
 
             # emission (selected)
             'ΦH_em_eff(kW)': common['ΦH_em_eff'],
+            'ΦH_em_requested(kW)': common['ΦH_em_requested'],
+            'ΦH_em_available(kW)': common['ΦH_em_available'],
+            'ΦH_em_available_at_operating_conditions(kW)': common[
+                'ΦH_em_available_at_operating_conditions'
+            ],
+            'QH_em_unmet(kWh)': common['QH_em_unmet'],
+            'emitter_limited': common['emitter_limited'],
+            'emitter_calculation_method': self.emitter_calculation_method,
+            'emitter_product_reference': self.emitter_characteristic.product_reference,
             # effective distribution/emission supply shown as emitter flow
             'θH_em_flow(°C)': op['θH_dis_flw'],
             'θH_em_ret(°C)': op['θH_em_ret_eff'],
@@ -1566,14 +1904,7 @@ class HeatingSystemCalculator:
         common = self.calculate_common_emission_parameters(0.0, θint)
 
         # Emission block at zero load (still follows selected type for temps)
-        if self.selected_emm_cont_circuit == 0:
-            em = self.calculate_type_C2(common, θint)
-        elif self.selected_emm_cont_circuit == 1:
-            em = self.calculate_type_C3(common, θint)
-        elif self.selected_emm_cont_circuit == 2:
-            em = self.calculate_type_C4(common, θint)
-        else:
-            em = self.calculate_type_C5(common, θint)
+        em = self._calculate_selected_emitter_circuit(common, θint)
 
         θH_nod_out = self.calculate_circuit_node_temperature(θext, em)
 
@@ -1587,6 +1918,13 @@ class HeatingSystemCalculator:
 
         row = {
             'ΦH_em_eff(kW)': 0.0,
+            'ΦH_em_requested(kW)': 0.0,
+            'ΦH_em_available(kW)': np.nan,
+            'ΦH_em_available_at_operating_conditions(kW)': np.nan,
+            'QH_em_unmet(kWh)': 0.0,
+            'emitter_limited': False,
+            'emitter_calculation_method': self.emitter_calculation_method,
+            'emitter_product_reference': self.emitter_characteristic.product_reference,
             'θH_em_flow(°C)': em.get('θH_em_flow', θH_nod_out),
             'θH_em_ret(°C)': θH_dis_ret,
             'V_H_em_eff(m3/h)': 0.0,

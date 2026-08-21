@@ -69,6 +69,23 @@ losses, emission auxiliary electricity and annual emission expenditure factors.
 For an audit trail between the standard, code and output files, open
 [Emission EN 15316-2 Implementation Audit](docs/emission_15316_2_audit.html).
 
+## Radiator Product Ratings - EN 442:2014
+
+`EN442RadiatorCharacteristic` consumes certified radiator or non-fan-assisted
+convector catalogue data (`phi_50`, exponent `n`, optional `phi_30`, maximum
+operating temperature and optional hydraulic data). `HeatingSystemCalculator`
+uses the characteristic in its EN 15316-1 C.2-C.5 circuit calculations and
+reports requested, available, delivered and unmet emitter output.
+
+The older `nominal_power` + `TB14` path remains the default and retains its
+existing results for generic radiators, floor heating and fan coils. EN 442
+product rating data and EN 15316 circuit design data are separate: for example,
+an EN 442 `phi_50` rating does not force the heating circuit to use the 10 K
+water temperature difference of the product test.
+
+See [examples/en442_radiator_example.py](examples/en442_radiator_example.py)
+for a runnable product-rating and operating-limit example.
+
 ## Water-Based Distribution Systems - EN 15316-3 **(New)**
 
 `DistributionSystemCalculator` evaluates water-based distribution systems for

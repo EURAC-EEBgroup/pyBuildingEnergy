@@ -35,6 +35,47 @@ This list applies to the default `TB14`; if the table is replaced with a custom 
 
 `nominal_power: 8.0` is the nominal emission power, expressed in `kW`. It represents the reference size of the terminal in the ISO 15316-1 branch. The value must be greater than `0 kW` and coherent with distribution and generation. In the example file, `8.0 kW` is a typical size for a small residential unit.
 
+### Explicit EN 442 radiator product data
+
+The default `emitter_calculation_method: 'en15316_default'` preserves the
+generic `nominal_power` + `TB14` calculation above. To use certified EN 442
+catalogue data, select `en442` and provide an `emitter_rating`:
+
+```python
+{
+    'emitter_type': 'Panel radiator',
+    'emitter_calculation_method': 'en442',
+    'emitter_rating': {
+        'phi_50_kW': 8.0,
+        'exponent_n': 1.2874,
+        'phi_30_kW': 8.0 * (30.0 / 50.0) ** 1.2874,
+        'maximum_operating_temperature_C': 110.0,
+        'product_reference': 'Manufacturer catalogue model',
+    },
+    'circuit_design': {
+        'design_water_deltaT_K': 20.0,
+    },
+}
+```
+
+`phi_50_kW` (or `phi_50_W`) and `exponent_n` are required. `phi_30_kW`
+is optional; when supplied, it is checked against the EN 442 characteristic
+equation. `maximum_operating_temperature_C` enables capacity limiting and
+unmet-load reporting. Values at or above 120 degC are rejected because they
+are outside the scope of EN 442:2014.
+
+`circuit_design.design_water_deltaT_K` is an EN 15316 system-design input, not
+an EN 442 rating input. Keeping 20 K here is compatible with a product rated at
+the EN 442 75/65/20 degC test condition: the mean temperature determines the
+characteristic output, while the circuit water delta determines flow and the
+individual supply/return temperatures.
+
+The detailed path adds the hourly outputs `ΦH_em_requested(kW)`,
+`ΦH_em_available(kW)`, `ΦH_em_eff(kW)`, `QH_em_unmet(kWh)`,
+`emitter_limited`, and the product reference. For continuous C.2/C.3 circuits,
+`ΦH_em_available_at_operating_conditions(kW)` also reports output calculated
+from the actual supply/return temperatures selected by the circuit controller.
+
 `emission_efficiency: 90.0` is the emission efficiency, expressed in `%`. The coherent minimum is `0%`; the theoretical maximum is `100%`, although slightly higher values may appear in simplified interface logic. For a real terminal, the value should remain in the `0-100%` range.
 
 `flow_temp_control_type: 'Type 2 - Based on outdoor temperature'` describes the supply temperature control logic of the emission circuit. It is not a numeric parameter, but a mode selector. In `iso_15316_1.py`, the actual options are:
