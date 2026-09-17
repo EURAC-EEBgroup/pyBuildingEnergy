@@ -89,6 +89,7 @@ class StorageSystemCalculator:
 
     def _load_options(self) -> None:
         cfg = self.input_data
+        self.dynamic_calculation = bool(cfg.get("dynamic_calculation", False))
         self.default_time_step_h = _positive_float(
             cfg.get("time_step_hours", 1.0), "time_step_hours"
         )
@@ -113,6 +114,19 @@ class StorageSystemCalculator:
             "output_temperature_C": float(cfg.get("output_temperature_C", setpoint)),
             "ambient_temperature_C": float(cfg.get("ambient_temperature_C", 16.0)),
             "storage_volume_l": max(float(cfg.get("storage_volume_l", 0.0)), 0.0),
+            "storage_height_m": max(float(cfg.get("storage_height_m", 1.2)), 0.1),
+            "sensor_height_m": max(float(cfg.get("sensor_height_m", 0.6)), 0.0),
+            "cold_inlet_temperature_C": float(cfg.get("cold_inlet_temperature_C", 10.0)),
+            "stratification_efficiency": _fraction(
+                cfg.get("stratification_efficiency", 0.85),
+                f"{name}.stratification_efficiency",
+            ),
+            "dhw_switch_temperature_C": float(cfg.get("dhw_switch_temperature_C", 45.0)),
+            "recharge_power_kW": max(
+                float(cfg.get("recharge_power_kW", cfg.get("nominal_power_kW", 0.0))),
+                0.0,
+            ),
+            "recharge_cop": max(float(cfg.get("recharge_cop", 3.0)), _KWH_EPS),
             "standby_loss_coefficient_W_K": h_loss,
             "standby_loss_adaptation_factor": _fraction(
                 cfg.get("standby_loss_adaptation_factor", cfg.get("f_sto_bac_acc", 1.0)),
@@ -248,6 +262,9 @@ class StorageSystemCalculator:
         if not opts["enabled"]:
             return self._pass_through(prepared.index, service, q_out)
 
+        if self.dynamic_calculation and service == "W":
+            return self._simulate_service_dynamic(prepared, service)
+
         setpoint = self._setpoint_temperature(prepared, service, opts)
         ambient = self._ambient_temperature(prepared, service, opts)
         loss = self._thermal_loss(setpoint, ambient, hours, opts)
@@ -280,6 +297,125 @@ class StorageSystemCalculator:
         out[f"t_{service}_sto_pmp_in_h"] = pump["t_input_h"]
         out[f"t_{service}_sto_pmp_out_h"] = pump["t_output_h"]
         return out
+
+    def _simulate_service_dynamic(self, prepared: pd.DataFrame, service: str) -> pd.DataFrame:
+        opts = self.services[service]
+        q_out = prepared[f"Q_{service}_sto_out_kWh"].astype(float)
+        hours = prepared["hours"].astype(float)
+        setpoint = self._setpoint_temperature(prepared, service, opts)
+        ambient = self._ambient_temperature(prepared, service, opts)
+        cold_inlet = _series_from_aliases(
+            prepared,
+            ["cold_inlet_temperature_C", "T_W_cold_C", "T_cold_C"],
+            default=opts["cold_inlet_temperature_C"],
+        ).astype(float)
+
+        total_volume = max(opts["storage_volume_l"], 0.0)
+        if total_volume <= _KWH_EPS:
+            return self._pass_through(prepared.index, service, q_out)
+
+        current_volume_l = total_volume
+        top_temp = float(setpoint.iloc[0])
+        bottom_temp = float(cold_inlet.iloc[0])
+        rho_cp = _WATER_HEAT_CAPACITY_DENSITY_KWH_M3K
+
+        rows = []
+        for idx, demand_kWh, step_h, sp, amb, cold in zip(
+            prepared.index,
+            q_out.to_numpy(dtype=float),
+            hours.to_numpy(dtype=float),
+            setpoint.to_numpy(dtype=float),
+            ambient.to_numpy(dtype=float),
+            cold_inlet.to_numpy(dtype=float),
+        ):
+            avg_temp_before = (top_temp + bottom_temp) / 2.0
+            current_volume_m3 = max(current_volume_l / 1000.0, _KWH_EPS)
+            loss_kWh = max(opts["standby_loss_coefficient_W_K"] * max(avg_temp_before - amb, 0.0) * step_h / 1000.0, 0.0)
+            if loss_kWh > 0.0:
+                avg_temp_before = max(cold, avg_temp_before - loss_kWh / max(rho_cp * current_volume_m3, _KWH_EPS))
+                stratification_gap = max(avg_temp_before - cold, 0.0) * (1.0 - opts["stratification_efficiency"])
+                top_temp = avg_temp_before + stratification_gap / 2.0
+                bottom_temp = max(cold, avg_temp_before - stratification_gap / 2.0)
+
+            demand_energy = max(demand_kWh, 0.0)
+            demand_volume_m3 = demand_energy / max(rho_cp * max(sp - cold, _KWH_EPS), _KWH_EPS)
+            demand_volume_l = demand_volume_m3 * 1000.0
+            draw_volume_l = min(demand_volume_l, current_volume_l)
+            current_volume_l = max(current_volume_l - draw_volume_l, 0.0)
+
+            pre_draw_top_temp = top_temp
+            pre_draw_bottom_temp = bottom_temp
+
+            if draw_volume_l > 0.0:
+                energy_removed_kWh = min(demand_energy, rho_cp * max((current_volume_l + draw_volume_l) / 1000.0, _KWH_EPS) * max(avg_temp_before - cold, 0.0))
+                temp_drop_K = energy_removed_kWh / max(rho_cp * max(current_volume_m3, _KWH_EPS), _KWH_EPS)
+                avg_temp_after_draw = max(cold, avg_temp_before - temp_drop_K)
+                stratification_gap = max(avg_temp_after_draw - cold, 0.0) * (1.0 - opts["stratification_efficiency"])
+                top_temp = avg_temp_after_draw + stratification_gap / 2.0
+                bottom_temp = max(cold, avg_temp_after_draw - stratification_gap / 2.0)
+            else:
+                avg_temp_after_draw = avg_temp_before
+
+            post_draw_top_temp = top_temp
+            post_draw_bottom_temp = bottom_temp
+
+            volume_before_dhw_mode_l = current_volume_l
+            dhw_mode_flag = avg_temp_after_draw < opts["dhw_switch_temperature_C"]
+            avg_temp_before_recharge = avg_temp_after_draw
+            if dhw_mode_flag:
+                current_volume_l = total_volume
+                stratification_gap = max(avg_temp_before_recharge - cold, 0.0) * (1.0 - opts["stratification_efficiency"])
+                top_temp = avg_temp_before_recharge + stratification_gap / 2.0
+                bottom_temp = max(cold, avg_temp_before_recharge - stratification_gap / 2.0)
+
+            current_volume_m3 = max(current_volume_l / 1000.0, _KWH_EPS)
+            energy_to_setpoint_kWh = max((sp - avg_temp_before_recharge), 0.0) * current_volume_m3 * rho_cp if dhw_mode_flag else 0.0
+            recharge_power_kW = max(opts["recharge_power_kW"], _KWH_EPS)
+            recharge_time_h = min(step_h, energy_to_setpoint_kWh / recharge_power_kW) if energy_to_setpoint_kWh > 0 else 0.0
+            recharge_energy_kWh = min(energy_to_setpoint_kWh, recharge_power_kW * step_h)
+            if recharge_energy_kWh > 0.0:
+                temp_rise_K = recharge_energy_kWh / max(rho_cp * current_volume_m3, _KWH_EPS)
+                avg_temp_after_recharge = min(sp, avg_temp_before_recharge + temp_rise_K)
+                stratification_gap = max(avg_temp_after_recharge - cold, 0.0) * (1.0 - opts["stratification_efficiency"])
+                top_temp = avg_temp_after_recharge + stratification_gap / 2.0
+                bottom_temp = max(cold, avg_temp_after_recharge - stratification_gap / 2.0)
+            else:
+                avg_temp_after_recharge = avg_temp_before_recharge
+
+            recharge_electricity_kWh = recharge_energy_kWh / opts["recharge_cop"] if recharge_energy_kWh > 0.0 else 0.0
+
+            rows.append(
+                {
+                    f"theta_{service}_sto_set_C": sp,
+                    f"theta_{service}_sto_out_C": avg_temp_after_recharge,
+                    f"theta_{service}_sto_amb_C": amb,
+                    f"V_{service}_sto_l": current_volume_l,
+                    f"H_{service}_sto_ls_W_K": opts["standby_loss_coefficient_W_K"],
+                    f"Q_{service}_sto_ls_kWh": loss_kWh,
+                    f"Q_{service}_sto_ls_rbl_kWh": loss_kWh * opts["thermal_loss_room_fraction"],
+                    f"Q_{service}_sto_ls_nrbl_kWh": loss_kWh * (1.0 - opts["thermal_loss_room_fraction"]),
+                    f"W_{service}_sto_aux_kWh": recharge_electricity_kWh,
+                    f"Q_{service}_sto_aux_rvd_kWh": 0.0,
+                    f"Q_{service}_sto_aux_rbl_kWh": 0.0,
+                    f"Q_{service}_sto_rbl_kWh": loss_kWh * opts["thermal_loss_room_fraction"],
+                    f"Q_{service}_sto_in_kWh": recharge_energy_kWh,
+                    f"t_{service}_sto_pmp_in_h": recharge_time_h,
+                    f"t_{service}_sto_pmp_out_h": 0.0,
+                    f"theta_{service}_sto_pre_draw_C": pre_draw_top_temp,
+                    f"theta_{service}_sto_post_draw_C": avg_temp_after_draw,
+                    f"theta_{service}_sto_top_C": top_temp,
+                    f"theta_{service}_sto_bottom_C": bottom_temp,
+                    f"Q_{service}_sto_recharge_time_h": recharge_time_h,
+                    f"Q_{service}_sto_recharge_energy_kWh": recharge_energy_kWh,
+                    f"Q_{service}_sto_stratification_K": max(top_temp - bottom_temp, 0.0),
+                    f"V_{service}_sto_before_dhw_mode_l": volume_before_dhw_mode_l,
+                    f"V_{service}_sto_refill_l": 0.0,
+                    f"V_{service}_sto_remaining_l": current_volume_l,
+                    f"dhw_dhw_mode_flag": bool(dhw_mode_flag),
+                }
+            )
+
+        return pd.DataFrame(rows, index=prepared.index)
 
     def _pass_through(
         self, index: pd.Index, service: str, q_out: pd.Series

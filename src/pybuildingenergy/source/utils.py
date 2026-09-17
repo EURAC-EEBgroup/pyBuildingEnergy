@@ -1353,6 +1353,48 @@ def _surface_side_b_is_outdoor_air(surface: dict) -> bool:
     return _surface_boundary_type(surface) == "OUTDOORS" or iso_type in {"OP", "W", "EXT"}
 
 
+def _thermal_bridge_heat_transfer_coefficient(
+    building_object: dict,
+    *,
+    default_length_m: float,
+    default_psi_W_mK: float,
+) -> float:
+    """Return the total thermal-bridge coefficient ``H_tb`` in W/K.
+
+    ``thermal_bridge_heat_W_K`` is the preferred explicit input.  The legacy
+    ``thermal_bridges`` input is retained as an alias for the same total.  If
+    neither is supplied, users may provide a bridge length and linear
+    transmittance; the historical exposed-perimeter × 0.05 fallback remains.
+    """
+    construction = (
+        building_object.get("building_parameters", {}).get("construction", {})
+        if isinstance(building_object, dict)
+        else {}
+    )
+    total = construction.get(
+        "thermal_bridge_heat_W_K",
+        construction.get("thermal_bridges"),
+    )
+    if total is not None:
+        total = float(total)
+        if not np.isfinite(total) or total < 0.0:
+            raise ValueError("thermal_bridge_heat_W_K must be finite and non-negative.")
+        return total
+
+    length_m = float(construction.get("thermal_bridge_length_m", default_length_m))
+    psi_W_mK = float(
+        construction.get(
+            "thermal_bridge_psi_W_mK",
+            construction.get("linear_thermal_transmittance_W_mK", default_psi_W_mK),
+        )
+    )
+    if not np.isfinite(length_m) or length_m < 0.0:
+        raise ValueError("thermal_bridge_length_m must be finite and non-negative.")
+    if not np.isfinite(psi_W_mK) or psi_W_mK < 0.0:
+        raise ValueError("thermal_bridge_psi_W_mK must be finite and non-negative.")
+    return length_m * psi_W_mK
+
+
 def _normalize_table25_heat_flow_direction(direction_raw) -> str:
     raw = str(direction_raw).strip().lower().replace("-", "_").replace(" ", "_")
     aliases = {
@@ -3445,8 +3487,12 @@ class ISO52016:
         else:
             R_gr_ve = float(R_gr_ve_raw)
 
-        # Adding thermal bridges
-        thermal_bridge_heat = exposed_perimeter * psi_k
+        # Overall transmission coefficient of all thermal bridges [W/K].
+        thermal_bridge_heat = _thermal_bridge_heat_transfer_coefficient(
+            building_object,
+            default_length_m=exposed_perimeter,
+            default_psi_W_mK=psi_k,
+        )
 
         # Calculation of steady-state  ground  heat  transfer  coefficients  are  related  to  the  ratio  of  equivalent  thickness
         # to  characteristic floor dimension, and the periodic heat transfer coefficients are related to the ratio
@@ -3903,9 +3949,12 @@ class ISO52016:
 
         if occ_entry is not None:
             occ_pair = _pair_from_bui(occ_entry, "occupancy")
-            if occ_pair is None:
-                raise ValueError("occupancy: profilo BUI deve avere 24 valori.")
-            occ_wd, occ_hd = occ_pair
+            if occ_pair is not None:
+                occ_wd, occ_hd = occ_pair
+            else:
+                occ_wd, occ_hd = _get_schedule_pair_for_bt(
+                    bt, occupants_schedule_workdays, occupants_schedule_weekend, "occupancy"
+                )
         else:
             occ_wd, occ_hd = _get_schedule_pair_for_bt(
                 bt, occupants_schedule_workdays, occupants_schedule_weekend, "occupancy"
@@ -3920,9 +3969,12 @@ class ISO52016:
 
         if app_entry is not None:
             app_pair = _pair_from_bui(app_entry, "appliances")
-            if app_pair is None:
-                raise ValueError("appliances: profilo BUI deve avere 24 valori.")
-            app_wd, app_hd = app_pair
+            if app_pair is not None:
+                app_wd, app_hd = app_pair
+            else:
+                app_wd, app_hd = _get_schedule_pair_for_bt(
+                    bt, appliances_schedule_workdays, appliances_schedule_weekend, "appliances"
+                )
         else:
             app_wd, app_hd = _get_schedule_pair_for_bt(
                 bt, appliances_schedule_workdays, appliances_schedule_weekend, "appliances"
@@ -3937,9 +3989,12 @@ class ISO52016:
 
         if lig_entry is not None:
             lig_pair = _pair_from_bui(lig_entry, "lighting")
-            if lig_pair is None:
-                raise ValueError("lighting: profilo BUI deve avere 24 valori.")
-            lig_wd, lig_hd = lig_pair
+            if lig_pair is not None:
+                lig_wd, lig_hd = lig_pair
+            else:
+                lig_wd, lig_hd = _get_schedule_pair_for_bt(
+                    bt, lighting_schedule_workdays, lighting_schedule_weekend, "lighting"
+                )
         else:
             lig_wd, lig_hd = _get_schedule_pair_for_bt(
                 bt, lighting_schedule_workdays, lighting_schedule_weekend, "lighting"

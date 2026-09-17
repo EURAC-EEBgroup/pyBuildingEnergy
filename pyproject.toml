@@ -11,8 +11,9 @@ py-modules = []
 name = "pybuildingenergy"
 version = "2.0.3"
 description = "Energy Simulation of building using EN ISO 52000, EN ISO 15316, EN ISO 16798, EN ISO 12831, and more"
-license = {file = "LICENSE.md"}
-readme = "README.md"
+license = "BSD-3-Clause"
+license-files = ["LICENSE.md"]
+readme = "Readme.md"
 requires-python = ">=3.11.0"
 authors = [{name = "Daniele Antonucci", email = "daniele.antonucci@eurac.edu"}, {name = "Ulrich Filippi Oberegger", email = "ulrich.filippi@eurac.edu"}]
 maintainers = [{name = "Daniele Antonucci", email = "daniele.antonucci@eurac.edu"}]
@@ -25,41 +26,21 @@ keywords = [
 ]
 
 dependencies = [
-    "decorator==5.2.1",
-    "docutils==0.22.3",
-    "holidays==0.81",
-    "Jinja2==3.1.6",
-    "joblib==1.5.2",
-    "matplotlib==3.10.6",
-    "nbformat==5.10.4",
-    "numpy==2.3.3",
-    "openpyxl==3.1.5",
-    "packaging==25.0",
-    "pandas==2.3.2",
-    "parso==0.8.5",
-    "platformdirs==4.4.0",
-    "plotly==6.3.0",
-    "psutil==7.1.0",
-    "pvlib==0.13.0",
-    "pycparser==2.23",
-    "pyecharts==2.0.9",
-    "pyparsing==3.2.5",
-    "pyproject_hooks==1.2.0",
-    "python-dateutil==2.9.0.post0",
-    "pytz==2025.2",
-    "requests==2.32.5",
-    "rfc3986==2.0.0",
-    "rich==14.2.0",
-    "scikit-learn==1.7.2",
-    "scipy==1.16.2",
-    "setuptools==80.9.0",
-    "soupsieve==2.8",
-    "timezonefinder==8.1.0",
-    "tqdm==4.67.1",
-    "typing_extensions==4.15.0",
-    "tzdata==2025.2",
-    "urllib3==2.5.0",
-    "workalendar==17.0.0"
+    "holidays>=0.81",
+    "matplotlib>=3.10.6",
+    "numpy>=2.3.3",
+    "openpyxl>=3.1.5",
+    "pandas>=2.3.2",
+    "plotly>=6.3.0",
+    "pvlib>=0.13.0",
+    "pyecharts>=2.0.9",
+    "pytz>=2025.2",
+    "requests>=2.32.5",
+    "scikit-learn>=1.7.2",
+    "scipy>=1.16.2",
+    "timezonefinder>=8.1.0",
+    "tqdm>=4.67.1",
+    "workalendar>=17.0.0"
 ]
 
 classifiers = [
@@ -76,13 +57,10 @@ classifiers = [
   "Operating System :: Unix",
   "Operating System :: POSIX",
   "Operating System :: Microsoft :: Windows",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.8",
-  "Programming Language :: Python :: 3.9",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering",
   "Topic :: Software Development :: Build Tools"
 ]
@@ -93,7 +71,7 @@ Homepage = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy"
 Documentation = "https://pybuildingenergy.readthedocs.io/en/latest/Overview/overview.html"
 Repository = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy"
 Issues = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy/issues"
-Changelog = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy/CHANGELOG.md"
+Changelog = "https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/CHANGELOG.rst"
 
 [project.optional-dependencies]
 gui = []
@@ -105,7 +83,21 @@ dev = [
 ]
 
 
-[pytest]
+[tool.pytest.ini_options]
 markers = [
   "slow: marks tests as slow (deselect with '-m \"not slow\"')",
   ]
+
+[tool.setuptools.package-data]
+pybuildingenergy = [
+  "archetypes.pickle",
+  "assets/*.png",
+  "charts/*.html",
+  "charts/assets/*.js",
+  "data/*.json",
+  "data/*.md",
+  "source/*.md",
+]
+
+[tool.setuptools.exclude-package-data]
+pybuildingenergy = ["Result/*"]

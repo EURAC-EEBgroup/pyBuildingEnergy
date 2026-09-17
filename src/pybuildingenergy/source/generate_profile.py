@@ -8,8 +8,6 @@ import holidays
 #     holidays = None  # defer error to runtime with better message
 
 import requests
-import plotly.express as px
-import plotly.graph_objects as go
 
 def get_country_code_from_latlon(lat, lon, default='IT'):
     """
@@ -308,6 +306,8 @@ class HourlyProfileGenerator:
         long_df["category"] = long_df["category"].str.replace("_profile", "", regex=False)
 
         # line plot
+        import plotly.express as px
+
         fig = px.line(
             long_df,
             x="datetime", y="value",

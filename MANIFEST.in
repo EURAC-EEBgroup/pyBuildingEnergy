@@ -2,6 +2,16 @@ include AUTHORS.rst
 include CONTRIBUTING.rst
 include HISTORY.rst
 include LICENSE.md
-include README.md
+include Readme.md
 
-recursive-include tests *
+recursive-include tests *.py
+include src/pybuildingenergy/archetypes.pickle
+recursive-include src/pybuildingenergy/assets *.png
+recursive-include src/pybuildingenergy/charts *.html *.js
+recursive-include src/pybuildingenergy/data *.json *.md
+recursive-include src/pybuildingenergy/source *.md
+exclude src/pybuildingenergy/source/ahu_modelica.py
+prune src/pybuildingenergy/Result
+global-exclude *.py[cod]
+global-exclude .DS_Store
+prune **/__pycache__

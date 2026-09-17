@@ -206,8 +206,8 @@ def building_data():
             ],
             "construction": {
                 "wall_thickness": 0.3,
-                "thermal_bridges": 2,
-                "units": "m (for thickness), W/mK (for thermal bridges)"
+                "thermal_bridge_heat_W_K": 2,
+                "units": "m (for thickness), W/K (for total thermal-bridge coefficient)"
             },
             "climate_parameters": {
                 "coldest_month": 1,
@@ -1140,6 +1140,37 @@ def test_table25_surface_heat_transfer_defaults_by_boundary_and_heat_flow():
     assert internal_partition["radiative_heat_transfer_coefficient_internal"] == pytest.approx(5.13)
     assert internal_partition["convective_heat_transfer_coefficient_external"] == pytest.approx(2.5)
     assert internal_partition["radiative_heat_transfer_coefficient_external"] == pytest.approx(5.13)
+
+
+def test_thermal_bridge_total_input_changes_heat_transfer_coefficient():
+    from pybuildingenergy.source.utils import _thermal_bridge_heat_transfer_coefficient
+
+    low = {"building_parameters": {"construction": {"thermal_bridge_heat_W_K": 1.0}}}
+    high = {"building_parameters": {"construction": {"thermal_bridge_heat_W_K": 50.0}}}
+
+    assert _thermal_bridge_heat_transfer_coefficient(
+        low, default_length_m=40.0, default_psi_W_mK=0.05
+    ) == pytest.approx(1.0)
+    assert _thermal_bridge_heat_transfer_coefficient(
+        high, default_length_m=40.0, default_psi_W_mK=0.05
+    ) == pytest.approx(50.0)
+
+
+def test_thermal_bridge_length_times_linear_transmittance():
+    from pybuildingenergy.source.utils import _thermal_bridge_heat_transfer_coefficient
+
+    building = {
+        "building_parameters": {
+            "construction": {
+                "thermal_bridge_length_m": 25.0,
+                "thermal_bridge_psi_W_mK": 0.08,
+            }
+        }
+    }
+    result = _thermal_bridge_heat_transfer_coefficient(
+        building, default_length_m=40.0, default_psi_W_mK=0.05
+    )
+    assert result == pytest.approx(2.0)
 
 
 def test_ground_conductance_does_not_apply_outdoor_surface_coefficient():

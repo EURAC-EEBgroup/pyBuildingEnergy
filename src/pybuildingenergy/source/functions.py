@@ -7,11 +7,9 @@
 # Libraries
 import numpy as np
 import pandas as pd
+from importlib.resources import files
 # sklearn imported lazily inside Simple_regeression() -- avoids ~0.6s startup cost
-# from pybuildingenergy.global_inputs import main_directory_
-from pybuildingenergy.global_inputs import main_directory_
 import pickle
-import plotly.graph_objects as go
 
 
 # ===== helper: restituisce (weekday, weekend) di 24 valori dal BUI o dai DEFAULT =====
@@ -379,9 +377,8 @@ def get_buildings_demos():
     """
     Get archetypes and demo buildings
     """
-    # pickle_file_path = main_directory_ + "/pybuildingenergy/pybuildingenergy/data/archetypes.pickle"
-    pickle_file_path = main_directory_ + "/archetypes.pickle"
-    with open(pickle_file_path, "rb") as f:
+    pickle_file = files("pybuildingenergy").joinpath("archetypes.pickle")
+    with pickle_file.open("rb") as f:
         archetypes = pickle.load(f)
 
     return archetypes
@@ -670,6 +667,8 @@ def plot_sankey_building(sankey_data):
     :return: sankey graph
 
     '''
+    import plotly.graph_objects as go
+
     inputs = sankey_data.get("inputs", {})
     outputs = sankey_data.get("outputs", {})
     storage = sankey_data.get("energy_accumulated_zone", 0.0)
