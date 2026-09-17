@@ -46,6 +46,8 @@ print(WEATHER_FILE)
 
 GENERATE_EXTRA_REPORTS = False
 
+file_dir = "/Users/dantonucci/Documents/GitHub/pybuildingenergy/result_test"
+
 def _run_iso52016(building_obj):
     kwargs = {
         "weather_source": WEATHER_SOURCE,
@@ -960,8 +962,8 @@ BUI = {
         ],
         "construction": {
             "wall_thickness": 0.35,
-            "thermal_bridges": 2.0,
-            "units": "m (for thickness), W/mK (for thermal bridges)"
+            "thermal_bridge_heat_W_K": 2.0,
+            "units": "m (for thickness), W/K (for total thermal-bridge coefficient)"
         },
         "climate_parameters": {
             "coldest_month": 1,
@@ -1320,7 +1322,7 @@ else:
         print(f"[info] Weather source: epw ({WEATHER_FILE})")
     else:
         print("[info] Weather source: pvgis (no local EPW found)")
-    file_dir = "/Users/dantonucci/Documents/GitHub/pybuildingenergy/result_test"
+    
     # hourly_sim,annual_results_df = pybui.ISO52016.Temperature_and_Energy_needs_calculation(bui_checked, weather_source="epw", path_weather_file=str(WEATHER_FILE))
     hourly_sim, annual_results_df, sankey_data = _run_iso52016(bui_checked)
 
