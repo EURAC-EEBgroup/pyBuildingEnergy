@@ -1,0 +1,705 @@
+{
+  "$schema": "pybuildingenergy-composed-config-v1",
+  "selection": {
+    "emission": "floor_heating_en15316_2_neutral",
+    "distribution": "analytical_detailed_dict",
+    "generation": "air_to_water_reversible_en14825_part_load",
+    "pv": null,
+    "ahu": null
+  },
+  "weather": {
+    "source": "epw",
+    "file": "/Users/dantonucci/Documents/gitHub/pybuildingenergy/examples/2020_Milan.epw"
+  },
+  "building": {
+    "building": {
+      "name": "demo_dwelling",
+      "azimuth_relative_to_true_north": 0.0,
+      "latitude": 45.47,
+      "longitude": 9.19,
+      "exposed_perimeter": 40,
+      "height": 3.0,
+      "wall_thickness": 0.35,
+      "n_floors": 1,
+      "building_type_class": "Residential_apartment",
+      "adj_zones_present": false,
+      "number_adj_zone": 0,
+      "net_floor_area": 100,
+      "construction_class": "class_i"
+    },
+    "adjacent_zones": [],
+    "building_surface": [
+      {
+        "name": "Roof",
+        "type": "opaque",
+        "area": 110,
+        "sky_view_factor": 1.0,
+        "u_value": 0.25,
+        "solar_absorptance": 0.5,
+        "thermal_capacity": 741500.0,
+        "orientation": {
+          "azimuth": 0,
+          "tilt": 0
+        },
+        "name_adj_zone": null
+      },
+      {
+        "name": "Wall N",
+        "type": "opaque",
+        "area": 28,
+        "sky_view_factor": 0.5,
+        "u_value": 0.3,
+        "solar_absorptance": 0.5,
+        "thermal_capacity": 1416240.0,
+        "orientation": {
+          "azimuth": 0,
+          "tilt": 90
+        },
+        "name_adj_zone": null
+      },
+      {
+        "name": "Wall S",
+        "type": "opaque",
+        "area": 22,
+        "sky_view_factor": 0.5,
+        "u_value": 0.3,
+        "solar_absorptance": 0.5,
+        "thermal_capacity": 1416240.0,
+        "orientation": {
+          "azimuth": 180,
+          "tilt": 90
+        },
+        "name_adj_zone": null
+      },
+      {
+        "name": "Wall E",
+        "type": "opaque",
+        "area": 27,
+        "sky_view_factor": 0.5,
+        "u_value": 0.3,
+        "solar_absorptance": 0.5,
+        "thermal_capacity": 1416240.0,
+        "orientation": {
+          "azimuth": 90,
+          "tilt": 90
+        },
+        "name_adj_zone": null
+      },
+      {
+        "name": "Wall W",
+        "type": "opaque",
+        "area": 27,
+        "sky_view_factor": 0.5,
+        "u_value": 0.3,
+        "solar_absorptance": 0.5,
+        "thermal_capacity": 1416240.0,
+        "orientation": {
+          "azimuth": 270,
+          "tilt": 90
+        },
+        "name_adj_zone": null
+      },
+      {
+        "name": "Slab",
+        "type": "opaque",
+        "boundary": "GROUND",
+        "area": 100,
+        "sky_view_factor": 0.0,
+        "u_value": 0.3,
+        "solar_absorptance": 0.5,
+        "thermal_capacity": 405801.0,
+        "orientation": {
+          "azimuth": 0,
+          "tilt": 0
+        },
+        "name_adj_zone": null
+      },
+      {
+        "name": "Window N",
+        "type": "transparent",
+        "area": 2,
+        "sky_view_factor": 0.5,
+        "u_value": 1.4,
+        "g_value": 0.45,
+        "height": 1.2,
+        "width": 1.7,
+        "parapet": 0.9,
+        "orientation": {
+          "azimuth": 0,
+          "tilt": 90
+        },
+        "shading": false,
+        "shading_type": "horizontal_overhang",
+        "width_or_distance_of_shading_elements": 0.5,
+        "overhang_properties": {
+          "width_of_horizontal_overhangs": 0.8
+        },
+        "name_adj_zone": null
+      },
+      {
+        "name": "Window S",
+        "type": "transparent",
+        "area": 6,
+        "sky_view_factor": 0.5,
+        "u_value": 1.4,
+        "g_value": 0.45,
+        "height": 1.4,
+        "width": 4.3,
+        "parapet": 0.9,
+        "orientation": {
+          "azimuth": 180,
+          "tilt": 90
+        },
+        "shading": false,
+        "shading_type": "horizontal_overhang",
+        "width_or_distance_of_shading_elements": 0.5,
+        "overhang_properties": {
+          "width_of_horizontal_overhangs": 0.8
+        },
+        "name_adj_zone": null
+      },
+      {
+        "name": "Window E",
+        "type": "transparent",
+        "area": 2,
+        "sky_view_factor": 0.5,
+        "u_value": 1.4,
+        "g_value": 0.45,
+        "height": 1.4,
+        "width": 1.4,
+        "parapet": 0.9,
+        "orientation": {
+          "azimuth": 90,
+          "tilt": 90
+        },
+        "shading": false,
+        "shading_type": "horizontal_overhang",
+        "width_or_distance_of_shading_elements": 0.5,
+        "overhang_properties": {
+          "width_of_horizontal_overhangs": 0.8
+        },
+        "name_adj_zone": null
+      },
+      {
+        "name": "Window W",
+        "type": "transparent",
+        "area": 2,
+        "sky_view_factor": 0.5,
+        "u_value": 1.4,
+        "g_value": 0.45,
+        "height": 1.4,
+        "width": 1.4,
+        "parapet": 0.9,
+        "orientation": {
+          "azimuth": 270,
+          "tilt": 90
+        },
+        "shading": false,
+        "shading_type": "horizontal_overhang",
+        "width_or_distance_of_shading_elements": 0.5,
+        "overhang_properties": {
+          "width_of_horizontal_overhangs": 0.8
+        },
+        "name_adj_zone": null
+      }
+    ],
+    "units": {
+      "area": "m2",
+      "u_value": "W/m2K"
+    },
+    "building_parameters": {
+      "temperature_setpoints": {
+        "heating_setpoint": 20.0,
+        "heating_setback": 17.0,
+        "cooling_setpoint": 26.0,
+        "cooling_setback": 30.0
+      },
+      "system_capacities": {
+        "heating_capacity": 10000000.0,
+        "cooling_capacity": 10000000.0
+      },
+      "airflow_rates": {
+        "infiltration_rate": 0.5
+      },
+      "internal_gains": [
+        {
+          "name": "occupants",
+          "full_load": 3.0,
+          "weekday": [
+            0.9,
+            0.9,
+            0.9,
+            0.9,
+            0.9,
+            0.9,
+            0.5,
+            0.5,
+            0.5,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.1,
+            0.6,
+            0.6,
+            0.6,
+            0.9,
+            0.9,
+            0.9,
+            0.9
+          ],
+          "weekend": [
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            0.8,
+            1.0,
+            1.0
+          ]
+        },
+        {
+          "name": "appliances",
+          "full_load": 1.5,
+          "weekday": [
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4,
+            0.4
+          ],
+          "weekend": [
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5
+          ]
+        }
+      ],
+      "construction": {
+        "wall_thickness": 0.35,
+        "thermal_bridge_heat_W_K": 8.0
+      },
+      "climate_parameters": {
+        "coldest_month": 1
+      },
+      "heating_profile": {
+        "weekday": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "weekend": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          0.0
+        ]
+      },
+      "cooling_profile": {
+        "weekday": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "weekend": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          0.0
+        ]
+      },
+      "ventilation_profile": {
+        "weekday": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          0.0
+        ],
+        "weekend": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          0.0
+        ]
+      }
+    }
+  },
+  "hvac_system": {
+    "emitter_type": "Floor heating",
+    "nominal_power": 15.0,
+    "flow_temp_control_type": "Type 2 - Based on outdoor temperature",
+    "selected_emm_cont_circuit": 0,
+    "mixing_valve": true,
+    "mixing_valve_delta": 2,
+    "emission_calculation_mode": "en15316-2",
+    "emission_time_step_hours": 1.0,
+    "emission_15316_2_config": {
+      "time_step_hours": 1.0,
+      "demand_unit": "kWh",
+      "default_heating_internal_temperature_C": 20.0,
+      "default_cooling_internal_temperature_C": 26.0,
+      "heating": {
+        "stratification_K": 0.0,
+        "control_K": 0.0,
+        "radiation_K": 0.0,
+        "hydraulic_balancing_K": 0.0,
+        "room_automation_K": 0.0,
+        "embedded_K": 0.0,
+        "nominal_power_kW": 15.0,
+        "fan_power_W": 0.0,
+        "fan_count": 0,
+        "control_power_W": 0.0,
+        "control_count": 0,
+        "convective_fraction": 0.7
+      },
+      "cooling": {
+        "stratification_K": 0.0,
+        "control_K": 0.0,
+        "radiation_K": 0.0,
+        "hydraulic_balancing_K": 0.0,
+        "room_automation_K": 0.0,
+        "embedded_K": 0.0,
+        "nominal_power_kW": 15.0,
+        "fan_power_W": 0.0,
+        "fan_count": 0,
+        "control_power_W": 0.0,
+        "control_count": 0,
+        "convective_fraction": 0.7
+      }
+    },
+    "emission_efficiency": 90,
+    "distribution_calculation_mode": "analytical",
+    "distribution_15316_3_config": {
+      "time_step_hours": 1.0,
+      "demand_unit": "kWh",
+      "heating": {
+        "operation_mode": "demand",
+        "nominal_power_kW": 8.0,
+        "design_flow_m3_h": 0.7,
+        "design_deltaT_K": 10.0,
+        "pipe_sections": [
+          {
+            "length_m": 18.0,
+            "equivalent_length_m": 4.0,
+            "linear_thermal_transmittance_W_mK": 0.2,
+            "ambient_temperature_C": 20.0,
+            "recoverable": true
+          },
+          {
+            "length_m": 12.0,
+            "equivalent_length_m": 2.0,
+            "linear_thermal_transmittance_W_mK": 0.3,
+            "ambient_temperature_C": 10.0,
+            "recoverable": false
+          }
+        ],
+        "pump_control_code": 4,
+        "eei": 0.23,
+        "additional_pressure_kPa": 10.0,
+        "recoverable_aux_fraction": 0.25
+      }
+    },
+    "heat_losses_recovered": true,
+    "distribution_loss_recovery": 90,
+    "simplified_approach": 80,
+    "distribution_aux_recovery": 80,
+    "distribution_aux_power": 30,
+    "distribution_loss_coeff": 48,
+    "distribution_operation_time": 1,
+    "full_load_power": 24.0,
+    "generator_circuit": "independent",
+    "gen_flow_temp_control_type": "Type A - Based on outdoor temperature",
+    "gen_outdoor_temp_data": {
+      "\u03b8ext_min_gen": -7.0,
+      "\u03b8ext_max_gen": 15.0,
+      "\u03b8flw_gen_max": 60.0,
+      "\u03b8flw_gen_min": 35.0
+    },
+    "efficiency_model": "simple",
+    "calc_when_QH_positive_only": false,
+    "off_compute_mode": "full",
+    "generation_calculation_mode": "legacy",
+    "external_generation": {
+      "kind": "heat_pump",
+      "name": "air_to_water_reversible_en14825_part_load",
+      "config": {
+        "source_type": "air",
+        "demand_unit": "kWh",
+        "hp_operating_limit_C": 58.0,
+        "cooling_sink_temperature_C": 7.0,
+        "cooling_max_source_temperature_C": 43.0,
+        "part_load_performance_method": "en14825",
+        "part_load_unit_type": "air-to-water",
+        "heating_part_load_degradation_coefficient": 0.9,
+        "cooling_part_load_degradation_coefficient": 0.9,
+        "part_load_minimum_capacity_ratio": 0.25,
+        "heating_performance_map": [
+          {
+            "source_temperature_C": -7,
+            "sink_temperature_C": 35,
+            "capacity_kW": 5.0,
+            "cop": 3.2
+          },
+          {
+            "source_temperature_C": -7,
+            "sink_temperature_C": 55,
+            "capacity_kW": 4.0,
+            "cop": 2.4
+          },
+          {
+            "source_temperature_C": 2,
+            "sink_temperature_C": 35,
+            "capacity_kW": 6.0,
+            "cop": 3.8
+          },
+          {
+            "source_temperature_C": 2,
+            "sink_temperature_C": 55,
+            "capacity_kW": 5.0,
+            "cop": 2.8
+          },
+          {
+            "source_temperature_C": 7,
+            "sink_temperature_C": 35,
+            "capacity_kW": 7.0,
+            "cop": 4.2
+          },
+          {
+            "source_temperature_C": 7,
+            "sink_temperature_C": 55,
+            "capacity_kW": 6.0,
+            "cop": 3.2
+          }
+        ],
+        "cooling_performance_map": [
+          {
+            "source_temperature_C": 25,
+            "sink_temperature_C": 7,
+            "capacity_kW": 5.0,
+            "eer": 3.0
+          },
+          {
+            "source_temperature_C": 25,
+            "sink_temperature_C": 18,
+            "capacity_kW": 6.0,
+            "eer": 3.6
+          },
+          {
+            "source_temperature_C": 35,
+            "sink_temperature_C": 7,
+            "capacity_kW": 4.0,
+            "eer": 2.5
+          },
+          {
+            "source_temperature_C": 35,
+            "sink_temperature_C": 18,
+            "capacity_kW": 5.0,
+            "eer": 3.1
+          }
+        ]
+      }
+    }
+  },
+  "dhw": {
+    "enabled": true,
+    "daily_volume_l": 150.0,
+    "draw_temperature_C": 40.0,
+    "cold_water_temperature_C": 12.0
+  },
+  "pv": null,
+  "options": {
+    "autosize": true,
+    "sizing_margin": 1.2,
+    "ahu_coils_to_generation": true,
+    "fallback_cooling_eer": null,
+    "baseline_electricity_kWh_per_year": 0.0,
+    "primary_energy_factors": null,
+    "ahu_flow_ach": 0.5,
+    "ahu_infiltration_ach": null,
+    "pe_balance": "monthly",
+    "hourly_cache_dir": null
+  },
+  "compose_notes": []
+}

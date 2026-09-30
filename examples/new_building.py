@@ -488,8 +488,8 @@ def _apply_heating_heat_pump_generation(
 #         ],
 #         "construction": {
 #             "wall_thickness": 0.3,
-#             "thermal_bridges": 2,
-#             "units": "m (for thickness), W/mK (for thermal bridges)"
+#             "thermal_bridge_heat_W_K": 2,
+#             "units": "m (for thickness), W/K (for total thermal bridges)"
 #         },
 #         "climate_parameters": {
 #             "coldest_month": 1,

@@ -35,6 +35,55 @@ class HeatingSystemCalculator:
         # Specific heat capacity of water (Wh/kgK)
         self.c_w = 1.16
 
+    def _reset_hydraulic_alarms(self):
+        """Start a new calculation-step diagnostic collection."""
+        self._hydraulic_alarms = []
+
+    def _add_hydraulic_alarm(self, code, message):
+        """Store a hydraulic diagnostic once per calculation step."""
+        alarm = {"code": code, "message": message}
+        if alarm not in self._hydraulic_alarms:
+            self._hydraulic_alarms.append(alarm)
+
+    def _hydraulic_coherence_check(self, circuit_code, θH_cr_flw, θH_em_flw_min, ΦH_em_eff, tol):
+        """Shared node/emitter temperature coherence diagnostic (Annex C.2-C.5).
+
+        A mixing valve (self.MIX_EM) can only lower a higher node temperature,
+        never raise a lower one. This flags the two physically meaningful
+        mismatches - not enough node temperature, or too much of it with no
+        valve to bring it down - the same way for every circuit type, instead
+        of only for C.2 (circuit_type == 0).
+
+        :param circuit_code: Annex C label used in alarm codes/messages, e.g. 'C3'.
+        :param θH_em_flw_min: minimum flow temperature the emitter needs, WITHOUT
+            any mixing-valve markup (i.e. as computed by calculate_type_C* when
+            self.MIX_EM is False for that same step).
+        :return: (hydraulic_status, hydraulic_requirement_met)
+        """
+        if ΦH_em_eff <= 0.0:
+            return 'not_checked_no_heating_load', True
+        if θH_cr_flw < θH_em_flw_min - tol:
+            self._add_hydraulic_alarm(
+                f'{circuit_code}_NODE_TEMPERATURE_INSUFFICIENT',
+                f'{circuit_code}: il nodo fornisce '
+                f'{θH_cr_flw:.2f} °C, inferiori ai {θH_em_flw_min:.2f} °C richiesti. '
+                'La valvola miscelatrice non può aumentare la temperatura: '
+                'la potenza richiesta non è fisicamente garantita.'
+            )
+            return 'node_temperature_insufficient', False
+        if self.MIX_EM:
+            return 'mixing_valve_configured', True
+        if θH_cr_flw > θH_em_flw_min + tol:
+            self._add_hydraulic_alarm(
+                f'{circuit_code}_MIXING_VALVE_REQUIRED',
+                f'{circuit_code}: il nodo fornisce '
+                f'{θH_cr_flw:.2f} °C, superiori ai {θH_em_flw_min:.2f} °C richiesti, '
+                'ma mixing_valve=False. Il calcolo applica una miscelazione virtuale; '
+                'verificare/progettare una valvola miscelatrice reale.'
+            )
+            return 'mixing_valve_required', True
+        return 'direct_circuit_coherent', True
+
     def _load_input_parameters(self):
         """
         Load input parameters from the provided dictionary and set defaults.
@@ -65,6 +114,11 @@ class HeatingSystemCalculator:
         self.df_heat_emm_data = inp.get('heat_emission_data', self._default_emission_data())
         self.df_out_temp = inp.get('outdoor_temp_data', self._default_outdoor_data())
         self.θem_flw_sahz_i = inp.get('constant_flow_temp', [42])  # constant secondary supply (if used)
+        # Numerical equality threshold for C.2 temperature-coherence checks.
+        self.hydraulic_temperature_tolerance_K = float(
+            inp.get('hydraulic_temperature_tolerance_K', 0.01)
+        )
+        self._reset_hydraulic_alarms()
 
         # Emission calculation mode:
         # - 'simplified': keep the internal ISO 15316-1 emission approximation
@@ -451,7 +505,7 @@ class HeatingSystemCalculator:
 
     def calculate_type_C2(self, common_params, θint):
         """
-        C.2 — CONSTANT mass flow rate and CONSTANT water temperature on the emitter.
+        C.2 — CONSTANT mass flow rate and VARIABLE temperature.
         Secondary flow is nominal; supply/return derived from power balance.
         """
         ΦH_em_eff = common_params['ΦH_em_eff']
@@ -626,8 +680,13 @@ class HeatingSystemCalculator:
         θH_em_flw_set = 0  # user-defined hook
         θH_em_flw_min = max(θH_em_flw_calc, θH_em_flw_min_set, θH_em_flw_set)
 
-        # Minimum distribution supply with mixing margin
-        θH_em_flw_min_final = θH_em_flw_calc + self.ΔθH_em_mix_sahz_i if self.MIX_EM else θH_em_flw_calc
+        # C.5.4 (C.61--C.63): first select the emitter supply from the
+        # calculated and configured minima, then add the mixing overhead to
+        # obtain the circuit/node temperature requirement.
+        θH_em_flw_min_final = (
+            θH_em_flw_min + self.ΔθH_em_mix_sahz_i
+            if self.MIX_EM else θH_em_flw_min
+        )
 
         return {
             'θH_em_flow': θH_em_flw_min,
@@ -675,6 +734,25 @@ class HeatingSystemCalculator:
         else:
             θH_nod_out = θH_cr_flw_ext
 
+        # EN 15316-1:2017, C.1: a node serving any Annex C circuit must make at
+        # least its minimum required flow temperature available. A mixing valve
+        # can lower a higher node temperature, but cannot raise a lower one.
+        if self.selected_emm_cont_circuit in (0, 1, 2, 3):
+            θH_em_flw_min = float(emission_results['θH_em_flw_min'])
+            has_heating_load = bool(emission_results.get(
+                'has_heating_load',
+                float(emission_results.get('ΔθH_em_air_eff', 0.0)) > 0.0,
+            ))
+            if has_heating_load and θH_nod_out < θH_em_flw_min - self.hydraulic_temperature_tolerance_K:
+                θH_nod_out_controlled = θH_nod_out
+                θH_nod_out = θH_em_flw_min
+                self._add_hydraulic_alarm(
+                    f'C{self.selected_emm_cont_circuit + 2}_NODE_SETPOINT_RAISED',
+                    f'C.{self.selected_emm_cont_circuit + 2}: temperatura del nodo insufficiente '
+                    f'({θH_nod_out_controlled:.2f} °C < {θH_em_flw_min:.2f} °C richiesti); '
+                    'setpoint del nodo elevato alla temperatura minima richiesta dall’emettitore.'
+                )
+
         return θH_nod_out
 
     def calculate_operating_conditions(self, emission_results, common_params, θint, θH_nod_out):
@@ -685,26 +763,76 @@ class HeatingSystemCalculator:
         circuit_type = self.selected_emm_cont_circuit
         ΦH_em_eff = common_params['ΦH_em_eff']
         QH_sys_out_hz_i = common_params['QH_sys_out_hz_i']
+        # Shared by the hydraulic-coherence diagnostics of every circuit type
+        # (C.2-C.5): a mixing valve can only lower a higher node temperature,
+        # never raise a lower one.
+        tol = self.hydraulic_temperature_tolerance_K
 
         if circuit_type == 0:  # C.2 Constant flow
-            # Circuit supply is the node supply
+            # θH_nod_out: supply temperature leaving the common hydraulic node
+            #               (available upstream temperature for this circuit).
+            # θH_cr_flw: supply temperature of the circuit before any mixing valve.
             θH_cr_flw = θH_nod_out
-            # Circuit return equals emitter return
+            # θH_cr_ret: return temperature of the circuit, equal to emitter return.
             θH_cr_ret = emission_results['θH_em_ret']
 
             # Circuit mass flow from power and ΔT
             V_H_cr = ΦH_em_eff / ((θH_cr_flw - θH_cr_ret) * self.c_w) if (θH_cr_flw - θH_cr_ret) > 0 else 0.0
 
-            # Distribution supply: with mixing valve use emitter supply; otherwise follow circuit
-            θH_dis_flw = emission_results['θH_em_flow'] if self.MIX_EM else θH_cr_flw
+            # θH_dis_flw: supply temperature in the distribution pipe serving the emitter.
+            # θH_em_flow: emitter inlet temperature required by the C.2 power balance.
+            θH_em_flw_min = emission_results['θH_em_flw_min']
+            θH_em_flow = emission_results['θH_em_flow']
+            hydraulic_requirement_met = θH_cr_flw >= θH_em_flw_min - tol
 
-            # Distribution return equals emitter return
+            if ΦH_em_eff <= 0.0:
+                hydraulic_status = 'not_checked_no_heating_load'
+                hydraulic_requirement_met = True
+                # At zero load, calculate_type_C2 already collapses θH_em_flow
+                # to θint (ΔθH_em_air_eff = ΔθH_em_w_eff = 0). With a mixing
+                # valve (MIX_EM) that is the physically correct distribution
+                # temperature: the valve throttles down to no more than what
+                # the (absent) load needs. Without a valve there is nothing
+                # to throttle it, so the raw node temperature is what actually
+                # reaches the distribution pipe.
+                θH_dis_flw = θH_em_flow if self.MIX_EM else θH_cr_flw
+            elif not hydraulic_requirement_met:
+                # Defensive branch for direct callers. compute_step() has already
+                # raised the node setpoint to prevent this physically invalid case.
+                hydraulic_status = 'node_temperature_insufficient'
+                self._add_hydraulic_alarm(
+                    'C2_NODE_TEMPERATURE_INSUFFICIENT',
+                    'C.2: il nodo fornisce '
+                    f'{θH_cr_flw:.2f} °C, inferiori ai {θH_em_flw_min:.2f} °C richiesti. '
+                    'La valvola miscelatrice non può aumentare la temperatura: '
+                    'la potenza richiesta non è fisicamente garantita.'
+                )
+                θH_dis_flw = θH_cr_flw
+            elif self.MIX_EM:
+                hydraulic_status = 'mixing_valve_configured'
+                θH_dis_flw = θH_em_flow
+            elif θH_cr_flw > θH_em_flw_min + tol:
+                # C.2.5 requires the calculation to consider a mixing valve when
+                # node and emitter-required temperatures differ.
+                hydraulic_status = 'mixing_valve_required'
+                self._add_hydraulic_alarm(
+                    'C2_MIXING_VALVE_REQUIRED',
+                    'C.2: il nodo fornisce '
+                    f'{θH_cr_flw:.2f} °C, superiori ai {θH_em_flw_min:.2f} °C richiesti, '
+                    'ma mixing_valve=False. Il calcolo applica una miscelazione virtuale; '
+                    'verificare/progettare una valvola miscelatrice reale.'
+                )
+                θH_dis_flw = θH_em_flow
+            else:
+                hydraulic_status = 'direct_circuit_coherent'
+                θH_dis_flw = θH_cr_flw
+
+            # θH_dis_ret: distribution return temperature, equal to emitter return.
             θH_dis_ret = emission_results['θH_em_ret']
             θH_em_ret_eff = emission_results['θH_em_ret']
 
             # Load factor
             βH_em = ΦH_em_eff / self.ΦH_em_n if self.ΦH_em_n > 0 else 0.0
-            θH_em_flw_min = emission_results['θH_em_flw_min']
 
         elif circuit_type == 1:  # C.3 Variable flow
             θH_cr_flw = θH_nod_out
@@ -721,6 +849,9 @@ class HeatingSystemCalculator:
             θH_em_ret_eff = emission_results['θH_em_ret']
             βH_em = ΦH_em_eff / self.ΦH_em_n if self.ΦH_em_n > 0 else 0.0
             θH_em_flw_min = emission_results['θH_em_flw_min']
+            hydraulic_status, hydraulic_requirement_met = self._hydraulic_coherence_check(
+                'C3', θH_cr_flw, θH_em_flw_min, ΦH_em_eff, tol
+            )
 
         elif circuit_type == 2:  # C.4 ON-OFF
             # Effective emitter supply during ON
@@ -761,10 +892,15 @@ class HeatingSystemCalculator:
             # Duty-cycle load factor
             βH_em = (t_H_cr_ON / self.tH_em_i_ON) if self.tH_em_i_ON > 0 else 0.0
             θH_em_flw_min = emission_results['θH_em_flw_min']
+            hydraulic_status, hydraulic_requirement_met = self._hydraulic_coherence_check(
+                'C4', θH_cr_flw, θH_em_flw_min, ΦH_em_eff, tol
+            )
 
         elif circuit_type == 3:  # C.5 Constant flow & variable exchange
             # Effective emitter supply
-            θH_em_flw_eff = emission_results['θH_em_flw_min'] if self.MIX_EM else θH_nod_out
+            # C.5.5 (C.64--C.65): a mixing valve supplies the selected emitter
+            # temperature; without it, the emitter receives node temperature.
+            θH_em_flw_eff = emission_results['θH_em_flow'] if self.MIX_EM else θH_nod_out
 
             # Emitter return from power and nominal flow
             V_H_em_eff = emission_results['V_H_em_eff']
@@ -796,6 +932,9 @@ class HeatingSystemCalculator:
             θH_cr_flw = θH_nod_out
             θH_cr_ret = θH_em_ret
             θH_em_flw_min = emission_results['θH_em_flw_min']
+            hydraulic_status, hydraulic_requirement_met = self._hydraulic_coherence_check(
+                'C5', θH_cr_flw, θH_em_flw_min, ΦH_em_eff, tol
+            )
 
         else:
             raise ValueError("selected_emm_cont_circuit must be in {0,1,2,3}")
@@ -808,6 +947,12 @@ class HeatingSystemCalculator:
             'θH_dis_ret': θH_dis_ret,
             'βH_em': βH_em,
             'θH_em_flw_min': θH_em_flw_min,
+            # Every circuit type (C.2-C.5) now runs the same node/emitter
+            # coherence diagnostic (_hydraulic_coherence_check), so there is
+            # no longer a circuit_type == 0 special case here.
+            'hydraulic_status': hydraulic_status,
+            'hydraulic_requirement_met': hydraulic_requirement_met,
+            'hydraulic_alarms': list(getattr(self, '_hydraulic_alarms', [])),
             'θH_em_ret_eff': θH_em_ret_eff,
         }
 
@@ -1437,16 +1582,19 @@ class HeatingSystemCalculator:
         return boiler_out
 
     # -------------------- ONE STEP EXECUTION --------------------
-    def compute_step(self, q_h_kWh, θint, θext):
+    def compute_step(self, q_h_kWh, θint, θext, θH_nod_out_override=None):
         """
         Execute the full computation for a single time-step:
         1) emission (one of C.2/C.3/C.4/C.5)
-        2) choose node supply temperature (secondary control)
+        2) choose node supply temperature (secondary control), unless an
+           externally coordinated common-node temperature is supplied
         3) operating conditions
         4) distribution
         5) generation (primary)
         Returns a dict with main outputs (temps, flows, energies).
         """
+        self._reset_hydraulic_alarms()
+
         # 1) Emission-side step, either simplified ISO 15316-1 internal logic
         #    or delegated EN 15316-2 per hourly row.
         em_step = self._calculate_emission_step(q_h_kWh, θint, θext)
@@ -1474,8 +1622,15 @@ class HeatingSystemCalculator:
         else:
             raise ValueError("selected_emm_cont_circuit must be in {0,1,2,3}")
 
-        # 4) Node supply temp (secondary control)
-        θH_nod_out = self.calculate_circuit_node_temperature(θext, em)
+        em['has_heating_load'] = common['ΦH_em_eff'] > 0.0
+
+        # 4) Node supply temperature. The optional override is used by the
+        # multi-zone coordinator after applying EN 15316-1 C.1 (maximum of all
+        # connected circuit temperature requirements).
+        if θH_nod_out_override is None:
+            θH_nod_out = self.calculate_circuit_node_temperature(θext, em)
+        else:
+            θH_nod_out = float(θH_nod_out_override)
 
         # 5) Operating conditions
         op = self.calculate_operating_conditions(em, common, θint_eff, θH_nod_out)
@@ -1520,6 +1675,10 @@ class HeatingSystemCalculator:
             'θH_dis_flw(°C)': op['θH_dis_flw'],
             'θH_dis_ret(°C)': op['θH_dis_ret'],
             'βH_em(-)': op['βH_em'],
+            'hydraulic_status': op['hydraulic_status'],
+            'hydraulic_requirement_met': op['hydraulic_requirement_met'],
+            'hydraulic_alarm_codes': '|'.join(alarm['code'] for alarm in op['hydraulic_alarms']),
+            'hydraulic_alarm_messages': ' | '.join(alarm['message'] for alarm in op['hydraulic_alarms']),
 
             # distribution
             'Q_w_dis_i_ls(kWh)': dist['Q_w_dis_i_ls'],
@@ -1563,6 +1722,7 @@ class HeatingSystemCalculator:
         - set powers/flows to 0,
         - return temps coherent with no exchange (≈ θint where applicable).
         """
+        self._reset_hydraulic_alarms()
         common = self.calculate_common_emission_parameters(0.0, θint)
 
         # Emission block at zero load (still follows selected type for temps)
@@ -1574,6 +1734,8 @@ class HeatingSystemCalculator:
             em = self.calculate_type_C4(common, θint)
         else:
             em = self.calculate_type_C5(common, θint)
+
+        em['has_heating_load'] = False
 
         θH_nod_out = self.calculate_circuit_node_temperature(θext, em)
 
@@ -1599,6 +1761,10 @@ class HeatingSystemCalculator:
             'θH_dis_flw(°C)': θH_dis_flw,
             'θH_dis_ret(°C)': θH_dis_ret,
             'βH_em(-)': 0.0,
+            'hydraulic_status': 'not_checked_no_heating_load',
+            'hydraulic_requirement_met': True,
+            'hydraulic_alarm_codes': '',
+            'hydraulic_alarm_messages': '',
 
             'Q_w_dis_i_ls(kWh)': 0.0,
             'Q_w_dis_i_aux(kWh)': 0.0,
@@ -1720,3 +1886,186 @@ class HeatingSystemCalculator:
 
         out_df = pd.DataFrame(results).set_index('timestamp')
         return out_df
+
+
+class MultiZoneHeatingSystemCalculator:
+    """Coordinate several EN 15316-1 emission circuits on one hydraulic node.
+
+    ``zone_systems`` maps a thermal-zone name to the input dictionary accepted
+    by :class:`HeatingSystemCalculator`.  At every time step the coordinator
+    first calculates each circuit's minimum required flow temperature, then
+    applies EN 15316-1:2017, Annex C.1, equation (C.1): the common node supply
+    temperature is the maximum required by its connected circuits.  The four
+    Annex C emission modules (C.2--C.5) are therefore evaluated independently
+    for each zone but against the same node temperature.
+
+    Distribution and generation results in each zone output remain local to
+    that zone configuration.  A shared generator dispatch is outside Annex C
+    and must be coordinated under Annex D by the calling application.
+    """
+
+    _INPUT_ALIASES = {
+        'Q_H_kWh': ('Q_H_kWh', 'Q_H', 'Q_h', 'Heating_needs'),
+        'T_op': ('T_op', 'T_int', 'theta_int'),
+        'T_ext': ('T_ext', 'theta_ext'),
+    }
+
+    def __init__(self, zone_systems):
+        if not isinstance(zone_systems, dict) or not zone_systems:
+            raise ValueError('zone_systems must be a non-empty mapping of zone names to HVAC configurations.')
+        self.zone_calculators = {
+            str(zone): HeatingSystemCalculator(config)
+            for zone, config in zone_systems.items()
+        }
+
+    @staticmethod
+    def _value(values, aliases, default=None):
+        for key in aliases:
+            if key in values and values[key] is not None:
+                return float(values[key])
+        if default is None:
+            raise KeyError(f'Missing required zone input; expected one of {aliases}.')
+        return float(default)
+
+    @staticmethod
+    def _emission_module(calc, common, θint):
+        if calc.selected_emm_cont_circuit == 0:
+            return calc.calculate_type_C2(common, θint)
+        if calc.selected_emm_cont_circuit == 1:
+            return calc.calculate_type_C3(common, θint)
+        if calc.selected_emm_cont_circuit == 2:
+            return calc.calculate_type_C4(common, θint)
+        if calc.selected_emm_cont_circuit == 3:
+            return calc.calculate_type_C5(common, θint)
+        raise ValueError('selected_emm_cont_circuit must be in {0,1,2,3}')
+
+    def _minimum_required_temperature(self, calc, q_h_kWh, θint, θext):
+        """First Annex C pass: calculate a circuit requirement only."""
+        calc._reset_hydraulic_alarms()
+        em_step = calc._calculate_emission_step(q_h_kWh, θint, θext)
+        θint_eff = float(em_step['θint_eff'])
+        common = calc.calculate_common_emission_parameters(
+            float(em_step['q_h_em_out_kWh']), θint_eff
+        )
+        common['QH_em_i_in'] = float(em_step['QH_em_i_in'])
+        common['ΦH_em_eff'] = float(em_step['ΦH_em_eff'])
+        if common['ΦH_em_eff'] <= 0.0:
+            return None
+        emission = self._emission_module(calc, common, θint_eff)
+        return float(emission['θH_em_flw_min'])
+
+    def compute_step(self, zone_inputs):
+        """Calculate one time step for all zones connected to the common node.
+
+        ``zone_inputs`` is a mapping such as ``{'zone_1': {'Q_H_kWh': 2.1,
+        'T_op': 20.0, 'T_ext': 3.0}, ...}``. Every configured zone must be
+        present. Extra zone names are rejected to prevent silent aggregation.
+        """
+        expected = set(self.zone_calculators)
+        provided = set(zone_inputs)
+        if provided != expected:
+            raise ValueError(
+                'zone_inputs must contain exactly the configured zones; '
+                f'missing={sorted(expected - provided)}, extra={sorted(provided - expected)}.'
+            )
+
+        normalized = {}
+        requirements = {}
+        for zone, calc in self.zone_calculators.items():
+            values = zone_inputs[zone]
+            q_h = self._value(values, self._INPUT_ALIASES['Q_H_kWh'], 0.0)
+            θint = self._value(values, self._INPUT_ALIASES['T_op'], calc.input_data.get('theta_int_default', 20.0))
+            θext = self._value(values, self._INPUT_ALIASES['T_ext'], calc.input_data.get('theta_ext_default', 5.0))
+            normalized[zone] = (q_h, θint, θext)
+            requirements[zone] = self._minimum_required_temperature(calc, q_h, θint, θext)
+
+        # EN 15316-1:2017 Annex C.1, equation (C.1).
+        active_requirements = {
+            zone: requirement for zone, requirement in requirements.items()
+            if requirement is not None
+        }
+        θH_nod_out = (
+            max(active_requirements.values())
+            if active_requirements else max(θint for _, θint, _ in normalized.values())
+        )
+        node_zone_names = [
+            zone for zone, requirement in requirements.items()
+            if requirement is not None and abs(requirement - θH_nod_out) <= 1e-9
+        ]
+
+        zone_results = {}
+        for zone, calc in self.zone_calculators.items():
+            q_h, θint, θext = normalized[zone]
+            result = calc.compute_step(q_h, θint, θext, θH_nod_out_override=θH_nod_out)
+            result['zone_name'] = zone
+            result['θH_em_flw_min_req_for_node(°C)'] = requirements[zone]
+            result['shared_node_governing_zone'] = zone in node_zone_names
+            zone_results[zone] = result
+
+        system_alarms = []
+        for zone, result in zone_results.items():
+            if result['hydraulic_alarm_codes']:
+                system_alarms.append(f"{zone}: {result['hydraulic_alarm_codes']}")
+
+        return {
+            'θH_nod_out(°C)': θH_nod_out,
+            'θH_nod_out_rule': 'max(θH_em_flw_min of all connected circuits), EN 15316-1 Annex C.1 (C.1)',
+            'node_governing_zones': node_zone_names,
+            'zone_temperature_requirements(°C)': requirements,
+            'Q_h_total(kWh)': sum(result['Q_h(kWh)'] for result in zone_results.values()),
+            'QH_em_i_in_total(kWh)': sum(result['QH_em_i_in(kWh)'] for result in zone_results.values()),
+            'QH_dis_i_in_total(kWh)': sum(result['QH_dis_i_in(kWh)'] for result in zone_results.values()),
+            'hydraulic_alarm_messages': ' | '.join(system_alarms),
+            'zones': zone_results,
+        }
+
+    def run_timeseries(self, zone_timeseries):
+        """Run aligned zone DataFrames and return system and per-zone results.
+
+        ``zone_timeseries`` maps every configured zone to a DataFrame using the
+        same timestamp index and the columns accepted by ``compute_step``.
+        """
+        expected = set(self.zone_calculators)
+        provided = set(zone_timeseries)
+        if provided != expected:
+            raise ValueError('zone_timeseries must contain exactly the configured zones.')
+        first_zone = next(iter(self.zone_calculators))
+        index = zone_timeseries[first_zone].index
+        if any(not df.index.equals(index) for df in zone_timeseries.values()):
+            raise ValueError('All zone time series must have the same timestamp index.')
+
+        # Precompute EN 15316-2 emission timeseries ONCE per zone (same
+        # optimization as HeatingSystemCalculator.run_timeseries). Without
+        # this, compute_step -> _minimum_required_temperature and compute_step
+        # -> HeatingSystemCalculator.compute_step each fall through to the
+        # ad-hoc single-row EmissionSystemCalculator fallback, i.e. two full
+        # EmissionSystemCalculator runs per zone per hour instead of one
+        # batch run per zone for the whole series.
+        for zone, calc in self.zone_calculators.items():
+            calc._precompute_emission_timeseries(zone_timeseries[zone])
+
+        system_rows = []
+        zone_rows = {zone: [] for zone in self.zone_calculators}
+        for pos, timestamp in enumerate(index):
+            for zone, calc in self.zone_calculators.items():
+                calc._current_emission_pos = pos
+            inputs = {
+                zone: zone_timeseries[zone].loc[timestamp].to_dict()
+                for zone in self.zone_calculators
+            }
+            step = self.compute_step(inputs)
+            system_row = {key: value for key, value in step.items() if key != 'zones'}
+            system_row['timestamp'] = timestamp
+            system_rows.append(system_row)
+            for zone, result in step['zones'].items():
+                row = dict(result)
+                row['timestamp'] = timestamp
+                zone_rows[zone].append(row)
+
+        return {
+            'system': pd.DataFrame(system_rows).set_index('timestamp'),
+            'zones': {
+                zone: pd.DataFrame(rows).set_index('timestamp')
+                for zone, rows in zone_rows.items()
+            },
+        }

@@ -96,6 +96,7 @@ pybuildingenergy = [
   "charts/assets/*.js",
   "data/*.json",
   "data/*.md",
+  "data/generation_catalog/*.json",
   "source/*.md",
 ]
 

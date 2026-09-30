@@ -92,7 +92,7 @@ plt.show()
 | Method | Purpose |
 |---------|----------|
 | `calculate_common_emission_parameters()` | Compute shared parameters (power, nominal flow, deltas). |
-| `calculate_type_C2()` | Constant flow and constant temperature. |
+| `calculate_type_C2()` | Constant flow and variable temperature. |
 | `calculate_type_C3()` | Variable flow and constant temperature. |
 | `calculate_type_C4()` | ON–OFF intermittent control. |
 | `calculate_type_C5()` | Constant flow and variable heat exchange (by-pass). |
@@ -168,4 +168,3 @@ print(f"Emission in: {emission_in:.1f} kWh")
 print(f"Generator out: {generator_out:.1f} kWh")
 print(f"Overall efficiency: {eff_avg:.1f}%")
 ```
-
