@@ -7115,7 +7115,7 @@ class ISO52016:
                         # (NV=0, EV=90, SV=180, WV=270)
                         candidates = np.array([0.0, 90.0, 180.0, 270.0])
                         labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
-                        orientation_elements[i] = labels[np.argmin(np.abs((az - candidates) % 360.0))]
+                        orientation_elements[i] = labels[np.argmin(np.abs(((az - candidates + 180.0) % 360.0) - 180.0))]
                 else:
                     # if tilt is not exactly 0 or 90, decide the logic (here we map for threshold)
                     orientation_elements[i] = "HOR" if tilt < 45.0 else "NV"
@@ -8638,7 +8638,7 @@ class ISO52016:
                         # (NV=0, EV=90, SV=180, WV=270)
                         candidates = np.array([0.0, 90.0, 180.0, 270.0])
                         labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
-                        orientation_elements[i] = labels[np.argmin(np.abs((az - candidates) % 360.0))]
+                        orientation_elements[i] = labels[np.argmin(np.abs(((az - candidates + 180.0) % 360.0) - 180.0))]
                 else:
                     # if tilt is not exactly 0 or 90, decide the logic (here we map for threshold)
                     orientation_elements[i] = "HOR" if tilt < 45.0 else "NV"
