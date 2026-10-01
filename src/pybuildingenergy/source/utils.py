@@ -2301,12 +2301,13 @@ class ISO52010:
 
             if np.isclose(tilt_f, 0.0, atol=1e-6):
                 return "HOR"
-            if np.isclose(tilt_f, 90.0, atol=1e-6):
+            # vertical and steep (>= 45 deg) surfaces: nearest cardinal direction
+            if tilt_f >= 45.0:
                 candidates = np.array([0.0, 90.0, 180.0, 270.0], dtype=float)
                 labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
                 diffs = np.abs(((az_f - candidates + 180.0) % 360.0) - 180.0)
                 return str(labels[int(np.argmin(diffs))])
-            return "HOR" if tilt_f < 45.0 else "SV"
+            return "HOR"
 
         def _matches_orientation(surface):
             return _surface_orientation_label(surface) == orientation
@@ -4538,12 +4539,13 @@ class ISO52016:
                 return "SV"
             if abs(tilt_f) < 1e-6:
                 return "HOR"
-            if abs(tilt_f - 90.0) < 1e-6:
+            # vertical and steep (>= 45 deg) surfaces: nearest cardinal direction
+            if tilt_f >= 45.0:
                 candidates = np.array([0.0, 90.0, 180.0, 270.0], dtype=float)
                 labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
                 diffs = np.abs(((az_f - candidates + 180.0) % 360.0) - 180.0)
                 return str(labels[int(np.argmin(diffs))])
-            return "HOR" if tilt_f < 45.0 else "SV"
+            return "HOR"
 
         # coefficients and orientation defaults
         for surf in surfaces:
@@ -6140,12 +6142,13 @@ class ISO52016:
                 return "SV"
             if abs(tilt_f) < 1e-6:
                 return "HOR"
-            if abs(tilt_f - 90.0) < 1e-6:
+            # vertical and steep (>= 45 deg) surfaces: nearest cardinal direction
+            if tilt_f >= 45.0:
                 candidates = np.array([0.0, 90.0, 180.0, 270.0], dtype=float)
                 labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
                 diffs = np.abs(((az_f - candidates + 180.0) % 360.0) - 180.0)
                 return str(labels[int(np.argmin(diffs))])
-            return "HOR" if tilt_f < 45.0 else "SV"
+            return "HOR"
 
         for surf in surfaces:
             surf.setdefault("sky_view_factor", 0.0)
@@ -7117,8 +7120,15 @@ class ISO52016:
                         labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
                         orientation_elements[i] = labels[np.argmin(np.abs((az - candidates) % 360.0))]
                 else:
-                    # if tilt is not exactly 0 or 90, decide the logic (here we map for threshold)
-                    orientation_elements[i] = "HOR" if tilt < 45.0 else "NV"
+                    # tilt not exactly 0 or 90: below 45 deg use the horizontal irradiance,
+                    # otherwise the vertical irradiance of the nearest cardinal direction
+                    if tilt < 45.0:
+                        orientation_elements[i] = "HOR"
+                    else:
+                        az = azimuth % 360.0
+                        candidates = np.array([0.0, 90.0, 180.0, 270.0])
+                        labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
+                        orientation_elements[i] = labels[np.argmin(np.abs(((az - candidates + 180.0) % 360.0) - 180.0))]
 
                 surf["ISO52016_orientation_string"] = orientation_elements[i]
 
@@ -8640,8 +8650,15 @@ class ISO52016:
                         labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
                         orientation_elements[i] = labels[np.argmin(np.abs((az - candidates) % 360.0))]
                 else:
-                    # if tilt is not exactly 0 or 90, decide the logic (here we map for threshold)
-                    orientation_elements[i] = "HOR" if tilt < 45.0 else "NV"
+                    # tilt not exactly 0 or 90: below 45 deg use the horizontal irradiance,
+                    # otherwise the vertical irradiance of the nearest cardinal direction
+                    if tilt < 45.0:
+                        orientation_elements[i] = "HOR"
+                    else:
+                        az = azimuth % 360.0
+                        candidates = np.array([0.0, 90.0, 180.0, 270.0])
+                        labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
+                        orientation_elements[i] = labels[np.argmin(np.abs(((az - candidates + 180.0) % 360.0) - 180.0))]
 
                 surf["ISO52016_orientation_string"] = orientation_elements[i]
 
