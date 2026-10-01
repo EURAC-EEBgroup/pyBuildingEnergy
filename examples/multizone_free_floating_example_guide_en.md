@@ -224,7 +224,7 @@ Each surface is a dictionary with the following mandatory and optional keys:
     "zone": "Z1",                              # Associated zone
     "area": 30.0,                              # Area [m²]
     "u_value": 0.2891,                         # Thermal transmittance [W/(m²·K)]
-    "thermal_capacity": 248700.0,              # Thermal capacity [J/K]
+    "thermal_capacity": 248700.0,              # Areal heat capacity [J/(m²·K)]
     "solar_absorptance": 0.6,                  # Solar absorptance (opaque surfaces)
     "orientation": {
         "azimuth": 180.0,                      # Azimuth [°, 0 = North, 90 = East, 180 = South, 270 = West]
