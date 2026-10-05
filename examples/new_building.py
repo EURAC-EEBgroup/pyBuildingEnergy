@@ -46,7 +46,7 @@ print(WEATHER_FILE)
 
 GENERATE_EXTRA_REPORTS = False
 
-file_dir = "/Users/dantonucci/Documents/GitHub/pybuildingenergy/result_test"
+file_dir = str(Path(__file__).resolve().parent / "result_test")
 
 def _run_iso52016(building_obj):
     kwargs = {
@@ -488,8 +488,8 @@ def _apply_heating_heat_pump_generation(
 #         ],
 #         "construction": {
 #             "wall_thickness": 0.3,
-#             "thermal_bridges": 2,
-#             "units": "m (for thickness), W/mK (for thermal bridges)"
+#             "thermal_bridge_heat_W_K": 2,
+#             "units": "m (for thickness), W/K (for total thermal bridges)"
 #         },
 #         "climate_parameters": {
 #             "coldest_month": 1,

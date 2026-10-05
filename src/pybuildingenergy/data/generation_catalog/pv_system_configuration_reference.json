@@ -1,0 +1,185 @@
+{
+  "meta": {
+    "library": "pybuildingenergy",
+    "version": "2.0.3",
+    "topic": "Photovoltaic system configuration and coupling with electric loads",
+    "derived_from": [
+      "src/pybuildingenergy/source/renewables_15316_4_3_4_6.py",
+      "src/pybuildingenergy/source/primary_energy_52000_1.py",
+      "examples/heat_pump_15316_4_2_example.py (renewable_summary_with_electric_load)"
+    ],
+    "calculator": "pybuildingenergy.RenewableEnergySystemCalculator(config).run_timeseries(dataframe)",
+    "key_finding_on_coupling": [
+      "The PV config has NO key that points to a heat pump or to the building: the PV calculator is decoupled.",
+      "The link is made through DATA: the input DataFrame column 'E_site_el_load_kWh' is the electricity demand the PV is self-consumed against. Whatever you sum into that column (heat pump electricity, ventilation fans, lighting, appliances, pump/fan auxiliaries) is what the PV 'covers'.",
+      "Hourly link: works for any load you have hourly (building appliances/lighting, W_*_aux_kWh of emission/distribution/storage, E_C_total_kWh of CoolingGenerationSystemCalculator, CHP/boiler timeseries).",
+      "Heat pump: HeatPumpSystemCalculator returns temperature BINS (not an hourly series), so there is no native hourly HP-electricity column. Options: (a) annual link (as done in examples/heat_pump_15316_4_2_example.py), (b) distribute summary['E_total_electricity_kWh'] over the hours yourself, e.g. proportionally to the hourly thermal demand (see coupling_recipes).",
+      "Downstream: E_grid_after_PV_kWh and E_PV_export_kWh are recognised by PrimaryEnergyAccountingCalculator as delivered and exported electricity."
+    ]
+  },
+
+  "config_schema": {
+    "time_step_hours": { "type": "number", "default": 1.0, "unit": "h", "constraint": "> 0", "description": "Fallback when the input has neither a time_step_hours/dt_h column nor a DatetimeIndex." },
+    "demand_unit": { "type": "string", "default": "kWh", "allowed": ["Wh", "kWh"], "description": "Unit of raw thermal demand columns (only relevant for solar thermal). Electricity columns are always kWh." },
+
+    "pv": {
+      "_alias_of_block": "photovoltaic",
+      "enabled": { "type": "boolean", "default": "true if capacity_kWp > 0", "description": "Switch the PV system on/off." },
+      "capacity_kWp": { "type": "number", "default": 0.0, "unit": "kWp", "aliases": ["pv_kWp"], "constraint": ">= 0", "description": "Installed peak power." },
+      "annual_yield_kWh_kWp": { "type": "number", "default": 1100.0, "unit": "kWh/kWp/year", "aliases": ["yield_kWh_kWp_a"], "constraint": ">= 0", "description": "Specific annual yield at the site (e.g. from PVGIS). Expected annual generation = capacity * yield * (1-shading) * (1-orientation) * (1-degradation)." },
+      "performance_ratio": { "type": "fraction", "default": 0.80, "description": "PR, used only to shape the hourly profile when a GHI column is present (the annual total is rescaled to the expected yield)." },
+      "shading_loss_fraction": { "type": "fraction", "default": 0.0, "aliases": ["pv_shading_loss_fraction"], "description": "Loss due to shading." },
+      "orientation_loss_fraction": { "type": "fraction", "default": 0.0, "description": "Loss due to non-optimal azimuth/tilt (not modelled geometrically: apply it here)." },
+      "degradation_loss_fraction": { "type": "fraction", "default": 0.0, "description": "Ageing loss." },
+      "self_consumption_mode": {
+        "type": "string", "default": "fixed_fraction", "allowed": ["fixed_fraction", "dispatch"],
+        "description": {
+          "fixed_fraction": "Self-consumed energy each step = min(E_site_el_load_kWh, generation * self_consumption_fraction).",
+          "dispatch": "Step-by-step dispatch: direct use first, surplus charges the battery (if any), residual load discharges it, remainder is exported/imported. Forced automatically when a battery capacity > 0 is set."
+        }
+      },
+      "self_consumption_fraction": { "type": "fraction", "default": 1.0, "used_when": "self_consumption_mode == 'fixed_fraction' and no battery", "description": "Max share of generation usable on site (1.0 = everything that matches the load)." },
+      "battery": {
+        "_location": "pv.battery (or top-level 'battery')",
+        "capacity_kWh": { "type": "number", "default": 0.0, "unit": "kWh", "constraint": ">= 0", "description": "Usable battery capacity. 0 = no battery." },
+        "roundtrip_efficiency": { "type": "fraction", "default": 0.90, "description": "Split evenly: charge and discharge efficiency = sqrt(roundtrip)." },
+        "initial_soc_fraction": { "type": "fraction", "default": 0.50, "description": "State of charge at the first step." },
+        "min_soc_fraction": { "type": "fraction", "default": 0.0, "description": "Reserve that is never discharged." },
+        "max_charge_power_kW": { "type": "number", "default": "capacity_kWh", "unit": "kW", "description": "Charge power limit (default = 1C)." },
+        "max_discharge_power_kW": { "type": "number", "default": "capacity_kWh", "unit": "kW", "description": "Discharge power limit (default = 1C)." }
+      }
+    },
+
+    "solar_thermal": "Same calculator also accepts a 'solar_thermal' block (area_m2, annual_yield_kWh_m2, priority dhw_first|heating_first|proportional, ...) which reduces Q_H/Q_W upstream of the heat pump. Not part of the PV configuration and omitted here."
+  },
+
+  "timeseries_input": {
+    "index": "DatetimeIndex recommended (step inferred from median spacing).",
+    "electric_load": {
+      "role": "The electricity the PV is self-consumed against. THIS is the link to heat pump / building.",
+      "columns": ["E_site_el_load_kWh", "electricity_load_kWh", "E_electricity_load_kWh", "E_total_electricity_kWh"],
+      "default_when_missing": 0.0,
+      "note": "If missing, PV generation is computed but nothing is self-consumed (all exported)."
+    },
+    "irradiance": {
+      "role": "Optional: shapes the hourly PV profile. The annual total is always rescaled to capacity * annual_yield * losses.",
+      "columns": ["GHI", "ghi", "ghi_W_m2", "global_horizontal_irradiance_W_m2", "I_sol_global_W_m2", "G(h)"],
+      "unit": "W/m2",
+      "fallback": "Deterministic daylight/month profile when no irradiance is present."
+    },
+    "time_step": ["time_step_hours", "dt_h"]
+  },
+
+  "outputs": {
+    "timeseries_columns": [
+      "E_PV_gen_kWh", "E_site_el_load_kWh", "E_PV_direct_self_consumed_kWh", "E_PV_self_consumed_kWh",
+      "E_PV_export_kWh", "E_grid_after_PV_kWh",
+      "E_battery_charge_kWh", "E_battery_discharge_to_load_kWh", "E_battery_losses_kWh", "E_battery_state_of_charge_kWh"
+    ],
+    "summary_keys": [
+      "E_PV_gen_kWh", "E_PV_direct_self_consumed_kWh", "E_PV_self_consumed_kWh", "E_PV_export_kWh", "E_grid_after_PV_kWh",
+      "E_battery_charge_kWh", "E_battery_discharge_to_load_kWh", "E_battery_losses_kWh", "f_PV_self_consumed"
+    ],
+    "balance": "E_grid_after_PV_kWh = load - E_PV_self_consumed_kWh ; E_PV_export_kWh = generation - direct use - battery charge (surplus)."
+  },
+
+  "electric_load_sources": {
+    "hourly_available": {
+      "building_lighting_and_appliances": "your own hourly series (or LightingSystemCalculator timeseries 'E_L_total_kWh')",
+      "emission_auxiliaries": "EmissionSystemCalculator.timeseries['W_H_em_aux_kWh' / 'W_C_em_aux_kWh']",
+      "distribution_auxiliaries": "DistributionSystemCalculator.timeseries['W_H_dis_aux_kWh' / 'W_C_dis_aux_kWh' / 'W_W_dis_aux_kWh']",
+      "storage_auxiliaries": "StorageSystemCalculator.timeseries['W_H_sto_aux_kWh' / 'W_W_sto_aux_kWh']",
+      "cooling_generation": "CoolingGenerationSystemCalculator.timeseries['E_C_total_kWh']",
+      "ventilation_fans": "VentilationSystemCalculator.timeseries['E_vent_fan_kWh']",
+      "chp_or_boiler_auxiliaries": "CogenerationSystemCalculator / CombustionBoilerSystemCalculator timeseries (they read E_site_el_load_kWh themselves)"
+    },
+    "annual_only": {
+      "heat_pump": "HeatPumpSystemCalculator.summary['E_total_electricity_kWh'] (bin method: no hourly series)."
+    }
+  },
+
+  "coupling_recipes": {
+    "A_pv_to_building_electric_loads_hourly": [
+      "loads['E_site_el_load_kWh'] = lighting_kWh + appliances_kWh + fans_kWh   # hourly, same DatetimeIndex as GHI/PV",
+      "pv = pybuildingenergy.RenewableEnergySystemCalculator(pv_config).run_timeseries(loads)",
+      "pv.summary['E_grid_after_PV_kWh'], pv.summary['E_PV_export_kWh']"
+    ],
+    "B_pv_to_heat_pump_and_building_hourly_approximation": [
+      "hp = pybuildingenergy.HeatPumpSystemCalculator(hp_config).run_timeseries(loads)",
+      "e_hp_year = hp.summary['E_total_electricity_kWh']",
+      "thermal = loads['Q_H_kWh'] + loads['Q_W_kWh'] + loads['Q_C_kWh']",
+      "loads['E_site_el_load_kWh'] = other_loads_kWh + e_hp_year * thermal / thermal.sum()   # HP electricity distributed proportionally to thermal demand (approximation)",
+      "pv = pybuildingenergy.RenewableEnergySystemCalculator(pv_config).run_timeseries(loads)"
+    ],
+    "C_annual_link_as_in_repo_example": [
+      "pv = RenewableEnergySystemCalculator(pv_config).run_timeseries(loads)   # loads without E_site_el_load_kWh",
+      "self_consumed = min(annual_electricity_load_kWh, pv.summary['E_PV_gen_kWh'] * self_consumption_fraction)",
+      "E_PV_export = pv_gen - self_consumed ; E_grid_after_PV = annual_electricity_load_kWh - self_consumed",
+      "(this is renewable_summary_with_electric_load() inside examples/heat_pump_15316_4_2_example.py; it is example code, not library API)"
+    ],
+    "D_to_primary_energy_52000_1": [
+      "pybuildingenergy.PrimaryEnergyAccountingCalculator(pe_config).run_annual({'E_delivered_electricity_kWh': pv.summary['E_grid_after_PV_kWh'], 'E_exported_electricity_kWh': pv.summary['E_PV_export_kWh']})"
+    ]
+  },
+
+  "example_configurations": {
+    "pv_fixed_fraction_simple": {
+      "description": "4.5 kWp, no battery, 100% of matching generation usable on site.",
+      "config": {
+        "pv": {
+          "enabled": true,
+          "capacity_kWp": 4.5,
+          "annual_yield_kWh_kWp": 1250.0,
+          "performance_ratio": 0.80,
+          "shading_loss_fraction": 0.05,
+          "orientation_loss_fraction": 0.0,
+          "degradation_loss_fraction": 0.0,
+          "self_consumption_mode": "fixed_fraction",
+          "self_consumption_fraction": 1.0
+        }
+      }
+    },
+    "pv_limited_self_consumption": {
+      "description": "Same array, but only 70% of generation is assumed usable (inverter limits, curtailment).",
+      "config": {
+        "pv": {
+          "capacity_kWp": 4.5,
+          "annual_yield_kWh_kWp": 1250.0,
+          "self_consumption_mode": "fixed_fraction",
+          "self_consumption_fraction": 0.7
+        }
+      }
+    },
+    "pv_with_battery_dispatch": {
+      "description": "4.5 kWp + 5 kWh battery, hourly dispatch (direct use -> charge -> discharge -> export/import).",
+      "config": {
+        "pv": {
+          "capacity_kWp": 4.5,
+          "annual_yield_kWh_kWp": 1250.0,
+          "self_consumption_mode": "dispatch",
+          "battery": {
+            "capacity_kWh": 5.0,
+            "roundtrip_efficiency": 0.90,
+            "initial_soc_fraction": 0.5,
+            "min_soc_fraction": 0.10,
+            "max_charge_power_kW": 2.5,
+            "max_discharge_power_kW": 2.5
+          }
+        }
+      }
+    },
+    "pv_dispatch_without_battery": {
+      "description": "Step-by-step matching without storage (instantaneous self-consumption only).",
+      "config": {
+        "pv": { "capacity_kWp": 4.5, "annual_yield_kWh_kWp": 1250.0, "self_consumption_mode": "dispatch" }
+      }
+    },
+    "pv_hourly_profile_from_ghi": {
+      "description": "Provide a GHI column in the input DataFrame: the hourly shape follows irradiance, the annual total stays at capacity * yield * losses.",
+      "config": {
+        "pv": { "capacity_kWp": 6.0, "annual_yield_kWh_kWp": 1150.0, "performance_ratio": 0.82 }
+      },
+      "required_dataframe_columns": ["GHI", "E_site_el_load_kWh"]
+    }
+  }
+}

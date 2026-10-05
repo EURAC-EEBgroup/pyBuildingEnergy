@@ -3,6 +3,8 @@ src/pybuildingenergy/data/
 src/pybuildingenergy/data/*
 !src/pybuildingenergy/data/__init__.py
 !src/pybuildingenergy/data/italian_strepin.py
+!src/pybuildingenergy/data/generation_catalog/
+!src/pybuildingenergy/data/generation_catalog/*.json
 create_archetype.py
 profiles.py
 test_lib.py
@@ -42,6 +44,7 @@ wheels/
 *.egg
 Standards/
 examples/new_building_input.md
+pybuildingenergy_UI/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -126,3 +129,6 @@ activate_venv.bat
 
 # Example outputs
 examples/outputs/
+
+# Polish case (FH_Poland_DC): working notes and input JSON
+examples/FH_Poland_DC_*

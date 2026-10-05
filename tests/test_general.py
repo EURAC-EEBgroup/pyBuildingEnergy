@@ -1173,6 +1173,39 @@ def test_thermal_bridge_length_times_linear_transmittance():
     assert result == pytest.approx(2.0)
 
 
+def test_thermal_bridge_inputs_reject_ambiguous_or_mixed_forms():
+    from pybuildingenergy.source.utils import _thermal_bridge_heat_transfer_coefficient
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        _thermal_bridge_heat_transfer_coefficient(
+            {"building_parameters": {"construction": {"thermal_bridges_W/mK": 0.24}}},
+            default_length_m=40.0,
+            default_psi_W_mK=0.05,
+        )
+    with pytest.raises(ValueError, match="not both"):
+        _thermal_bridge_heat_transfer_coefficient(
+            {"building_parameters": {"construction": {
+                "thermal_bridge_heat_W_K": 14.02,
+                "thermal_bridge_length_m": 58.44,
+                "thermal_bridge_psi_W_mK": 0.24,
+            }}},
+            default_length_m=40.0,
+            default_psi_W_mK=0.05,
+        )
+
+
+def test_ground_wall_thickness_uses_construction_and_rejects_conflicts():
+    from pybuildingenergy.source.utils import _wall_thickness_for_ground_m
+
+    assert _wall_thickness_for_ground_m(
+        {"building": {}, "building_parameters": {"construction": {"wall_thickness": 0.35}}}
+    ) == pytest.approx(0.35)
+    with pytest.raises(ValueError, match="Conflicting"):
+        _wall_thickness_for_ground_m(
+            {"building": {"wall_thickness": 0.30}, "building_parameters": {"construction": {"wall_thickness": 0.35}}}
+        )
+
+
 def test_ground_conductance_does_not_apply_outdoor_surface_coefficient():
     from pybuildingenergy.source import utils as utils_module
 
@@ -1772,6 +1805,54 @@ def test_multizone_solver_exports_ground_flux_columns(monkeypatch):
     assert pd.to_numeric(out["Q_ground_Z1"], errors="coerce").iloc[0] > 0.0
 
 
+def test_single_zone_opaque_surface_iso_type_does_not_ground_vertical_partitions():
+    """sky_view_factor==0 non deve classificare come terreno (GR) le superfici
+    verticali, in particolare le partizioni interne fra due zone; deve invece
+    continuare a farlo, per compatibilita', per le superfici orizzontali
+    (slab-on-ground) che non hanno un ``boundary`` esplicito."""
+    from pybuildingenergy.source.utils import _single_zone_opaque_surface_iso_type
+
+    # Legacy slab-on-ground surfaces (no explicit `boundary`): unchanged,
+    # sky_view_factor == 0 still means ground contact for horizontal elements.
+    ground_slab = {"sky_view_factor": 0.0, "orientation": {"tilt": 0.0}}
+    assert _single_zone_opaque_surface_iso_type(ground_slab) == "GR"
+    ground_slab_tilt_180 = {"sky_view_factor": 0.0, "orientation": {"tilt": 180.0}}
+    assert _single_zone_opaque_surface_iso_type(ground_slab_tilt_180) == "GR"
+
+    # A vertical wall with no sky view (e.g. a party wall in a terraced
+    # building, or an internal partition between two zones left un-tagged)
+    # must NOT be silently treated as ground contact.
+    vertical_no_sky_view = {"sky_view_factor": 0.0, "orientation": {"tilt": 90.0}}
+    assert _single_zone_opaque_surface_iso_type(vertical_no_sky_view) == "OP"
+
+    # An explicit boundary always wins, regardless of tilt/sky_view_factor:
+    # this is how a real internal partition between two zones (vertical or,
+    # like a multizone "Floor_between_..." surface, horizontal) must be
+    # tagged so the single-zone engine treats it as inert (adiabatic).
+    internal_partition_horizontal = {
+        "sky_view_factor": 0.0,
+        "orientation": {"tilt": 0.0},
+        "boundary": "INTERNAL",
+    }
+    assert _single_zone_opaque_surface_iso_type(internal_partition_horizontal) == "AD"
+    internal_partition_vertical = {
+        "sky_view_factor": 0.0,
+        "orientation": {"tilt": 90.0},
+        "boundary": "ADIABATIC",
+    }
+    assert _single_zone_opaque_surface_iso_type(internal_partition_vertical) == "AD"
+    explicit_ground = {
+        "sky_view_factor": 0.5,
+        "orientation": {"tilt": 90.0},
+        "boundary": "GROUND",
+    }
+    assert _single_zone_opaque_surface_iso_type(explicit_ground) == "GR"
+
+    # A normal wall (sky_view_factor > 0) is unaffected either way.
+    normal_wall = {"sky_view_factor": 0.5, "orientation": {"tilt": 90.0}}
+    assert _single_zone_opaque_surface_iso_type(normal_wall) == "OP"
+
+
 def test_build_multizone_opaque_inside_flux_links_and_fluxes():
     """I flussi opachi lato interno devono essere esportati con segno +surface->zone."""
     from pybuildingenergy.source.utils import (
@@ -1806,9 +1887,17 @@ def test_build_multizone_opaque_inside_flux_links_and_fluxes():
         h_pli_eli=h_pli_eli,
     )
 
-    assert [link["surface_token"] for link in links] == ["Roof_Z1", "Slab_Z1"]
+    # INTERNAL surfaces now export one link per zone-facing node, suffixed
+    # by zone so the OUTDOORS/GROUND column names stay unchanged.
+    assert [link["surface_token"] for link in links] == [
+        "Roof_Z1",
+        "Slab_Z1",
+        "Wall_Int_to_Z1",
+        "Wall_Int_to_Z2",
+    ]
 
-    theta_state = np.array([0.0, 15.0, 18.0, 20.0, 16.0], dtype=float)
+    # Row 5 = Wall Int's Pli=0 node (facing Z2), row 6 = Pli=1 node (facing Z1).
+    theta_state = np.array([0.0, 15.0, 18.0, 20.0, 16.0, 22.0, 19.0], dtype=float)
     surface_flux = _opaque_inside_fluxes_from_state(
         theta_state=theta_state,
         opaque_inside_links=links,
@@ -1816,6 +1905,12 @@ def test_build_multizone_opaque_inside_flux_links_and_fluxes():
 
     assert surface_flux["Roof_Z1"] == pytest.approx(-60.0)
     assert surface_flux["Slab_Z1"] == pytest.approx(96.0)
+    # h_pli_eli[0, 2] = 4.0, area 6.0 -> h_cond_face = 24.0.
+    assert surface_flux["Wall_Int_to_Z1"] == pytest.approx(24.0 * (22.0 - 19.0))
+    assert surface_flux["Wall_Int_to_Z2"] == pytest.approx(24.0 * (19.0 - 22.0))
+    # With a 2-node (no intermediate mass) partition, the flux entering one
+    # side exactly equals minus the flux entering the other side.
+    assert surface_flux["Wall_Int_to_Z1"] == pytest.approx(-surface_flux["Wall_Int_to_Z2"])
 
 
 def test_multizone_solver_exports_opaque_inside_flux_columns(monkeypatch):
@@ -1925,6 +2020,145 @@ def test_multizone_solver_exports_opaque_inside_flux_columns(monkeypatch):
     q_inside = pd.to_numeric(out["Q_opaque_inside_surface_Roof_Test"], errors="coerce")
     assert np.isfinite(q_inside).all()
     assert q_inside.iloc[0] < 0.0
+
+
+def test_multizone_solver_exports_internal_partition_flux_columns_both_sides(monkeypatch):
+    """Una partizione INTERNAL fra due zone deve esportare il flusso su entrambi i lati."""
+    from pybuildingenergy.source.utils import ISO52016
+
+    sim_df = pd.DataFrame(
+        {
+            "T2m": [5.0, 5.0],
+            "WS10m": [0.0, 0.0],
+        },
+        index=pd.to_datetime(["2024-01-01 00:00:00", "2024-01-01 01:00:00"]),
+    )
+
+    monkeypatch.setattr(
+        ISO52016,
+        "Weather_data_bui",
+        lambda self, building_object, path_weather_file=None, weather_source="epw": SimpleNamespace(
+            simulation_df=sim_df
+        ),
+    )
+    monkeypatch.setattr(ISO52016, "_aggregate_surfaces_by_direction", lambda self, bui: bui)
+    monkeypatch.setattr(
+        ISO52016,
+        "Number_of_nodes_element",
+        lambda self, building_object: SimpleNamespace(
+            Rn=5,
+            Pln=np.array([2, 2], dtype=int),
+            PlnSum=np.array([0, 2], dtype=int),
+        ),
+    )
+    monkeypatch.setattr(
+        ISO52016,
+        "Conductance_node_of_element",
+        lambda self, building_object: SimpleNamespace(h_pli_eli=np.array([[2.0, 3.0]], dtype=float)),
+    )
+    monkeypatch.setattr(
+        ISO52016,
+        "Areal_heat_capacity_of_element",
+        lambda self, building_object: SimpleNamespace(kappa_pli_eli=np.zeros((2, 2), dtype=float)),
+    )
+    monkeypatch.setattr(
+        ISO52016,
+        "Solar_absorption_of_element",
+        lambda self, building_object: SimpleNamespace(a_sol_pli_eli=np.zeros((2, 2), dtype=float)),
+    )
+
+    def _zone(name, area):
+        return {
+            "name": name,
+            "net_floor_area": area,
+            "building_type_class": "Residential_apartment",
+            "heating_setpoint": -100.0,
+            "cooling_setpoint": 100.0,
+            "heating_setback": -100.0,
+            "cooling_setback": 100.0,
+        }
+
+    building_object = {
+        "building": {
+            "net_floor_area": 20.0,
+            "building_type_class": "Residential_apartment",
+        },
+        "building_parameters": {
+            "temperature_setpoints": {
+                "heating_setpoint": -100.0,
+                "cooling_setpoint": 100.0,
+                "heating_setback": -100.0,
+                "cooling_setback": 100.0,
+            },
+            "system_capacities": {},
+            "ventilation": {},
+        },
+        "zones": [_zone("Z_ground", 10.0), _zone("Z_first", 10.0)],
+        "building_surface": [
+            {
+                "name": "Roof Z_ground",
+                "type": "opaque",
+                "boundary": "OUTDOORS",
+                "zone": "Z_ground",
+                "area": 10.0,
+                "u_value": 1.0,
+                "thermal_capacity": 0.0,
+                "solar_absorptance": 0.0,
+                "orientation": {"azimuth": 0.0, "tilt": 0.0},
+                "sky_view_factor": 1.0,
+                "convective_heat_transfer_coefficient_internal": 1.0,
+                "radiative_heat_transfer_coefficient_internal": 0.0,
+                "convective_heat_transfer_coefficient_external": 1.0,
+                "radiative_heat_transfer_coefficient_external": 0.0,
+            },
+            {
+                "name": "Floor between",
+                "type": "opaque",
+                "boundary": "INTERNAL",
+                "zone": "Z_ground",
+                "adjacent_zone": "Z_first",
+                "area": 10.0,
+                "u_value": 1.0,
+                "thermal_capacity": 0.0,
+                "solar_absorptance": 0.0,
+                "orientation": {"azimuth": 0.0, "tilt": 0.0},
+                "sky_view_factor": 0.0,
+                "convective_heat_transfer_coefficient_internal": 1.0,
+                "radiative_heat_transfer_coefficient_internal": 0.0,
+                "convective_heat_transfer_coefficient_external": 1.0,
+                "radiative_heat_transfer_coefficient_external": 0.0,
+            },
+        ],
+    }
+
+    out = ISO52016.simulate_envelope_multizone_free_floating(
+        building_object=building_object,
+        path_weather_file="unused.epw",
+        weather_source="epw",
+        include_solar=False,
+        warmup_hours=0,
+        use_profiles=False,
+        include_internal_gains=False,
+        include_ventilation=False,
+        include_thermal_bridges=False,
+    )
+
+    col_ground = "Q_opaque_inside_surface_Floor_between_to_Z_ground"
+    col_first = "Q_opaque_inside_surface_Floor_between_to_Z_first"
+    assert col_ground in out.columns
+    assert col_first in out.columns
+    # The OUTDOORS surface keeps its plain (unsuffixed) column name.
+    assert "Q_opaque_inside_surface_Roof_Z_ground" in out.columns
+
+    q_ground = pd.to_numeric(out[col_ground], errors="coerce")
+    q_first = pd.to_numeric(out[col_first], errors="coerce")
+    assert np.isfinite(q_ground).all()
+    assert np.isfinite(q_first).all()
+    # Only the roof (Z_ground) is exposed to the cold outdoor air, so
+    # Z_ground cools first and heat must flow from Z_first into Z_ground
+    # through the shared floor: positive into Z_ground, negative into Z_first.
+    assert (q_ground > 0.0).all()
+    assert (q_first < 0.0).all()
 
 
 def test_multizone_solver_does_not_cache_global_ventilation_fallbacks_in_zones(monkeypatch):
@@ -2776,6 +3010,37 @@ def test_occupancy_ventilation_uses_zone_area_and_liters_to_m3_conversion():
         type_ventilation="occupancy",
     )
     assert float(h_ve_40) == pytest.approx(expected_80 / 2.0)
+
+
+def test_docs_generation_catalog_reference_json_stay_in_sync():
+    """docs/*.json duplicates the reference catalog composer.py actually reads
+    (src/pybuildingenergy/data/generation_catalog/, via composer.CATALOG_DIR);
+    fail loudly if a future edit to one copy is not mirrored to the other,
+    instead of letting the documentation silently drift out of sync."""
+    from pybuildingenergy.source import composer
+
+    repo_root = Path(__file__).resolve().parent.parent
+    docs_dir = repo_root / "docs"
+    names = [
+        "ahu_system_configuration_reference.json",
+        "distribution_system_configuration_reference.json",
+        "emission_system_configuration_reference.json",
+        "heat_pump_configuration_reference.json",
+        "pv_system_configuration_reference.json",
+    ]
+    mismatched = []
+    for name in names:
+        doc_path = docs_dir / name
+        catalog_path = composer.CATALOG_DIR / name
+        assert doc_path.exists(), f"missing docs copy: {doc_path}"
+        assert catalog_path.exists(), f"missing canonical copy read by composer.py: {catalog_path}"
+        if doc_path.read_text(encoding="utf-8") != catalog_path.read_text(encoding="utf-8"):
+            mismatched.append(name)
+    assert not mismatched, (
+        f"docs/ and generation_catalog/ have drifted apart for: {mismatched}. "
+        "Copy the updated file(s) from src/pybuildingenergy/data/generation_catalog/ "
+        "(what composer.py actually loads) to docs/ (or vice versa) to keep them identical."
+    )
 
 
 # ==============================================================================

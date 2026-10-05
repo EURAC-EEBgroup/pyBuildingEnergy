@@ -1,0 +1,383 @@
+{
+  "meta": {
+    "library": "pybuildingenergy",
+    "version": "2.0.3",
+    "topic": "Heat pump configuration reference",
+    "derived_from": [
+      "src/pybuildingenergy/source/heat_pump_15316_4_2.py",
+      "src/pybuildingenergy/source/performance_14511_14825.py"
+    ],
+    "notes": [
+      "Every key below is read by the code with cfg.get(...); all keys are optional except that at least a heating (or dhw) performance map is needed for a meaningful result.",
+      "Enumerated string values are case-insensitive (the code lower-cases them).",
+      "'Fraction' means a value clipped to [0, 1].",
+      "Two calculators cooperate: HeatPumpPerformanceDataCalculator (optional, normalises manufacturer rating points into maps) and HeatPumpSystemCalculator (bin-method simulation)."
+    ]
+  },
+
+  "calculators": {
+    "HeatPumpPerformanceDataCalculator": {
+      "module": "pybuildingenergy.source.performance_14511_14825",
+      "purpose": "Normalise EN 14511 rating points and apply the EN 14825 part-load correction; output heating_map / cooling_map to feed HeatPumpSystemCalculator.",
+      "usage": "pybuildingenergy.HeatPumpPerformanceDataCalculator(config).run() -> HeatPumpPerformanceDataResult(rating_points, heating_map, cooling_map, summary, inputs)",
+      "parameters": {
+        "unit_type": {
+          "type": "string", "default": "air-to-water",
+          "allowed": ["air-to-water", "water-to-water", "brine-to-water", "air-to-air", "water-to-air", "brine-to-air"],
+          "description": "Selects the EN 14825 part-load formula. air-to-air, water-to-air and brine-to-air use the linear formula (1 - Cd*(1 - CR)); any other value uses the water-based formula CR / (Cd*CR + (1 - Cd))."
+        },
+        "capacity_control": {
+          "type": "string", "default": "fixed",
+          "allowed": ["fixed", "on-off", "on_off", "variable / inverter (any other value)"],
+          "description": "'fixed', 'on-off' and 'on_off' apply the part-load degradation everywhere. Any other value (e.g. variable/inverter) sets the part-load factor to 1.0 when capacity_ratio >= 0.9."
+        },
+        "heating_design_load_kW": { "type": "number|null", "default": null, "unit": "kW", "description": "Design heating load, used to derive reference_load_kW = part_load_ratio * design load." },
+        "cooling_design_load_kW": { "type": "number|null", "default": null, "unit": "kW", "description": "Design cooling load, same use as above for cooling points." },
+        "heating_degradation_coefficient": { "type": "number", "default": 0.9, "range": [0, 1], "description": "Cd for heating rating points (raises ValueError outside [0, 1])." },
+        "cooling_degradation_coefficient": { "type": "number", "default": 0.9, "range": [0, 1], "description": "Cd for cooling rating points (raises ValueError outside [0, 1])." },
+        "heating_rating_points": { "type": "list[object]|DataFrame", "default": [], "description": "Heating rating points, see rating_point_format." },
+        "cooling_rating_points": { "type": "list[object]|DataFrame", "default": [], "description": "Cooling rating points, see rating_point_format." }
+      },
+      "rating_point_format": {
+        "required_columns": ["source_temperature_C", "sink_temperature_C", "capacity_kW"],
+        "one_of_required": { "heating": ["cop", "input_power_kW"], "cooling": ["eer", "input_power_kW"] },
+        "optional_columns": ["rating_condition", "part_load_ratio (default 1.0)", "reference_load_kW", "degradation_coefficient", "test_standard"],
+        "column_aliases": {
+          "source_temperature_C": ["source_temp_C", "T_source_C", "T_ext", "outdoor_temperature_C", "outdoor_air_temperature_C"],
+          "sink_temperature_C": ["sink_temp_C", "T_sink_C", "supply_temperature_C", "outlet_temperature_C", "leaving_water_temperature_C"],
+          "capacity_kW": ["declared_capacity_kW", "rated_capacity_kW", "heating_capacity_kW", "cooling_capacity_kW", "Pdh_kW", "Pdc_kW"],
+          "input_power_kW": ["effective_power_input_kW", "power_input_kW", "declared_input_power_kW", "P_el_kW", "PCon_kW"],
+          "cop": ["COP", "cop_d", "COPd", "declared_cop", "rated_cop"],
+          "eer": ["EER", "eer_d", "EERd", "declared_eer", "rated_eer"]
+        }
+      }
+    },
+
+    "HeatPumpSystemCalculator": {
+      "module": "pybuildingenergy.source.heat_pump_15316_4_2",
+      "purpose": "EN 15316-4-2 bin-method heat pump generation: space heating, DHW and (reversible) cooling.",
+      "usage": "pybuildingenergy.HeatPumpSystemCalculator(config).run_timeseries(loads_df) -> HeatPumpSimulationResult(bins, summary, inputs)",
+
+      "parameters": {
+
+        "simulation": {
+          "bin_width_C": { "type": "number", "default": 1.0, "unit": "K", "constraint": "> 0", "description": "Width of the outdoor-temperature bins." },
+          "time_step_hours": { "type": "number", "default": 1.0, "unit": "h", "constraint": "> 0", "description": "Fallback time step when the input has neither a time_step_hours/dt_h column nor a DatetimeIndex." },
+          "demand_unit": { "type": "string", "default": "Wh", "allowed": ["Wh", "kWh"], "description": "Unit of the raw demand columns (Q_H, Q_C, Q_HC). Columns already named *_kWh are always kWh." }
+        },
+
+        "services": {
+          "heating_enabled": { "type": "boolean", "default": true, "description": "false zeroes the space-heating demand." },
+          "cooling_enabled": { "type": "boolean", "default": true, "description": "false zeroes the space-cooling demand." },
+          "dhw_enabled": { "type": "boolean", "default": true, "description": "false zeroes the DHW demand." }
+        },
+
+        "heat_source": {
+          "source_type": {
+            "type": "string", "default": "air",
+            "allowed": {
+              "air": ["air", "outdoor_air", "outside_air"],
+              "ground": ["ground", "brine", "ground_brine"],
+              "water": ["water", "groundwater", "surface_water"],
+              "exhaust_air": ["exhaust_air", "exhaust"]
+            },
+            "description": "Source temperature used for map look-up when the input table has no source-temperature column. 'air' follows the outdoor temperature."
+          },
+          "ground_source_temperature_C": { "type": "number", "default": 10.0, "unit": "degC", "used_when": "source_type is ground/brine" },
+          "water_source_temperature_C": { "type": "number", "default": 10.0, "unit": "degC", "used_when": "source_type is water/groundwater" },
+          "exhaust_air_temperature_C": { "type": "number", "default": 20.0, "unit": "degC", "used_when": "source_type is exhaust_air" }
+        },
+
+        "heating_sink_temperature_curve": {
+          "description": "Linear weather-compensation curve of the space-heating supply temperature, clipped between the two end values. Ignored for rows where the input table provides T_H_sink_C.",
+          "design_outdoor_temperature_C": { "type": "number", "default": -7.0, "unit": "degC" },
+          "heating_cutoff_temperature_C": { "type": "number", "default": 16.0, "unit": "degC" },
+          "heating_sink_temp_at_design_C": { "type": "number", "default": 45.0, "unit": "degC" },
+          "heating_sink_temp_at_cutoff_C": { "type": "number", "default": 30.0, "unit": "degC" },
+          "heating_deltaT_K": { "type": "number", "default": 5.0, "unit": "K", "constraint": "> 0", "description": "Supply-return difference used when no return temperature column is provided." }
+        },
+
+        "dhw": {
+          "dhw_target_temperature_C": { "type": "number", "default": 60.0, "unit": "degC", "description": "Delivery temperature." },
+          "dhw_cold_water_temperature_C": { "type": "number", "default": 10.0, "unit": "degC" },
+          "dhw_sink_temperature_C": { "type": "number", "default": "min(dhw_target_temperature_C, hp_operating_limit_C)", "unit": "degC", "description": "Condenser-side temperature used for map look-up. The share of DHW above the HP limit is covered by the backup." }
+        },
+
+        "cooling": {
+          "cooling_sink_temperature_C": { "type": "number", "default": 7.0, "unit": "degC", "description": "Chilled-water temperature used for the cooling map look-up." },
+          "cooling_max_source_temperature_C": { "type": "number|null", "default": null, "unit": "degC", "description": "Above this source temperature cooling is not available from the heat pump." }
+        },
+
+        "operating_limits": {
+          "hp_operating_limit_C": { "type": "number|null", "default": 55.0, "unit": "degC", "description": "Maximum HP supply temperature. Heating/DHW temperature above it is covered by the backup (fraction computed from the temperature lift). null = no limit." },
+          "hp_min_source_temperature_C": { "type": "number|null", "default": null, "unit": "degC", "description": "Below this source temperature the HP is switched off for heating/DHW." },
+          "bivalent_temperature_C": { "type": "number|null", "default": null, "unit": "degC", "used_when": "backup_mode == 'alternative'", "description": "HP available only at or above this source temperature; below it the backup takes the whole load." },
+          "hp_cutoff_temperature_C": { "type": "number|null", "default": null, "unit": "degC", "used_when": "backup_mode == 'part_parallel'", "description": "HP available only at or above this source temperature." },
+          "utility_cutoff_hours_per_day": { "type": "number", "default": 0.0, "unit": "h/day", "range": [0, 24], "description": "Utility lock-out hours; reduces the effective operating hours of each bin by (24 - h) / 24." }
+        },
+
+        "backup_heater": {
+          "backup_mode": {
+            "type": "string", "default": "parallel",
+            "allowed": ["none", "parallel", "alternative", "part_parallel"],
+            "description": {
+              "none": "No backup: any load the HP cannot cover is reported as unmet.",
+              "parallel": "Backup covers whatever the HP cannot (capacity or temperature limit); the HP is always available.",
+              "alternative": "Like parallel, plus the HP is switched off below bivalent_temperature_C (if set).",
+              "part_parallel": "Like parallel, plus the HP is switched off below hp_cutoff_temperature_C (if set)."
+            }
+          },
+          "backup_efficiency": { "type": "number", "default": 1.0, "constraint": "> 0", "description": "Generic backup efficiency, used as default for the two service-specific values below." },
+          "heating_backup_efficiency": { "type": "number", "default": "backup_efficiency", "constraint": "> 0" },
+          "dhw_backup_efficiency": { "type": "number", "default": "backup_efficiency", "constraint": "> 0" },
+          "cooling_backup_eer": { "type": "number|null", "default": null, "description": "EER of the cooling backup, if any." }
+        },
+
+        "part_load": {
+          "part_load_performance_method": { "type": "string", "default": "simple", "allowed": ["simple", "en14825"], "description": "'en14825' applies the EN 14825 part-load factor (see en14825_part_load_factor)." },
+          "part_load_unit_type": { "type": "string", "default": "air-to-water", "allowed": ["air-to-water", "water-to-water", "brine-to-water", "air-to-air", "water-to-air", "brine-to-air"], "description": "Selects the EN 14825 formula (linear for the *-to-air types)." },
+          "part_load_degradation_coefficient": { "type": "fraction", "default": 0.9, "description": "Cd, default for the three service-specific values." },
+          "heating_part_load_degradation_coefficient": { "type": "fraction", "default": "part_load_degradation_coefficient" },
+          "dhw_part_load_degradation_coefficient": { "type": "fraction", "default": "part_load_degradation_coefficient" },
+          "cooling_part_load_degradation_coefficient": { "type": "fraction", "default": "part_load_degradation_coefficient" },
+          "part_load_minimum_capacity_ratio": { "type": "fraction", "default": 0.0, "description": "Minimum modulation ratio, default for the three service-specific values." },
+          "heating_part_load_minimum_capacity_ratio": { "type": "fraction", "default": "part_load_minimum_capacity_ratio" },
+          "dhw_part_load_minimum_capacity_ratio": { "type": "fraction", "default": "part_load_minimum_capacity_ratio" },
+          "cooling_part_load_minimum_capacity_ratio": { "type": "fraction", "default": "part_load_minimum_capacity_ratio" }
+        },
+
+        "service_priority": {
+          "combined_operation": { "type": "string", "default": "alternative", "allowed": ["alternative", "independent"], "description": "'alternative': heating and DHW share the HP runtime and are served one after the other. 'independent': each service gets the full runtime." },
+          "dhw_priority": { "type": "boolean", "default": true, "description": "With combined_operation='alternative', true serves DHW before space heating, false the opposite." }
+        },
+
+        "auxiliaries": {
+          "external_auxiliary_power_W": { "type": "number", "default": 0.0, "unit": "W", "constraint": ">= 0", "description": "External pumps/fans power while running." },
+          "standby_power_W": { "type": "number", "default": 0.0, "unit": "W", "constraint": ">= 0" },
+          "auxiliary_loss_to_ambient_fraction": { "type": "fraction", "default": 1.0 },
+          "auxiliary_recovered_fraction": { "type": "fraction", "default": 0.0 },
+          "auxiliary_location_b_factor": { "type": "fraction", "default": 0.0, "description": "Temperature-reduction factor b of the auxiliary location (0 = heated space, 1 = outdoors)." }
+        },
+
+        "storage": {
+          "heating_storage_loss_kWh_per_day": { "type": "number", "default": 0.0, "unit": "kWh/day", "constraint": ">= 0", "description": "Buffer tank standby loss at the test condition." },
+          "dhw_storage_loss_kWh_per_day": { "type": "number", "default": 0.0, "unit": "kWh/day", "constraint": ">= 0", "description": "DHW tank standby loss at the test condition." },
+          "storage_test_deltaT_K": { "type": "number", "default": 45.0, "unit": "K", "constraint": "> 0", "description": "Temperature difference tank-ambient at which the loss values were measured." },
+          "storage_ambient_temperature_C": { "type": "number", "default": 20.0, "unit": "degC" },
+          "storage_location_b_factor": { "type": "fraction", "default": 0.0 }
+        },
+
+        "performance_maps": {
+          "heating_performance_map": { "type": "list[object]|DataFrame", "default": null, "alias": "performance_map", "map_columns": ["source_temperature_C", "sink_temperature_C", "capacity_kW", "cop"], "description": "Space-heating map." },
+          "dhw_performance_map": { "type": "list[object]|DataFrame", "default": "heating_performance_map", "map_columns": ["source_temperature_C", "sink_temperature_C", "capacity_kW", "cop"], "description": "DHW map; falls back to the heating map." },
+          "cooling_performance_map": { "type": "list[object]|DataFrame", "default": null, "map_columns": ["source_temperature_C", "sink_temperature_C", "capacity_kW", "eer"], "description": "Optional. Present = reversible heat pump." },
+          "constraints": "capacity_kW >= 0, cop/eer > 0. A full source x sink grid is bilinearly interpolated; a scattered map falls back to inverse-distance weighting.",
+          "column_aliases": {
+            "source_temperature_C": ["source_temp_C", "T_source_C", "T_ext", "outdoor_temperature_C"],
+            "sink_temperature_C": ["sink_temp_C", "T_sink_C", "supply_temperature_C", "T_supply_C"],
+            "capacity_kW": ["heating_capacity_kW", "cooling_capacity_kW", "thermal_capacity_kW", "power_kW"],
+            "cop": ["COP"],
+            "eer": ["EER"]
+          }
+        }
+      },
+
+      "timeseries_input": {
+        "index": "DatetimeIndex recommended (time step inferred from the median spacing).",
+        "outdoor_temperature": { "required": true, "columns": ["T_ext", "theta_ext", "outdoor_temperature_C", "T_external_C"] },
+        "heating_demand": { "columns_kWh": ["Q_H_kWh", "QH_kWh", "heating_kWh", "space_heating_kWh"], "columns_raw_in_demand_unit": ["Q_H", "Q_h", "Heating_needs"], "fallback": "positive part of Q_HC" },
+        "cooling_demand": { "columns_kWh": ["Q_C_kWh", "QC_kWh", "cooling_kWh", "space_cooling_kWh"], "columns_raw_in_demand_unit": ["Q_C", "Cooling_needs"], "fallback": "negative part of Q_HC" },
+        "dhw_demand": { "columns_kWh": ["Q_W_kWh", "Q_DHW_kWh", "DHW_kWh", "dhw_kWh", "domestic_hot_water_kWh"], "columns_raw_in_kWh": ["Q_W", "Q_DHW"], "fallback": 0.0 },
+        "optional_per_row_overrides": {
+          "time_step": ["time_step_hours", "dt_h"],
+          "source_temperature": ["T_H_source_C", "T_W_source_C", "T_C_source_C", "T_source_C", "source_temperature_C", "heating_source_temperature_C", "dhw_source_temperature_C", "cooling_source_temperature_C"],
+          "heating_supply": ["T_H_sink_C", "theta_H_supply_C", "heating_supply_temperature_C"],
+          "heating_return": ["T_H_return_C", "theta_H_return_C", "heating_return_temperature_C"],
+          "dhw_temperatures": ["T_W_sink_C", "dhw_sink_temperature_C", "dhw_tank_temperature_C", "T_W_target_C", "dhw_target_temperature_C", "dhw_delivery_temperature_C", "T_W_cold_C", "dhw_cold_water_temperature_C", "cold_water_temperature_C"],
+          "cooling_sink": ["T_C_sink_C", "cooling_sink_temperature_C", "chilled_water_temperature_C"]
+        }
+      },
+
+      "result_summary_keys_seen_in_tests": ["QH_gen_out_kWh", "QW_gen_out_kWh", "QC_gen_out_kWh", "E_total_electricity_kWh", "SPF_HW_gen", "SEER_C_gen"]
+    }
+  },
+
+  "example_configurations": {
+    "_shared_maps": {
+      "air_to_water_heating_map": [
+        { "source_temperature_C": -7, "sink_temperature_C": 35, "capacity_kW": 5.0, "cop": 3.2 },
+        { "source_temperature_C": -7, "sink_temperature_C": 55, "capacity_kW": 4.0, "cop": 2.4 },
+        { "source_temperature_C": 2,  "sink_temperature_C": 35, "capacity_kW": 6.0, "cop": 3.8 },
+        { "source_temperature_C": 2,  "sink_temperature_C": 55, "capacity_kW": 5.0, "cop": 2.8 },
+        { "source_temperature_C": 7,  "sink_temperature_C": 35, "capacity_kW": 7.0, "cop": 4.2 },
+        { "source_temperature_C": 7,  "sink_temperature_C": 55, "capacity_kW": 6.0, "cop": 3.2 }
+      ],
+      "cooling_map": [
+        { "source_temperature_C": 25, "sink_temperature_C": 7,  "capacity_kW": 5.0, "eer": 3.0 },
+        { "source_temperature_C": 25, "sink_temperature_C": 18, "capacity_kW": 6.0, "eer": 3.6 },
+        { "source_temperature_C": 35, "sink_temperature_C": 7,  "capacity_kW": 4.0, "eer": 2.5 },
+        { "source_temperature_C": 35, "sink_temperature_C": 18, "capacity_kW": 5.0, "eer": 3.1 }
+      ],
+      "ground_heating_map": [
+        { "source_temperature_C": 0,  "sink_temperature_C": 35, "capacity_kW": 6.0, "cop": 4.3 },
+        { "source_temperature_C": 0,  "sink_temperature_C": 55, "capacity_kW": 5.6, "cop": 3.0 },
+        { "source_temperature_C": 10, "sink_temperature_C": 35, "capacity_kW": 7.0, "cop": 5.4 },
+        { "source_temperature_C": 10, "sink_temperature_C": 55, "capacity_kW": 6.5, "cop": 3.7 }
+      ]
+    },
+
+    "air_to_water_heating_dhw_parallel_backup": {
+      "description": "Monoblock air/water HP, heating + DHW, electric resistance in parallel, no cooling.",
+      "config": {
+        "source_type": "air",
+        "cooling_enabled": false,
+        "demand_unit": "kWh",
+        "design_outdoor_temperature_C": -7.0,
+        "heating_cutoff_temperature_C": 16.0,
+        "heating_sink_temp_at_design_C": 45.0,
+        "heating_sink_temp_at_cutoff_C": 30.0,
+        "dhw_target_temperature_C": 55.0,
+        "hp_operating_limit_C": 58.0,
+        "backup_mode": "parallel",
+        "backup_efficiency": 1.0,
+        "combined_operation": "alternative",
+        "dhw_priority": true,
+        "external_auxiliary_power_W": 100.0,
+        "standby_power_W": 5.0,
+        "dhw_storage_loss_kWh_per_day": 1.8,
+        "heating_performance_map": "@air_to_water_heating_map"
+      }
+    },
+
+    "air_to_water_reversible_en14825_part_load": {
+      "description": "Reversible air/water HP with EN 14825 part-load correction and inverter minimum modulation.",
+      "config": {
+        "source_type": "air",
+        "demand_unit": "kWh",
+        "hp_operating_limit_C": 58.0,
+        "cooling_sink_temperature_C": 7.0,
+        "cooling_max_source_temperature_C": 43.0,
+        "part_load_performance_method": "en14825",
+        "part_load_unit_type": "air-to-water",
+        "heating_part_load_degradation_coefficient": 0.9,
+        "cooling_part_load_degradation_coefficient": 0.9,
+        "part_load_minimum_capacity_ratio": 0.25,
+        "heating_performance_map": "@air_to_water_heating_map",
+        "cooling_performance_map": "@cooling_map"
+      }
+    },
+
+    "air_to_water_bivalent_alternative": {
+      "description": "Bivalent-alternative: below -3 degC the HP is off and a boiler (efficiency 0.92) takes all the load.",
+      "config": {
+        "source_type": "air",
+        "cooling_enabled": false,
+        "demand_unit": "kWh",
+        "backup_mode": "alternative",
+        "bivalent_temperature_C": -3.0,
+        "heating_backup_efficiency": 0.92,
+        "dhw_backup_efficiency": 0.92,
+        "heating_performance_map": "@air_to_water_heating_map"
+      }
+    },
+
+    "air_to_water_part_parallel_with_utility_cutoff": {
+      "description": "Part-parallel with HP cut-off at 0 degC and 2 h/day of utility lock-out.",
+      "config": {
+        "source_type": "air",
+        "cooling_enabled": false,
+        "demand_unit": "kWh",
+        "backup_mode": "part_parallel",
+        "hp_cutoff_temperature_C": 0.0,
+        "hp_min_source_temperature_C": -15.0,
+        "utility_cutoff_hours_per_day": 2.0,
+        "heating_performance_map": "@air_to_water_heating_map"
+      }
+    },
+
+    "no_backup_strict": {
+      "description": "No backup: anything the HP cannot deliver is reported as unmet (useful for sizing checks).",
+      "config": {
+        "source_type": "air",
+        "cooling_enabled": false,
+        "dhw_enabled": false,
+        "demand_unit": "kWh",
+        "backup_mode": "none",
+        "heating_performance_map": "@air_to_water_heating_map"
+      }
+    },
+
+    "brine_to_water_ground_source": {
+      "description": "Ground-source (brine/water) HP with constant 6 degC source.",
+      "config": {
+        "source_type": "ground",
+        "ground_source_temperature_C": 6.0,
+        "cooling_enabled": false,
+        "demand_unit": "kWh",
+        "part_load_unit_type": "brine-to-water",
+        "heating_performance_map": "@ground_heating_map"
+      }
+    },
+
+    "water_to_water_groundwater": {
+      "description": "Groundwater HP: 12 degC source.",
+      "config": {
+        "source_type": "groundwater",
+        "water_source_temperature_C": 12.0,
+        "cooling_enabled": false,
+        "demand_unit": "kWh",
+        "part_load_unit_type": "water-to-water",
+        "heating_performance_map": "@ground_heating_map"
+      }
+    },
+
+    "exhaust_air_dhw_only": {
+      "description": "Exhaust-air HP dedicated to DHW: heating and cooling switched off.",
+      "config": {
+        "source_type": "exhaust_air",
+        "exhaust_air_temperature_C": 21.0,
+        "heating_enabled": false,
+        "cooling_enabled": false,
+        "demand_unit": "kWh",
+        "dhw_target_temperature_C": 55.0,
+        "dhw_sink_temperature_C": 55.0,
+        "dhw_storage_loss_kWh_per_day": 2.0,
+        "heating_performance_map": "@air_to_water_heating_map"
+      }
+    },
+
+    "independent_services_with_buffer": {
+      "description": "Independent heating and DHW runtime (dual circuit) with buffer tank losses.",
+      "config": {
+        "source_type": "air",
+        "cooling_enabled": false,
+        "demand_unit": "kWh",
+        "combined_operation": "independent",
+        "heating_storage_loss_kWh_per_day": 1.2,
+        "dhw_storage_loss_kWh_per_day": 1.8,
+        "storage_test_deltaT_K": 45.0,
+        "storage_ambient_temperature_C": 18.0,
+        "storage_location_b_factor": 0.5,
+        "heating_performance_map": "@air_to_water_heating_map"
+      }
+    },
+
+    "manufacturer_rating_points_pipeline": {
+      "description": "Step 1: HeatPumpPerformanceDataCalculator turns EN 14511 rating points into maps. Step 2: feed result.heating_map / result.cooling_map to HeatPumpSystemCalculator as heating_performance_map / cooling_performance_map.",
+      "performance_data_config": {
+        "unit_type": "air-to-water",
+        "capacity_control": "fixed",
+        "heating_design_load_kW": 8.0,
+        "cooling_design_load_kW": 6.0,
+        "heating_degradation_coefficient": 0.9,
+        "cooling_degradation_coefficient": 0.9,
+        "heating_rating_points": [
+          { "rating_condition": "EN 14511 A7/W35", "source_temperature_C": 7.0, "sink_temperature_C": 35.0, "capacity_kW": 10.0, "cop": 4.5, "part_load_ratio": 0.5 }
+        ],
+        "cooling_rating_points": [
+          { "rating_condition": "EN 14511 A35/W7", "source_temperature_C": 35.0, "sink_temperature_C": 7.0, "capacity_kW": 8.0, "eer": 3.5, "part_load_ratio": 0.5 }
+        ]
+      }
+    }
+  }
+}

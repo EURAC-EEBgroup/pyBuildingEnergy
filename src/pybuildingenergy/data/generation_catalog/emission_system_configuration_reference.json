@@ -1,0 +1,276 @@
+{
+  "meta": {
+    "library": "pybuildingenergy",
+    "version": "2.0.3",
+    "topic": "Space emission systems (terminal units) configuration reference",
+    "derived_from": [
+      "src/pybuildingenergy/source/iso_15316_1.py (HeatingSystemCalculator, emission block)",
+      "src/pybuildingenergy/source/emission_15316_2.py (EmissionSystemCalculator, EN 15316-2)",
+      "src/pybuildingenergy/global_inputs.py (TB14 emitter table)",
+      "src/pybuildingenergy/source/check_input.py (check_heating_system_inputs)",
+      "examples/new_building_input_en.md, examples/heat_pump_15316_4_2_example.py"
+    ],
+    "architecture": [
+      "Emission is configured on TWO levels that cooperate.",
+      "Level 1 - 'HeatingSystemCalculator' emission keys (flat keys of the HVAC input dict): choose the terminal TYPE (Radiator / Floor heating / Fan coil via the TB14 table), the hydraulic circuit topology (C.2-C.5), the flow-temperature control and the hydraulic limits. Heating only.",
+      "Level 2 - 'EmissionSystemCalculator' (EN 15316-2:2017, hourly): does not know terminal names; it is parametric (equivalent temperature effects in K, embedded-emitter losses, fan/control electricity). Heating AND cooling. It can run standalone or be plugged into Level 1 with emission_calculation_mode='en15316-2' + emission_15316_2_config.",
+      "In 'simplified' mode losses come from emission_efficiency and auxiliars_power. In 'en15316-2' mode losses/auxiliaries come from the K-based EN 15316-2 result, while emitter_type/TB14 still drive the hydraulics (nominal delta-T, exponent, nominal flow).",
+      "Downstream link: Q_H_em_in_kWh / QH_em_i_in is the demand passed to distribution (EN 15316-3); W_*_em_aux_kWh is an electric load that can be added to E_site_el_load_kWh for the PV calculator (see pv_system_configuration_reference.json)."
+    ],
+    "notes": [
+      "Every key is optional (cfg.get with a default) unless marked required.",
+      "The code does not enforce the '>= 0' limits stated in examples/new_building_input_en.md for the K contributions: only fan_power_W/control_power_W/fan_count/control_count are clipped at 0 and convective_fraction at [0, 1]. Negative K values are legitimate (the repo's fan-coil example uses room_automation_K = -0.5)."
+    ]
+  },
+
+  "emitter_types": {
+    "_source": "TB14 default table (pybuildingenergy.global_inputs.TB14). Passing a DataFrame under the key 'TB14' replaces it: emitter_type then accepts exactly the index labels of that table.",
+    "_table_columns": {
+      "Emitters_nominale_deltaTeta_air_C": "Nominal emitter-to-air temperature difference (K). Note: 'nominale' is the spelling used in the code.",
+      "Emitters_exponent_n": "Emission exponent n: delta-T_air_eff = delta-T_air * (Phi_eff / Phi_nominal)^(1/n)",
+      "Emitters_nominal_deltaTeta_Water_C": "Nominal water supply-return difference (K). Nominal flow V_nom [m3/h] = nominal_power[kW] / (delta-T_water * 1.16)"
+    },
+    "types": {
+      "Radiator": {
+        "Emitters_nominale_deltaTeta_air_C": 50, "Emitters_exponent_n": 1.3, "Emitters_nominal_deltaTeta_Water_C": 20,
+        "meaning": "Convective/radiative wall radiator: high water-to-air difference, strongly non-linear emission."
+      },
+      "Floor heating": {
+        "Emitters_nominale_deltaTeta_air_C": 15, "Emitters_exponent_n": 1.1, "Emitters_nominal_deltaTeta_Water_C": 5,
+        "meaning": "Radiant floor: low supply temperature, small delta-T, near-linear emission."
+      },
+      "Fan coil": {
+        "Emitters_nominale_deltaTeta_air_C": 25, "Emitters_exponent_n": 1.0, "Emitters_nominal_deltaTeta_Water_C": 10,
+        "meaning": "Forced-convection terminal: fast response, electric fan auxiliaries (set auxiliars_power / fan_power_W)."
+      }
+    },
+    "unknown_type_handling": "check_heating_system_inputs() replaces an emitter_type that is not in the TB14 index with the first row of the table and reports a message. HeatingSystemCalculator itself raises KeyError on an unknown label."
+  },
+
+  "level_1_heating_system_emission_keys": {
+    "usage": "pybuildingenergy.HeatingSystemCalculator(hvac_dict).compute_step(QH_kWh, T_internal_C, T_external_C); validate first with pybuildingenergy.check_heating_system_inputs(hvac_dict). These keys sit in the same flat dict as the distribution and generation keys.",
+    "keys": {
+      "emitter_type": { "type": "string", "default": "Floor heating", "allowed": ["Radiator", "Floor heating", "Fan coil", "(any index label of a custom TB14)"] },
+      "nominal_power": { "type": "number", "default": 8, "unit": "kW", "description": "Nominal emission power of the terminal(s). Keep coherent with emission_15316_2_config.heating.nominal_power_kW." },
+      "emission_efficiency": { "type": "number", "default": 90, "unit": "%", "used_when": "emission_calculation_mode == 'simplified'", "description": "Losses = Q_out * (100 - eff) / eff." },
+      "auxiliars_power": { "type": "number", "default": 0, "unit": "W", "used_when": "simplified", "description": "Terminal electric power (fans, actuators). IMPORTANT: in 'simplified' mode it only reduces the heat input by the recovered share (ON time * load factor * P / 1000 * auxiliary_recovery_factor); the electricity itself is NOT reported (W_H_em_aux(kWh) is always 0). To obtain terminal electricity use emission_calculation_mode='en15316-2' with fan_power_W/fan_count/control_power_W/control_count." },
+      "auxiliary_recovery_factor": { "type": "number", "default": 100, "unit": "%", "used_when": "simplified", "description": "Share of the auxiliary electricity that is recovered as heat (subtracted from the emission input)." },
+      "emission_operation_time": { "type": "number", "default": 1, "unit": "h", "description": "Operating hours per step." },
+      "mixing_valve": { "type": "boolean", "default": true, "description": "true: the minimum emitter supply temperature is raised by mixing_valve_delta and the distribution/emission side follows the emitter supply temperature (mixed secondary circuit); false: no offset, the circuit follows the node (primary) supply temperature." },
+      "mixing_valve_delta": { "type": "number", "default": 2, "unit": "K", "used_when": "mixing_valve == true", "description": "Temperature offset added to the minimum emitter supply temperature." },
+      "selected_emm_cont_circuit": {
+        "type": "integer", "default": 0, "allowed": [0, 1, 2, 3],
+        "description": "Hydraulic behaviour of the emission circuit (EN 15316-1 annex circuit types). Any other value raises ValueError.",
+        "values": {
+          "0": "C.2 - CONSTANT mass flow rate and VARIABLE temperature; supply/return derived from the power balance.",
+          "1": "C.3 - VARYING mass flow, CONSTANT emitter temperature; return temperature limited, flow adapts to meet the power. Reads: Max flow temperature, Max delta-T flow/return, Desired return temperature.",
+          "2": "C.4 - INTERMITTENT flow (ON-OFF control): evaluates the ON-power and a duty cycle to meet the hourly energy. Reads: Desired load factor with ON-OFF.",
+          "3": "C.5 - CONSTANT mass flow with VARIABLE heat exchange (bypass behaviour). Reads: Minimum flow temperature, Desired load factor."
+        }
+      },
+      "flow_temp_control_type": {
+        "type": "string", "default": "Type 1 - Based on demand",
+        "allowed": ["Type 1 - Based on demand", "Type 2 - Based on outdoor temperature", "Type 3 - Constant temperature"],
+        "description": {
+          "Type 1 - Based on demand": "Supply temperature = minimum required by the current emission demand.",
+          "Type 2 - Based on outdoor temperature": "Weather-compensated curve from outdoor_temp_data (interpolated between min/max outdoor and min/max supply).",
+          "Type 3 - Constant temperature": "Constant supply = constant_flow_temp[0]."
+        },
+        "note": "Any other string silently behaves like Type 2."
+      },
+      "constant_flow_temp": { "type": "list[number]", "default": [42], "unit": "degC", "used_when": "flow_temp_control_type == 'Type 3 - Constant temperature'", "description": "Only the first element is used." },
+      "heat_emission_data": {
+        "type": "DataFrame", "default": "see defaults",
+        "description": "Hydraulic limits/setpoints of the emission circuit. The code reads each cell as .loc[row_label, column_label], so both the labels below are required.",
+        "cells": [
+          { "row": "Max flow temperature HZ1", "column": "θH_em_flw_max_sahz_i", "default": 45, "unit": "degC" },
+          { "row": "Max Δθ flow / return HZ1", "column": "ΔθH_em_w_max_sahz_i", "default": 8, "unit": "K" },
+          { "row": "Desired return temperature HZ1", "column": "θH_em_ret_req_sahz_i", "default": 20, "unit": "degC" },
+          { "row": "Desired load factor with ON-OFF for HZ1", "column": "βH_em_req_sahz_i", "default": 80, "unit": "%" },
+          { "row": "Minimum flow temperature for HZ1", "column": "θH_em_flw_min_tz_i", "default": 28, "unit": "degC" }
+        ]
+      },
+      "outdoor_temp_data": {
+        "type": "DataFrame", "default": "see defaults", "used_when": "flow_temp_control_type is Type 2 (or unrecognised)",
+        "description": "Weather-compensation curve of the secondary supply temperature.",
+        "cells": [
+          { "row": "Minimum outdoor temperature", "column": "θext_min_sahz_i", "default": -10, "unit": "degC" },
+          { "row": "Maximum outdoor temperature", "column": "θext_max_sahz_i", "default": 16, "unit": "degC" },
+          { "row": "Maximum flow temperature", "column": "θem_flw_max_sahz_i", "default": 45, "unit": "degC" },
+          { "row": "Minimum flow temperature", "column": "θem_flw_min_sahz_i", "default": 28, "unit": "degC" }
+        ]
+      },
+      "emission_calculation_mode": {
+        "type": "string", "default": "simplified", "allowed": ["simplified", "en15316-2"],
+        "aliases_for_en15316-2": ["iso_15316_2", "15316_2", "en15316_2"],
+        "description": "Any value that is not one of the en15316-2 aliases falls back to 'simplified'."
+      },
+      "emission_time_step_hours": { "type": "number", "default": "emission_operation_time", "unit": "h", "used_when": "en15316-2" },
+      "emission_15316_2_config": { "type": "object", "aliases": ["emission_config"], "used_when": "en15316-2", "description": "Configuration of EmissionSystemCalculator, see level_2." },
+      "TB14": { "type": "DataFrame", "default": "global TB14", "description": "Custom terminal table (same three columns as the default)." }
+    },
+    "output_keys_per_step": ["QH_em_i_in(kWh)", "QH_em_ls(kWh)", "W_H_em_aux(kWh)", "ΦH_em_eff(kW)", "V_H_em_eff(m3/h)", "βH_em(-)", "θH_em_flow(°C)", "θH_em_ret(°C)", "θH_em_flw_min_req(°C)", "emission_calculation_mode"],
+    "verified_combinations": "All 3 emitter types x 4 circuits (0-3) x 3 flow_temp_control_types = 36 combinations execute without error."
+  },
+
+  "level_2_emission_system_calculator": {
+    "module": "pybuildingenergy.source.emission_15316_2",
+    "usage": "pybuildingenergy.EmissionSystemCalculator(config).run_timeseries(dataframe) -> EmissionSimulationResult(timeseries, summary, inputs)",
+    "general": {
+      "time_step_hours": { "type": "number", "default": 1.0, "unit": "h", "constraint": "> 0" },
+      "demand_unit": { "type": "string", "default": "kWh", "allowed": ["Wh", "kWh"], "description": "Unit of the raw Q_H/Q_C columns (columns already named *_kWh are kWh)." },
+      "cooling_solar_gain_temperature_C": { "type": "number", "default": 8.0, "unit": "K", "description": "Added to the outdoor temperature to form the combined external temperature in cooling." },
+      "default_heating_internal_temperature_C": { "type": "number", "default": 20.0, "unit": "degC", "description": "Used when the input has no internal-temperature column." },
+      "default_cooling_internal_temperature_C": { "type": "number", "default": 26.0, "unit": "degC" }
+    },
+    "per_service_blocks": {
+      "_blocks": ["heating", "cooling"],
+      "_note": "Both blocks share the same keys. The temperature increase applied is the SUM of the five effects (plus the two intermittent effects when enabled); embedded_K is NOT part of that sum.",
+      "stratification_K": { "type": "number", "default": 0.0, "unit": "K", "aliases": ["str_K"], "description": "Vertical temperature stratification effect." },
+      "control_K": { "type": "number", "default": 0.0, "unit": "K", "aliases": ["ctr_K"], "description": "Room temperature control (emitter control accuracy)." },
+      "radiation_K": { "type": "number", "default": 0.0, "unit": "K", "aliases": ["rad_K"], "description": "Radiant asymmetry / radiation effect." },
+      "hydraulic_balancing_K": { "type": "number", "default": 0.0, "unit": "K", "aliases": ["hydr_K"], "description": "Hydraulic balancing effect." },
+      "room_automation_K": { "type": "number", "default": 0.0, "unit": "K", "aliases": ["roomaut_K"], "description": "Room automation effect (negative values reduce the increase)." },
+      "include_intermittent_in_hourly": { "type": "boolean", "default": false, "description": "true adds intermittent_control_K and intermittent_emitter_K to the temperature increase." },
+      "intermittent_control_K": { "type": "number", "default": 0.0, "unit": "K", "aliases": ["im_ctr_K"], "used_when": "include_intermittent_in_hourly" },
+      "intermittent_emitter_K": { "type": "number", "default": 0.0, "unit": "K", "aliases": ["im_emt_K"], "used_when": "include_intermittent_in_hourly" },
+      "embedded_K": { "type": "number", "default": 0.0, "unit": "K", "aliases": ["emb_K"], "description": "Embedded-emitter losses (floor/ceiling/wall panels): Q_emb_ls = Q_inc * embedded_K / |delta-T between equivalent internal and external temperature|." },
+      "nominal_power_kW": { "type": "number", "default": "infinity (no cap)", "unit": "kW", "description": "Caps the recalculated output at nominal_power_kW * hours." },
+      "fan_power_W": { "type": "number", "default": 0.0, "unit": "W", "constraint": ">= 0 (clipped)", "description": "Power of ONE fan." },
+      "fan_count": { "type": "number", "default": 0.0, "aliases": ["n_fans"], "constraint": ">= 0 (clipped)" },
+      "control_power_W": { "type": "number", "default": 0.0, "unit": "W", "constraint": ">= 0 (clipped)", "description": "Power of ONE control device." },
+      "control_count": { "type": "number", "default": 0.0, "aliases": ["n_controls"], "constraint": ">= 0 (clipped)" },
+      "convective_fraction": { "type": "fraction", "default": 0.7, "aliases": ["f_em_conv"], "description": "Convective share of the emission; reported as fH_em_conv / fC_em_conv." }
+    },
+    "calculation": [
+      "delta = sum of the K effects; heating: T_inc = T_int_ini + delta ; cooling: T_inc = T_int_ini - delta",
+      "Q_out_inc = Q_out * (T_inc - T_ext_comb) / (T_int_ini - T_ext_comb)  (or the user-supplied Q_*_em_out_inc_kWh column)",
+      "Q_em_ls = (Q_out_inc - Q_out) + Q_emb_ls ; Q_em_in = Q_out + Q_em_ls",
+      "W_aux = (fan_count * fan_power_W + control_count * control_power_W) * operating_hours / 1000"
+    ],
+    "timeseries_input": {
+      "outdoor_temperature": { "required": true, "columns": ["T_ext", "theta_ext", "outdoor_temperature_C", "T_external_C"] },
+      "internal_temperature_heating": { "columns": ["T_H_int_ini_C", "theta_H_int_ini_C", "T_op", "operative_temperature_C"], "fallback": "default_heating_internal_temperature_C" },
+      "internal_temperature_cooling": { "columns": ["T_C_int_ini_C", "theta_C_int_ini_C", "T_op", "operative_temperature_C"], "fallback": "default_cooling_internal_temperature_C" },
+      "heating_demand": { "columns_kWh": ["Q_H_kWh", "QH_kWh", "heating_kWh", "space_heating_kWh"], "columns_raw": ["Q_H", "Q_h", "Heating_needs"], "fallback": "positive part of Q_HC" },
+      "cooling_demand": { "columns_kWh": ["Q_C_kWh", "QC_kWh", "cooling_kWh", "space_cooling_kWh"], "columns_raw": ["Q_C", "Cooling_needs"], "fallback": "negative part of Q_HC" },
+      "optional_recalculated_output": { "heating": ["Q_H_em_out_inc_kWh", "Q_H_inc_kWh", "QH_inc_kWh", "heating_inc_kWh"], "cooling": ["Q_C_em_out_inc_kWh", "Q_C_inc_kWh", "QC_inc_kWh", "cooling_inc_kWh"] },
+      "time_step": ["time_step_hours", "dt_h"]
+    },
+    "output_timeseries_columns_per_service": ["theta_{H|C}_int_inc_delta_K", "theta_{H|C}_int_inc_C", "theta_{H|C}_e_comb_C", "Q_{H|C}_em_out_inc_kWh", "Q_{H|C}_em_temp_effect_kWh", "Q_{H|C}_emb_ls_kWh", "Q_{H|C}_em_ls_kWh", "Q_{H|C}_em_in_kWh", "W_{H|C}_em_fan_aux_kWh", "W_{H|C}_em_control_aux_kWh", "W_{H|C}_em_aux_kWh", "f_{H|C}_em_conv"],
+    "summary_keys": ["QH_em_out_kWh", "QH_em_out_inc_kWh", "QH_em_temp_effect_kWh", "QH_emb_ls_kWh", "QH_em_ls_kWh", "QH_em_in_kWh", "WH_em_aux_kWh", "theta_H_int_inc_K", "e_H_em_ls_an", "QC_em_out_kWh", "QC_em_in_kWh", "QC_em_ls_kWh", "WC_em_aux_kWh", "theta_C_int_inc_K", "e_C_em_ls_an", "W_em_aux_kWh", "Q_em_ls_kWh"]
+  },
+
+  "example_configurations": {
+    "_custom_TB14_example": {
+      "Ceiling radiant panel": { "Emitters_nominale_deltaTeta_air_C": 12, "Emitters_exponent_n": 1.05, "Emitters_nominal_deltaTeta_Water_C": 5 },
+      "_how_to_use": "Convert to a DataFrame (index = type name) and pass it under the HVAC key 'TB14'; then emitter_type: 'Ceiling radiant panel' is valid. The numbers above are illustrative, not from a standard."
+    },
+
+    "floor_heating_simplified": {
+      "description": "Radiant floor, weather-compensated, constant-flow circuit C.2, simplified losses.",
+      "hvac_emission_keys": {
+        "emitter_type": "Floor heating",
+        "nominal_power": 8.0,
+        "emission_efficiency": 90,
+        "flow_temp_control_type": "Type 2 - Based on outdoor temperature",
+        "selected_emm_cont_circuit": 0,
+        "mixing_valve": true,
+        "mixing_valve_delta": 2,
+        "emission_calculation_mode": "simplified"
+      }
+    },
+
+    "radiator_on_off_circuit": {
+      "description": "Radiators, ON-OFF intermittent circuit C.4, demand-driven supply temperature.",
+      "hvac_emission_keys": {
+        "emitter_type": "Radiator",
+        "nominal_power": 10.0,
+        "emission_efficiency": 92,
+        "flow_temp_control_type": "Type 1 - Based on demand",
+        "selected_emm_cont_circuit": 2,
+        "mixing_valve": false,
+        "emission_calculation_mode": "simplified"
+      }
+    },
+
+    "fan_coil_constant_temperature_with_auxiliaries": {
+      "description": "Fan coils on constant 45 degC supply, circuit C.5. Note: in simplified mode the 60 W only reduces the heat input (recovered share); no electricity is reported. Use the en15316-2 fan-coil example below to get W_H_em_aux.",
+      "hvac_emission_keys": {
+        "emitter_type": "Fan coil",
+        "nominal_power": 6.0,
+        "emission_efficiency": 95,
+        "auxiliars_power": 60,
+        "auxiliary_recovery_factor": 100,
+        "flow_temp_control_type": "Type 3 - Constant temperature",
+        "constant_flow_temp": [45],
+        "selected_emm_cont_circuit": 3,
+        "mixing_valve": true,
+        "emission_calculation_mode": "simplified"
+      }
+    },
+
+    "floor_heating_en15316_2_neutral": {
+      "description": "Floor heating with the hourly EN 15316-2 model, all equivalent-temperature effects set to zero (structure taken from get_example_hvac_input()). Replace the zeros with the EN 15316-2 Annex B values that apply to your terminal/control (the code ships no per-terminal K table).",
+      "hvac_emission_keys": {
+        "emitter_type": "Floor heating",
+        "nominal_power": 15.0,
+        "flow_temp_control_type": "Type 2 - Based on outdoor temperature",
+        "selected_emm_cont_circuit": 0,
+        "mixing_valve": true,
+        "mixing_valve_delta": 2,
+        "emission_calculation_mode": "en15316-2",
+        "emission_time_step_hours": 1.0,
+        "emission_15316_2_config": {
+          "time_step_hours": 1.0,
+          "demand_unit": "kWh",
+          "default_heating_internal_temperature_C": 20.0,
+          "default_cooling_internal_temperature_C": 26.0,
+          "heating": { "stratification_K": 0.0, "control_K": 0.0, "radiation_K": 0.0, "hydraulic_balancing_K": 0.0, "room_automation_K": 0.0, "embedded_K": 0.0, "nominal_power_kW": 15.0, "fan_power_W": 0.0, "fan_count": 0, "control_power_W": 0.0, "control_count": 0, "convective_fraction": 0.7 },
+          "cooling": { "stratification_K": 0.0, "control_K": 0.0, "radiation_K": 0.0, "hydraulic_balancing_K": 0.0, "room_automation_K": 0.0, "embedded_K": 0.0, "nominal_power_kW": 15.0, "fan_power_W": 0.0, "fan_count": 0, "control_power_W": 0.0, "control_count": 0, "convective_fraction": 0.7 }
+        }
+      }
+    },
+
+    "fan_coil_en15316_2_heating_cooling": {
+      "description": "Water fan coils with PI room control, balanced hydraulics and stand-alone room automation; K values, fans and controls copied from emission_system_config() in examples/heat_pump_15316_4_2_example.py (documented there as EN 15316-2:2017 Annex B defaults).",
+      "hvac_emission_keys": {
+        "emitter_type": "Fan coil",
+        "nominal_power": 10.0,
+        "flow_temp_control_type": "Type 2 - Based on outdoor temperature",
+        "selected_emm_cont_circuit": 0,
+        "mixing_valve": true,
+        "emission_calculation_mode": "en15316-2",
+        "emission_15316_2_config": {
+          "demand_unit": "kWh",
+          "cooling_solar_gain_temperature_C": 8.0,
+          "heating": { "stratification_K": 0.35, "control_K": 0.70, "radiation_K": 0.0, "hydraulic_balancing_K": 0.10, "room_automation_K": -0.50, "embedded_K": 0.0, "nominal_power_kW": 10.0, "fan_power_W": 10.0, "fan_count": 4.0, "control_power_W": 0.1, "control_count": 4.0, "convective_fraction": 0.95 },
+          "cooling": { "stratification_K": 0.40, "control_K": 0.70, "radiation_K": 0.0, "hydraulic_balancing_K": 0.10, "room_automation_K": -0.50, "embedded_K": 0.0, "nominal_power_kW": 8.0, "fan_power_W": 10.0, "fan_count": 4.0, "control_power_W": 0.1, "control_count": 4.0, "convective_fraction": 0.95 }
+        }
+      }
+    },
+
+    "radiator_en15316_2_with_intermittent_effects": {
+      "description": "Radiators with intermittent-operation effects enabled. K values are ILLUSTRATIVE placeholders to show the keys, not standard values.",
+      "hvac_emission_keys": {
+        "emitter_type": "Radiator",
+        "nominal_power": 10.0,
+        "flow_temp_control_type": "Type 2 - Based on outdoor temperature",
+        "selected_emm_cont_circuit": 1,
+        "emission_calculation_mode": "en15316-2",
+        "emission_15316_2_config": {
+          "heating": { "stratification_K": 0.5, "control_K": 0.3, "radiation_K": 0.2, "hydraulic_balancing_K": 0.1, "room_automation_K": 0.0, "include_intermittent_in_hourly": true, "intermittent_control_K": 0.2, "intermittent_emitter_K": 0.1, "embedded_K": 0.0, "nominal_power_kW": 10.0, "convective_fraction": 0.6 }
+        }
+      }
+    },
+
+    "standalone_emission_system_calculator_heating_cooling": {
+      "description": "EmissionSystemCalculator used on its own (no HeatingSystemCalculator), for a reversible fan-coil system.",
+      "emission_system_config": {
+        "demand_unit": "kWh",
+        "heating": { "stratification_K": 0.35, "control_K": 0.70, "hydraulic_balancing_K": 0.10, "room_automation_K": -0.50, "nominal_power_kW": 10.0, "fan_power_W": 10.0, "fan_count": 4.0, "control_power_W": 0.1, "control_count": 4.0, "convective_fraction": 0.95 },
+        "cooling": { "stratification_K": 0.40, "control_K": 0.70, "hydraulic_balancing_K": 0.10, "room_automation_K": -0.50, "nominal_power_kW": 8.0, "fan_power_W": 10.0, "fan_count": 4.0, "control_power_W": 0.1, "control_count": 4.0, "convective_fraction": 0.95 }
+      }
+    }
+  }
+}

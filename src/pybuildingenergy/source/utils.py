@@ -741,7 +741,8 @@ def _ground_contact_area(building_object):
         if (
             sky_view_factor is not None
             and abs(sky_view_factor) < 1e-9
-            and (tilt is None or tilt > 170.0)
+            and tilt is not None
+            and tilt > 170.0
         ):
             area_fallback += area
 
@@ -779,6 +780,47 @@ def _ground_conductance_w_per_k(area_m2: float, ground_data: temp_ground | None)
     if not np.isfinite(r_gr) or r_gr <= 0.0:
         return 0.0
     return area / r_gr
+
+
+def _single_zone_ground_flux_w(
+    bui_eln,
+    nodes,
+    surface_types,
+    VecB,
+    colB_act,
+    area_elements,
+    heat_convective_elements_internal,
+    heat_radiative_elements_internal,
+    T_air,
+    T_rad,
+    q_rad_per_area,
+):
+    """Sum the instantaneous heat flux [W] from the zone into every
+    ground-contact ("GR") element, at the current solved state ``VecB``.
+
+    Shared by the two single-zone hourly cores (the "core" and "causal AHU"
+    calculation paths), which otherwise assemble the exact same per-element
+    conduction + area-weighted radiative-gain sum independently.
+
+    ``q_rad_per_area`` is the area-weighted radiative share of internal,
+    solar and heating/cooling gains (see the ground-flux call site for how
+    it is derived) landing on each surface's internal node, same as for the
+    OP/W transmission terms computed right after this one.
+
+    Sign convention: positive = heat leaving the zone towards the ground.
+    """
+    q_ground = 0.0
+    for Eli in range(bui_eln):
+        if surface_types[Eli] != "GR" or nodes.Pln[Eli] == 0:
+            continue
+        T_surf_int = float(VecB[nodes.PlnSum[Eli] + nodes.Pln[Eli], colB_act])
+        A = float(area_elements[Eli])
+        hci = float(heat_convective_elements_internal[Eli])
+        hri = float(heat_radiative_elements_internal[Eli])
+        q_ground += A * (
+            hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int) + q_rad_per_area
+        )
+    return q_ground
 
 
 def _sanitize_result_column_token(value) -> str:
@@ -928,7 +970,18 @@ def _build_multizone_opaque_inside_flux_links(
     """
     Build per-surface links for true inside-face opaque conduction fluxes.
 
-    Exported surfaces are opaque envelope faces with OUTDOORS or GROUND boundary.
+    Exported surfaces are opaque envelope faces with OUTDOORS, GROUND or
+    INTERNAL boundary.  An INTERNAL (zone-to-zone partition) surface produces
+    TWO links, one per zone-facing node: the flux entering ``zone`` at the
+    last node (Pli = n_nodes-1, same construction as for OUTDOORS/GROUND) and
+    the flux entering ``adjacent_zone`` at the first node (Pli = 0).  The two
+    generally differ once the partition has its own thermal mass, because
+    heat can accumulate in/release from the nodes in between.
+
+    Column-name stability: OUTDOORS/GROUND surfaces keep the plain
+    ``<surface name>`` token as before.  INTERNAL surfaces use
+    ``<surface name>_to_<zone>`` for both faces, so existing consumers of the
+    OUTDOORS/GROUND columns are unaffected.
 
     Sign convention for the associated flux:
       - positive: heat enters the zone from the opaque surface
@@ -937,12 +990,21 @@ def _build_multizone_opaque_inside_flux_links(
     links = []
     used_tokens = set()
 
+    def _new_token(base: str) -> str:
+        token = base
+        counter = 2
+        while token in used_tokens:
+            token = f"{base}_{counter}"
+            counter += 1
+        used_tokens.add(token)
+        return token
+
     for Eli, surf in enumerate(surfaces):
         if str(surf.get("type", "")).lower() != "opaque":
             continue
 
         boundary = str(surf.get("boundary", "")).upper()
-        if boundary not in {"OUTDOORS", "GROUND"}:
+        if boundary not in {"OUTDOORS", "GROUND", "INTERNAL"}:
             continue
 
         try:
@@ -958,38 +1020,51 @@ def _build_multizone_opaque_inside_flux_links(
 
         try:
             area_s = float(surf.get("area", 0.0))
-            h_cond_face = float(h_pli_eli[n_nodes - 2, Eli]) * area_s
-        except Exception:
-            continue
-        if not np.isfinite(h_cond_face) or h_cond_face <= 0.0:
-            continue
-
-        try:
-            ri_in = 1 + int(nodes.PlnSum[Eli]) + (n_nodes - 1)
-            row_in = int(sys_row_from_surface_ri(ri_in))
-            row_prev = int(sys_row_from_surface_ri(ri_in - 1))
         except Exception:
             continue
 
-        base_token = _sanitize_result_column_token(surf.get("name", f"opaque_surface_{Eli}"))
-        token = base_token
-        counter = 2
-        while token in used_tokens:
-            token = f"{base_token}_{counter}"
-            counter += 1
-        used_tokens.add(token)
+        is_internal = boundary == "INTERNAL"
+        surf_name = str(surf.get("name", f"opaque_surface_{Eli}"))
+        base_token = _sanitize_result_column_token(surf_name)
+        pln_sum = int(nodes.PlnSum[Eli])
 
-        links.append(
-            {
-                "zone_index": int(z_idx[zname]),
-                "zone_name": str(zname),
-                "surface_name": str(surf.get("name", f"opaque_surface_{Eli}")),
-                "surface_token": token,
-                "row_in": row_in,
-                "row_prev": row_prev,
-                "h_cond_face": float(h_cond_face),
-            }
+        def _add_face_link(zone_name, token, ri_face, ri_neighbor, h_index):
+            try:
+                h_cond_face = float(h_pli_eli[h_index, Eli]) * area_s
+                row_face = int(sys_row_from_surface_ri(ri_face))
+                row_neighbor = int(sys_row_from_surface_ri(ri_neighbor))
+            except Exception:
+                return
+            if not np.isfinite(h_cond_face) or h_cond_face <= 0.0:
+                return
+            links.append(
+                {
+                    "zone_index": int(z_idx[zone_name]),
+                    "zone_name": str(zone_name),
+                    "surface_name": surf_name,
+                    "surface_token": token,
+                    "row_in": row_face,
+                    "row_prev": row_neighbor,
+                    "h_cond_face": h_cond_face,
+                }
+            )
+
+        # Face towards `zname` (last node, Pli = n_nodes - 1).
+        ri_last = 1 + pln_sum + (n_nodes - 1)
+        token_a = (
+            _new_token(f"{base_token}_to_{_sanitize_result_column_token(zname)}")
+            if is_internal
+            else _new_token(base_token)
         )
+        _add_face_link(zname, token_a, ri_last, ri_last - 1, n_nodes - 2)
+
+        # Face towards `adjacent_zone` (first node, Pli = 0) - INTERNAL only.
+        if is_internal:
+            zB = surf.get("adjacent_zone", None)
+            if zB in z_idx:
+                ri_first = 1 + pln_sum
+                token_b = _new_token(f"{base_token}_to_{_sanitize_result_column_token(zB)}")
+                _add_face_link(zB, token_b, ri_first, ri_first + 1, 0)
 
     return links
 
@@ -1342,6 +1417,106 @@ def _surface_side_b_is_internal(surface: dict) -> bool:
     )
 
 
+def _legacy_svf_zero_implies_ground_contact(surface: dict) -> bool:
+    """Backward-compatible ground-contact inference for the single-zone BUI
+    schema, which historically has no ``boundary`` field: an opaque surface
+    with ``sky_view_factor == 0`` has always meant "slab on ground" there.
+
+    This is gated on orientation so it can only ever fire for near-horizontal
+    elements (tilt close to 0 or 180 degrees, i.e. a floor/roof-like
+    element) -- never for a vertical one.  A vertical opaque surface with no
+    sky view (a party wall between attached buildings, or an internal
+    partition between two zones that was left un-tagged) must never be
+    silently treated as ground contact just because ``sky_view_factor`` is
+    0: it is not touching the ground, and the ground's mild virtual
+    temperature is a very different (much warmer in winter) boundary than
+    the correct one for a wall.
+    """
+    if not isinstance(surface, dict):
+        return False
+    try:
+        svf = float(surface.get("sky_view_factor", 1.0))
+    except (TypeError, ValueError):
+        return False
+    if svf != 0.0:
+        return False
+    orientation = surface.get("orientation", {}) or {}
+    try:
+        tilt = float(orientation.get("tilt", 0.0))
+    except (TypeError, ValueError):
+        tilt = 0.0
+    return abs(tilt) < 45.0 or abs(tilt - 180.0) < 45.0
+
+
+# Vertical-orientation buckets on a 45 degree grid (geographical azimuth: N=0,
+# E=90, S=180, W=270): the 4 cardinals plus the 4 intermediate directions.
+# Replaces the older 90 degree grid (N/E/S/W only), which forced any diagonal
+# facade (e.g. 225 deg, south-west) onto the nearest cardinal -- up to 45 deg
+# of error on its solar exposure. Used consistently by every surface
+# classification in this module so aggregation, solar irradiance and shading
+# all key on the same 9 labels (HOR + the 8 below).
+_ORIENTATION_LABELS_8 = ("NV", "NEV", "EV", "SEV", "SV", "SWV", "WV", "NWV")
+_ORIENTATION_AZIMUTHS_8 = np.array([0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0])
+
+
+def _classify_surface_orientation(
+    azimuth: float,
+    tilt: float,
+    horizontal_tilt_threshold: float = 45.0,
+    fallback_vertical_label: str = "NV",
+) -> str:
+    """Classify a surface into one of the 9 ISO52016 orientation buckets.
+
+    ``tilt`` close to 0 -> "HOR" (horizontal). ``tilt`` close to 90 -> one of
+    the 8 vertical labels in ``_ORIENTATION_LABELS_8``, snapped to the
+    nearest 45 degree point (exact cardinals/diagonals match themselves
+    exactly; anything else -- e.g. a real-world facade at a non-standard
+    angle -- is approximated by its closest neighbour). Any other tilt is a
+    degenerate case (neither horizontal nor vertical) handled by the legacy
+    45 degree threshold; ``fallback_vertical_label`` preserves whichever
+    placeholder each call site used before this helper existed.
+    """
+
+    def is_close(x, target, tol=1e-6):
+        return abs(x - target) <= tol
+
+    if is_close(tilt, 0.0):
+        return "HOR"
+    if is_close(tilt, 90.0):
+        az = float(azimuth) % 360.0
+        diffs = np.abs(((az - _ORIENTATION_AZIMUTHS_8 + 180.0) % 360.0) - 180.0)
+        return str(_ORIENTATION_LABELS_8[int(np.argmin(diffs))])
+    return "HOR" if tilt < horizontal_tilt_threshold else fallback_vertical_label
+
+
+def _single_zone_opaque_surface_iso_type(surface: dict) -> str:
+    """Resolve the ISO52016 type string ("GR"/"AD"/"OP") for an *opaque*
+    surface in the single-zone engine.
+
+    Precedence:
+      1. An explicit ``boundary`` (GROUND / ADIABATIC / INTERNAL, with the
+         usual aliases handled by ``_surface_boundary_type``) always wins.
+         A partition between two zones -- whether a vertical party wall or a
+         horizontal floor/ceiling like a multizone "Floor_between_..."
+         surface -- should be tagged ``boundary: "ADIABATIC"`` (or
+         "INTERNAL"; the single-zone engine has no real two-zone coupling,
+         so it treats both the same way, as inert/adiabatic). See the
+         multizone engine for genuine zone-to-zone heat exchange.
+      2. Otherwise, the legacy ``sky_view_factor == 0`` convention (see
+         ``_legacy_svf_zero_implies_ground_contact``), which only ever
+         applies to near-horizontal elements.
+      3. Plain opaque, exposed to outdoor air.
+    """
+    bnd = _surface_boundary_type(surface)
+    if bnd == "GROUND":
+        return "GR"
+    if bnd in ("ADIABATIC", "INTERNAL"):
+        return "AD"
+    if _legacy_svf_zero_implies_ground_contact(surface):
+        return "GR"
+    return "OP"
+
+
 def _surface_side_b_is_outdoor_air(surface: dict) -> bool:
     if not isinstance(surface, dict):
         return False
@@ -1362,24 +1537,54 @@ def _thermal_bridge_heat_transfer_coefficient(
     """Return the total thermal-bridge coefficient ``H_tb`` in W/K.
 
     ``thermal_bridge_heat_W_K`` is the preferred explicit input.  The legacy
-    ``thermal_bridges`` input is retained as an alias for the same total.  If
-    neither is supplied, users may provide a bridge length and linear
-    transmittance; the historical exposed-perimeter × 0.05 fallback remains.
+    ``thermal_bridges`` input is retained as an alias for the same *total*, in
+    W/K.  Alternatively, provide both ``thermal_bridge_length_m`` and
+    ``thermal_bridge_psi_W_mK``.  A total and a length/psi pair are mutually
+    exclusive so that an input cannot silently hide the other one.
+
+    The historical spelling ``thermal_bridges_W/mK`` is deliberately rejected:
+    a single number in W/(m K) is incomplete without a length and used to be
+    interpreted ambiguously as a total W/K value.
     """
     construction = (
         building_object.get("building_parameters", {}).get("construction", {})
         if isinstance(building_object, dict)
         else {}
     )
+    ambiguous_keys = {"thermal_bridges_W/mK", "thermal_bridges_W_mK"}
+    present_ambiguous = ambiguous_keys.intersection(construction)
+    if present_ambiguous:
+        raise ValueError(
+            "Use either thermal_bridge_heat_W_K (total W/K), or both "
+            "thermal_bridge_length_m and thermal_bridge_psi_W_mK; "
+            f"{sorted(present_ambiguous)[0]!r} is ambiguous."
+        )
+
     total = construction.get(
         "thermal_bridge_heat_W_K",
         construction.get("thermal_bridges"),
     )
+    length_given = "thermal_bridge_length_m" in construction
+    psi_given = (
+        "thermal_bridge_psi_W_mK" in construction
+        or "linear_thermal_transmittance_W_mK" in construction
+    )
+    if total is not None and (length_given or psi_given):
+        raise ValueError(
+            "Provide either thermal_bridge_heat_W_K (total W/K), or "
+            "thermal_bridge_length_m with thermal_bridge_psi_W_mK, not both."
+        )
     if total is not None:
         total = float(total)
         if not np.isfinite(total) or total < 0.0:
             raise ValueError("thermal_bridge_heat_W_K must be finite and non-negative.")
         return total
+
+    if length_given != psi_given:
+        raise ValueError(
+            "thermal_bridge_length_m and thermal_bridge_psi_W_mK must be "
+            "provided together."
+        )
 
     length_m = float(construction.get("thermal_bridge_length_m", default_length_m))
     psi_W_mK = float(
@@ -1393,6 +1598,45 @@ def _thermal_bridge_heat_transfer_coefficient(
     if not np.isfinite(psi_W_mK) or psi_W_mK < 0.0:
         raise ValueError("thermal_bridge_psi_W_mK must be finite and non-negative.")
     return length_m * psi_W_mK
+
+
+def _wall_thickness_for_ground_m(building_object: dict) -> float:
+    """Return the unique wall thickness used by the ISO 13370 ground model.
+
+    ``building_parameters.construction.wall_thickness`` is the canonical
+    location.  ``building.wall_thickness`` is accepted for existing BUI files.
+    Supplying conflicting values is an input error rather than an implicit,
+    order-dependent choice.
+    """
+    building = building_object.get("building", {})
+    construction = building_object.get("building_parameters", {}).get("construction", {})
+    root_value = building.get("wall_thickness")
+    construction_value = construction.get("wall_thickness")
+
+    if root_value is None and construction_value is None:
+        raise ValueError(
+            "wall_thickness is required for the ground calculation; provide it "
+            "in building_parameters.construction.wall_thickness."
+        )
+
+    def _validated(value, field):
+        value = float(value)
+        if not np.isfinite(value) or value < 0.0:
+            raise ValueError(f"{field} must be finite and non-negative.")
+        return value
+
+    root = _validated(root_value, "building.wall_thickness") if root_value is not None else None
+    construction_value = (
+        _validated(construction_value, "building_parameters.construction.wall_thickness")
+        if construction_value is not None
+        else None
+    )
+    if root is not None and construction_value is not None and not np.isclose(root, construction_value):
+        raise ValueError(
+            "Conflicting wall_thickness values in building and "
+            "building_parameters.construction. Keep one value or make them equal."
+        )
+    return construction_value if construction_value is not None else root
 
 
 def _normalize_table25_heat_flow_direction(direction_raw) -> str:
@@ -1536,7 +1780,7 @@ def _surface_tilt_for_internal_convection(surface: dict) -> float:
     ori_tag = str(surface.get("ISO52016_orientation_string", "")).upper() if isinstance(surface, dict) else ""
     if _surface_is_ground_contact(surface):
         return 180.0
-    if ori_tag in {"NV", "EV", "SV", "WV"}:
+    if ori_tag in {"NV", "EV", "SV", "WV", "NEV", "SEV", "SWV", "NWV"}:
         return 90.0
     if ori_tag in {"HF"}:
         return 180.0
@@ -2269,25 +2513,29 @@ class ISO52010:
             return None
 
         # 2) Use the project-wide geographical azimuth convention:
-        #    N=0, E=90, S=180, W=270
+        #    N=0, E=90, S=180, W=270 (45 deg grid: cardinals + intermediates)
         #    (solar_azimuth_angle from ISO52010 is converted below)
         orientation_lookup = {
             "NV": 0.0,
+            "NEV": 45.0,
             "EV": 90.0,
+            "SEV": 135.0,
             "SV": 180.0,
+            "SWV": 225.0,
             "WV": 270.0,
+            "NWV": 315.0,
         }
         if orientation not in orientation_lookup:
             raise ValueError(f"Unknown orientation '{orientation}' passed to shading calculation.")
 
         orientation_angle = float(orientation_lookup[orientation])
 
-        # 3) Transparent window filter by cardinal orientation label.
-        #    This keeps filtering independent from the azimuth convention
-        #    used for gamma in shading_reduction_factor.
+        # 3) Transparent window filter by orientation label (9 buckets: HOR +
+        #    the 8 directions above). This keeps filtering independent from
+        #    the azimuth convention used for gamma in shading_reduction_factor.
         def _surface_orientation_label(surface):
             ori_tag = str(surface.get("ISO52016_orientation_string", "")).upper()
-            if ori_tag in {"HOR", "NV", "EV", "SV", "WV"}:
+            if ori_tag in {"HOR"} | set(_ORIENTATION_LABELS_8):
                 return ori_tag
 
             ori = surface.get("orientation", {}) or {}
@@ -2299,14 +2547,7 @@ class ISO52010:
             except (TypeError, ValueError):
                 return None
 
-            if np.isclose(tilt_f, 0.0, atol=1e-6):
-                return "HOR"
-            if np.isclose(tilt_f, 90.0, atol=1e-6):
-                candidates = np.array([0.0, 90.0, 180.0, 270.0], dtype=float)
-                labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
-                diffs = np.abs(((az_f - candidates + 180.0) % 360.0) - 180.0)
-                return str(labels[int(np.argmin(diffs))])
-            return "HOR" if tilt_f < 45.0 else "SV"
+            return _classify_surface_orientation(az_f, tilt_f, fallback_vertical_label="SV")
 
         def _matches_orientation(surface):
             return _surface_orientation_label(surface) == orientation
@@ -2741,9 +2982,13 @@ def Calculation_ISO_52010(building_object, path_weather_file, weather_source="pv
     or_tilt_azim_dic = {
         "HOR": (0, 0),
         "SV": (90, 0),
+        "SEV": (90, 45),
         "EV": (90, 90),
+        "NEV": (90, 135),
         "NV": (90, 180),
+        "NWV": (90, -135),
         "WV": (90, -90),
+        "SWV": (90, -45),
     }  # dictionary mapping orientation in orientation_elements with (beta_ic_deg=elevation/tilt, gamma_ic_deg=azimuth), see util.util.ISO52010_calc()
 
     if len(sim_df) > 8760:
@@ -2754,7 +2999,7 @@ def Calculation_ISO_52010(building_object, path_weather_file, weather_source="pv
         n_days_year = 365
     # Convert the NumPy array to a tuple
     if isinstance(building_object, dict):
-        orientation_elements = ["EV", "HOR", "SV", "NV", "WV"]
+        orientation_elements = ["EV", "HOR", "SV", "NV", "WV", "NEV", "SEV", "SWV", "NWV"]
     else:
         orientation_elements = building_object.__getattribute__("orientation_elements")
 
@@ -2846,9 +3091,13 @@ class ISO52016:
     or_tilt_azim_dic = {
         "HOR": (0, 0),
         "SV": (90, 0),
+        "SEV": (90, 45),
         "EV": (90, 90),
+        "NEV": (90, 135),
         "NV": (90, 180),
+        "NWV": (90, -135),
         "WV": (90, -90),
+        "SWV": (90, -45),
     }  # dictionary mapping orientation in orientation_elements with (beta_ic_deg=elevation/tilt, gamma_ic_deg=azimuth), see util.util.ISO52010_calc()
 
     def __init__(self):
@@ -2986,6 +3235,113 @@ class ISO52016:
         f_sh = float(shading_factor_obstacles)
         f_sh = float(np.clip(f_sh, 0.0, 1.0)) if np.isfinite(f_sh) else 1.0
         return (i_dif + i_dir) * f_sh
+
+    @staticmethod
+    def _movable_shading_properties(surface, timestamp, irradiance_w_m2):
+        """Return ``(closed, g_value, u_value)`` for one transparent element.
+
+        This implements the hourly-state principle of EN ISO 52016-1,
+        Annex G: the transparent element has its normal (open) properties and
+        a second set of properties when the movable shutter/blind is closed.
+        The control rule is an input assumption; it is deliberately separate
+        from the fixed-obstruction factor of Annex F.
+
+        ``movable_shading`` is optional.  In its absence the original window
+        ``g_value`` and ``u_value`` are returned exactly, preserving legacy
+        input files and results.
+        """
+        g_open = float(surface.get("g_value", 0.0))
+        u_open = float(surface.get("u_value", 0.0))
+        shading = surface.get("movable_shading")
+        if shading is None:
+            return False, g_open, u_open
+        if not isinstance(shading, dict):
+            raise ValueError(
+                f"movable_shading for window '{surface.get('name', '')}' must be an object"
+            )
+
+        kind = str(shading.get("type", "")).strip().lower().replace(" ", "_").replace("-", "_")
+        accepted_kinds = {
+            "roller_shutter", "external_shutter", "shutter", "tapparella", "persiana",
+            "venetian_blind", "venetian_blind_mobile", "veneziana", "veneziana_mobile",
+        }
+        if kind not in accepted_kinds:
+            raise ValueError(
+                f"Window '{surface.get('name', '')}': movable_shading.type must be one of "
+                "roller_shutter, external_shutter, venetian_blind"
+            )
+
+        closed = shading.get("closed", {})
+        if not isinstance(closed, dict):
+            raise ValueError(
+                f"Window '{surface.get('name', '')}': movable_shading.closed must be an object"
+            )
+        if "g_value" not in closed:
+            raise ValueError(
+                f"Window '{surface.get('name', '')}': movable_shading.closed.g_value is required"
+            )
+        g_closed = float(closed["g_value"])
+        u_closed = float(closed.get("u_value", u_open))
+        if not (0.0 <= g_closed <= 1.0):
+            raise ValueError(f"Window '{surface.get('name', '')}': closed.g_value must be between 0 and 1")
+        if u_closed <= 0.0:
+            raise ValueError(f"Window '{surface.get('name', '')}': closed.u_value must be > 0")
+
+        control = shading.get("control", {})
+        if not isinstance(control, dict):
+            raise ValueError(
+                f"Window '{surface.get('name', '')}': movable_shading.control must be an object"
+            )
+        mode = str(control.get("mode", "solar")).strip().lower().replace("-", "_")
+        aliases = {"automatic": "solar", "automatic_solar": "solar", "manual_schedule": "schedule"}
+        mode = aliases.get(mode, mode)
+        if mode not in {"always_closed", "night", "solar", "night_and_solar", "schedule"}:
+            raise ValueError(
+                f"Window '{surface.get('name', '')}': unsupported movable_shading control mode '{mode}'"
+            )
+
+        ts = pd.to_datetime(timestamp, errors="coerce")
+        hour = int(ts.hour) if pd.notna(ts) else 12
+        month = int(ts.month) if pd.notna(ts) else 1
+        months = control.get("months", control.get("active_months", list(range(1, 13))))
+        if not isinstance(months, (list, tuple, np.ndarray)) or not months:
+            raise ValueError(f"Window '{surface.get('name', '')}': control.months must be a non-empty list")
+        active_month = month in {int(m) for m in months}
+
+        def _hour_window(start, end):
+            start, end = int(start) % 24, int(end) % 24
+            if start == end:
+                return True
+            return start <= hour < end if start < end else hour >= start or hour < end
+
+        night_closed = _hour_window(
+            control.get("night_start_hour", 22), control.get("night_end_hour", 7)
+        )
+        schedule_closed = _hour_window(
+            control.get("closed_start_hour", 22), control.get("closed_end_hour", 7)
+        )
+        threshold = float(control.get("solar_irradiance_threshold_W_m2", 150.0))
+        solar_closed = max(0.0, float(irradiance_w_m2)) >= threshold
+
+        if mode == "always_closed":
+            is_closed = active_month
+        elif mode == "night":
+            is_closed = active_month and night_closed
+        elif mode == "solar":
+            is_closed = active_month and solar_closed
+        elif mode == "night_and_solar":
+            is_closed = active_month and (night_closed or solar_closed)
+        else:  # schedule
+            is_closed = active_month and schedule_closed
+        return is_closed, (g_closed if is_closed else g_open), (u_closed if is_closed else u_open)
+
+    @classmethod
+    def _window_movable_shading_properties(cls, surface, sim_df, tstep):
+        """Evaluate the Annex-G state using the window-plane total irradiance."""
+        ori = str(surface.get("ISO52016_orientation_string", "SV"))
+        col = f"I_sol_tot_{ori}"
+        irradiance = float(sim_df[col].iloc[tstep]) if col in sim_df.columns else 0.0
+        return cls._movable_shading_properties(surface, sim_df.index[tstep], irradiance)
 
     @classmethod
     def Number_of_nodes_element(cls, building_object) -> numb_nodes_facade_elements:
@@ -3459,7 +3815,7 @@ class ISO52016:
             1. the thermal Resistance (R) and Transmittance (U) of the floor
             2. External Temperature [degC]
         """
-        wall_thickness = building_object["building"]["wall_thickness"]
+        wall_thickness = _wall_thickness_for_ground_m(building_object)
         thermal_resistance_floor = 5.3
         # building_object.thermal_resistance_floor = 5.3  # Floor construction thermal resistance (excluding effect of ground) [m2 K/W]
 
@@ -3757,7 +4113,12 @@ class ISO52016:
             bnd = str(s.get("boundary", "OUTDOORS")).upper()
             zone = s.get("zone", None)
             adjacent_zone = s.get("adjacent_zone", None)
-            key = (tstr, ostr, s["type"], bnd, zone, adjacent_zone)
+            # A movable shading device has a per-window, time-dependent state
+            # (Annex G).  Do not merge it with another window: otherwise a
+            # south-facing blind and shutter with different controls would be
+            # incorrectly represented by one averaged control.
+            movable_key = s.get("name", "surface") if s.get("movable_shading") is not None else None
+            key = (tstr, ostr, s["type"], bnd, zone, adjacent_zone, movable_key)
 
             A = float(s.get("area", 0.0))
             U = float(s.get("u_value", 0.0))
@@ -3785,6 +4146,8 @@ class ISO52016:
                 b["name_adj_zone"] = s.get("name_adj_zone")
             if b["orientation"] is None and isinstance(s.get("orientation", None), dict):
                 b["orientation"] = copy.deepcopy(s["orientation"])
+            if b.get("movable_shading") is None and s.get("movable_shading") is not None:
+                b["movable_shading"] = copy.deepcopy(s["movable_shading"])
 
             b["area"] += A
             b["uA"]   += U * A
@@ -3853,6 +4216,8 @@ class ISO52016:
                 agg["adjacent_zone"] = b["adjacent_zone"]
             if b["name_adj_zone"] is not None:
                 agg["name_adj_zone"] = b["name_adj_zone"]
+            if b.get("movable_shading") is not None:
+                agg["movable_shading"] = b["movable_shading"]
 
             # Preserve the first valid orientation seen in the bucket.
             if isinstance(b["orientation"], dict):
@@ -3861,9 +4226,13 @@ class ISO52016:
                 orientation_map = {
                     "HOR": {"azimuth": 0, "tilt": 0},
                     "NV": {"azimuth": 0, "tilt": 90},
+                    "NEV": {"azimuth": 45, "tilt": 90},
                     "EV": {"azimuth": 90, "tilt": 90},
+                    "SEV": {"azimuth": 135, "tilt": 90},
                     "SV": {"azimuth": 180, "tilt": 90},
+                    "SWV": {"azimuth": 225, "tilt": 90},
                     "WV": {"azimuth": 270, "tilt": 90},
+                    "NWV": {"azimuth": 315, "tilt": 90},
                 }
                 agg["orientation"] = orientation_map.get(
                     b["ISO52016_orientation_string"],
@@ -4090,6 +4459,8 @@ class ISO52016:
           - T_ground_virtual [degC]
           - Q_ground_surface_<surface> [W, +building -> ground]
           - Q_opaque_inside_surface_<surface> [W, +surface -> zone]
+            (an INTERNAL/zone-to-zone partition exports two such columns,
+            one per side: ..._<surface>_to_<zone_A> and ..._to_<zone_B>)
 
         HVAC control variable:
           - "operative": setpoint check/enforcement on T_op (default).
@@ -4526,7 +4897,7 @@ class ISO52016:
 
         def _orientation_string(surf):
             ori_existing = str(surf.get("ISO52016_orientation_string", "")).upper()
-            if ori_existing in {"HOR", "NV", "EV", "SV", "WV"}:
+            if ori_existing in {"HOR"} | set(_ORIENTATION_LABELS_8):
                 return ori_existing
             ori = surf.get("orientation", {}) or {}
             az = ori.get("azimuth", None)
@@ -4536,14 +4907,7 @@ class ISO52016:
                 tilt_f = float(tilt)
             except Exception:
                 return "SV"
-            if abs(tilt_f) < 1e-6:
-                return "HOR"
-            if abs(tilt_f - 90.0) < 1e-6:
-                candidates = np.array([0.0, 90.0, 180.0, 270.0], dtype=float)
-                labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
-                diffs = np.abs(((az_f - candidates + 180.0) % 360.0) - 180.0)
-                return str(labels[int(np.argmin(diffs))])
-            return "HOR" if tilt_f < 45.0 else "SV"
+            return _classify_surface_orientation(az_f, tilt_f, fallback_vertical_label="SV")
 
         # coefficients and orientation defaults
         for surf in surfaces:
@@ -5204,7 +5568,7 @@ class ISO52016:
                 col = f"I_sol_tot_{ori}"
                 if col not in sim_df.columns:
                     continue
-                g_val = float(surf.get("g_value", 0.0))
+                _, g_val, _ = cls._window_movable_shading_properties(surf, sim_df, tstep)
                 area = float(surf.get("area", 0.0))
                 i_tot = float(sim_df[col].iloc[tstep])
                 try:
@@ -5351,7 +5715,32 @@ class ISO52016:
                         A[R, R] += h
                         A[R, r_prev] -= h
                     if Pli < n_nodes - 1:
-                        h = float(h_pli_eli[Pli, Eli]) * A_s
+                        # Windows have two nodes.  For Annex-G movable devices
+                        # their closed-state U-value changes the glass
+                        # conductance for this hourly matrix assembly.
+                        h_area = float(h_pli_eli[Pli, Eli])
+                        if (
+                            surf.get("ISO52016_type_string") == "W"
+                            and Pli == 0
+                            and surf.get("movable_shading") is not None
+                        ):
+                            _, _, u_now = cls._window_movable_shading_properties(surf, sim_df, tstep)
+                            r_si = 1.0 / (h_ci + _get(
+                                surf,
+                                "radiative_heat_transfer_coefficient_internal",
+                                _surface_heat_transfer_default_value(
+                                    surf, "radiative_heat_transfer_coefficient_internal"
+                                ),
+                            ))
+                            r_se = 1.0 / (h_ce_tab + h_re_tab)
+                            r_core = 1.0 / u_now - r_si - r_se
+                            if r_core <= 0.0:
+                                raise ValueError(
+                                    f"Window '{surf.get('name', '')}': closed/open U-value is incompatible "
+                                    "with its surface heat-transfer coefficients"
+                                )
+                            h_area = 1.0 / r_core
+                        h = h_area * A_s
                         r_next = _sys_row_from_surface_ri(ri + 1)
                         A[R, R] += h
                         A[R, r_next] -= h
@@ -5436,17 +5825,26 @@ class ISO52016:
             for zi in range(Z):
                 cls._add_zone_longwave_radiative_exchange(A, zone_radiative_faces[zi])
 
-            # Radiative part of transmitted solar gains distributed on internal surface nodes.
+            # Radiative part of transmitted solar gains AND internal gains,
+            # distributed on internal surface nodes (area-weighted).  Mirrors
+            # the single-zone core (see the analogous `(1 - f_int_c) * int_gains
+            # + (1 - f_sol_c) * Phi_sol_dir_zt_t` term there): only the
+            # convective fractions (f_int_c, f_sol_c) go straight onto the
+            # zone air node (see the `B[zi] += ...` above); the remainder must
+            # reach the zone air through the surfaces' radiative/convective
+            # exchange, or it is lost from the balance.
             for zi in range(Z):
-                phi_sol_rad = (1.0 - float(f_sol_c)) * float(phi_sol_z[zi])
+                phi_rad = (1.0 - float(f_sol_c)) * float(phi_sol_z[zi]) + (
+                    1.0 - float(f_int_c)
+                ) * float(phi_int_z[zi])
                 area_tot = float(zone_rad_area[zi])
-                if area_tot <= 0.0 or abs(phi_sol_rad) < 1e-12:
+                if area_tot <= 0.0 or abs(phi_rad) < 1e-12:
                     continue
                 for (R_surf, area_surf) in zone_rad_nodes[zi]:
                     if float(area_surf) <= 0.0:
                         continue
                     # Distribute zone-level radiant gain [W] by internal-surface area share.
-                    B[R_surf] += phi_sol_rad * (float(area_surf) / area_tot)
+                    B[R_surf] += phi_rad * (float(area_surf) / area_tot)
 
             return A, B, zone_air_links_t, zone_hsurf_sum_t
 
@@ -6128,7 +6526,7 @@ class ISO52016:
 
         def _orientation_string(surf):
             ori_existing = str(surf.get("ISO52016_orientation_string", "")).upper()
-            if ori_existing in {"HOR", "NV", "EV", "SV", "WV"}:
+            if ori_existing in {"HOR"} | set(_ORIENTATION_LABELS_8):
                 return ori_existing
             ori = surf.get("orientation", {}) or {}
             az = ori.get("azimuth", None)
@@ -6138,14 +6536,7 @@ class ISO52016:
                 tilt_f = float(tilt)
             except Exception:
                 return "SV"
-            if abs(tilt_f) < 1e-6:
-                return "HOR"
-            if abs(tilt_f - 90.0) < 1e-6:
-                candidates = np.array([0.0, 90.0, 180.0, 270.0], dtype=float)
-                labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
-                diffs = np.abs(((az_f - candidates + 180.0) % 360.0) - 180.0)
-                return str(labels[int(np.argmin(diffs))])
-            return "HOR" if tilt_f < 45.0 else "SV"
+            return _classify_surface_orientation(az_f, tilt_f, fallback_vertical_label="SV")
 
         for surf in surfaces:
             surf.setdefault("sky_view_factor", 0.0)
@@ -7037,10 +7428,7 @@ class ISO52016:
             typology_elements = np.array(bui_eln * ["EXT"], dtype="object")
             for i, surf in enumerate(building_object["building_surface"]):
                 if surf["type"] == "opaque":
-                    if surf["sky_view_factor"] == 0:
-                        typology_elements[i] = "GR"
-                    else:
-                        typology_elements[i] = "OP"
+                    typology_elements[i] = _single_zone_opaque_surface_iso_type(surf)
                 elif surf["type"] == "adiabatic":
                     typology_elements[i] = "AD"
                 elif surf["type"] == "transparent":
@@ -7092,34 +7480,7 @@ class ISO52016:
             for i, surf in enumerate(building_object["building_surface"]):
                 azimuth = float(surf["orientation"]["azimuth"])
                 tilt = float(surf["orientation"]["tilt"])
-
-                # Tolerances for robustness
-                def is_close(x, target, tol=1e-6):
-                    return abs(x - target) <= tol
-
-                if is_close(tilt, 0.0):
-                    orientation_elements[i] = "HOR"
-                elif is_close(tilt, 90.0):
-                    # normalize azimuth to [0, 360)
-                    az = azimuth % 360.0
-                    if is_close(az, 0.0) or is_close(az, 360.0):
-                        orientation_elements[i] = "NV"
-                    elif is_close(az, 90.0):
-                        orientation_elements[i] = "EV"
-                    elif is_close(az, 180.0):
-                        orientation_elements[i] = "SV"
-                    elif is_close(az, 270.0):
-                        orientation_elements[i] = "WV"
-                    else:
-                        # fallback: choose the closest cardinal point
-                        # (NV=0, EV=90, SV=180, WV=270)
-                        candidates = np.array([0.0, 90.0, 180.0, 270.0])
-                        labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
-                        orientation_elements[i] = labels[np.argmin(np.abs((az - candidates) % 360.0))]
-                else:
-                    # if tilt is not exactly 0 or 90, decide the logic (here we map for threshold)
-                    orientation_elements[i] = "HOR" if tilt < 45.0 else "NV"
-
+                orientation_elements[i] = _classify_surface_orientation(azimuth, tilt)
                 surf["ISO52016_orientation_string"] = orientation_elements[i]
 
             # 2) Aggregate (once only) and recalculate helpers
@@ -7596,10 +7957,16 @@ class ISO52016:
                             
                             # case with shading reduction factor
                             Ffr_wi = 0.25 # <- to modify with shading calculation annex F. o.25 is a good approximation
-                            F_sh_obst_wi_t = F_sh_el[Tstepi, Eli] if g_gl_wi_t[Eli] != 0 else 1.0
+                            if isinstance(building_object, dict):
+                                _, g_step, _ = cls._window_movable_shading_properties(
+                                    building_object["building_surface"][Eli], sim_df, Tstepi
+                                )
+                            else:
+                                g_step = g_gl_wi_t[Eli]
+                            F_sh_obst_wi_t = F_sh_el[Tstepi, Eli] if g_step != 0 else 1.0
 
                             Phi_sol_dir_zt_t += (
-                                g_gl_wi_t[Eli]
+                                g_step
                                 * cls._solar_irradiance_after_method1_shading(
                                     I_sol_dif_el[Tstepi, Eli],
                                     I_sol_dir_el[Tstepi, Eli],
@@ -7945,8 +8312,34 @@ class ISO52016:
                                 MatA[ri, ci - 1] -= h_pli_eli[Pli - 1, Eli] # - hpli-1,eli * teta,pli-1,eli,t
                             
                             if Pli < n_nodes - 1:
-                                MatA[ri, ci] += h_pli_eli[Pli, Eli] # hpli,eli * teta,pli,eli,t
-                                MatA[ri, ci + 1] -= h_pli_eli[Pli, Eli] # - hpli,eli * teta,pli+1,eli,t
+                                h_pli = h_pli_eli[Pli, Eli]
+                                if (
+                                    isinstance(building_object, dict)
+                                    and Type_eli[Eli] == "EXT"
+                                    and building_object["building_surface"][Eli].get("ISO52016_type_string") == "W"
+                                    and Pli == 0
+                                    and building_object["building_surface"][Eli].get("movable_shading") is not None
+                                ):
+                                    _, _, u_now = cls._window_movable_shading_properties(
+                                        building_object["building_surface"][Eli], sim_df, Tstepi
+                                    )
+                                    r_si = 1.0 / (
+                                        heat_convective_elements_internal_t[Eli]
+                                        + heat_radiative_elements_internal[Eli]
+                                    )
+                                    r_se = 1.0 / (
+                                        heat_convective_elements_external[Eli]
+                                        + heat_radiative_elements_external[Eli]
+                                    )
+                                    r_core = 1.0 / u_now - r_si - r_se
+                                    if r_core <= 0.0:
+                                        raise ValueError(
+                                            f"Window '{building_object['building_surface'][Eli].get('name', '')}': "
+                                            "closed/open U-value is incompatible with its surface heat-transfer coefficients"
+                                        )
+                                    h_pli = 1.0 / r_core
+                                MatA[ri, ci] += h_pli # hpli,eli * teta,pli,eli,t
+                                MatA[ri, ci + 1] -= h_pli # - hpli,eli * teta,pli+1,eli,t
                     
                     '''
                     Temperature calculation of:
@@ -8064,7 +8457,7 @@ class ISO52016:
 
                 # 1) Storage (air + envelope): always update state tracking,
                 # but accumulate only after warm-up.
-                Theta_curr_state = VecB[:, colB_act]
+                Theta_curr_state = VecB[:, colB_act].copy()  # copy: VecB is a reused buffer (_VecB.fill), a view would alias Theta_prev_state
                 dTheta_state = Theta_curr_state - Theta_prev_state
                 if Tstepi >= Tstep_first_act:
                     q_storage = float(np.dot(C_state, dTheta_state)) / float(Dtime[Tstepi])
@@ -8107,19 +8500,29 @@ class ISO52016:
                     if q_tb > 0:  E_tb_loss_Wh += q_tb * dt_h
                     else:         E_solar_Wh   += (-q_tb) * dt_h
 
-                    # 6) Ground
-                    T_gr = float(t_Th.Theta_gr_ve[month_arr[Tstepi]])
-                    h_ground = _ground_conductance_w_per_k(
-                        float(getattr(t_Th, "ground_contact_area", 0.0)),
-                        t_Th,
+                    # 6) Ground: heat flowing from the zone into the ground-contact
+                    # elements (same balance as the transmission terms below).
+                    # The radiative share of internal/solar/HC gains is injected
+                    # on the internal surface nodes (area-weighted) and leaves
+                    # through the envelope, so it is added to each element flux.
+                    T_air = float(Theta_int_air[Tstepi, 0])
+                    T_rad = float(Theta_int_r_mn[Tstepi, 0])
+                    f_hc_c = f_H_c if phi_hc > 0 else f_C_c
+                    phi_rad_surf = (
+                        (1.0 - f_int_c) * phi_int
+                        + (1.0 - f_sol_c) * phi_solar
+                        + (1.0 - f_hc_c) * phi_hc
                     )
-                    q_ground = h_ground * (T_in - T_gr)
+                    q_rad_per_area = phi_rad_surf / area_int_surfaces_tot
+                    q_ground = _single_zone_ground_flux_w(
+                        bui_eln, nodes, surface_types, VecB, colB_act, area_elements,
+                        heat_convective_elements_internal, heat_radiative_elements_internal,
+                        T_air, T_rad, q_rad_per_area,
+                    )
                     if q_ground > 0:  E_ground_loss_Wh += q_ground * dt_h
                     else:             E_solar_Wh       += (-q_ground) * dt_h
 
                     # 7) Transmission for element (OP, W)
-                    T_air = float(Theta_int_air[Tstepi, 0])
-                    T_rad = float(Theta_int_r_mn[Tstepi, 0])
                     q_tr_by_surface = {col: 0.0 for col in surface_report_cols.values()}
                     q_tr_total = 0.0
                     q_tr_opaque = 0.0
@@ -8133,7 +8536,7 @@ class ISO52016:
                         A   = float(area_elements[Eli])
                         hci = float(heat_convective_elements_internal[Eli])
                         hri = float(heat_radiative_elements_internal[Eli])
-                        q_cond = A * (hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int))
+                        q_cond = A * (hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int) + q_rad_per_area)
                         if   q_cond > 0: E_trans_loss_by_surface_Wh[surface_names[Eli]] += q_cond * dt_h
                         elif q_cond < 0: E_solar_Wh += (-q_cond) * dt_h
                         q_tr_total += q_cond
@@ -8560,10 +8963,7 @@ class ISO52016:
             typology_elements = np.array(bui_eln * ["EXT"], dtype="object")
             for i, surf in enumerate(building_object["building_surface"]):
                 if surf["type"] == "opaque":
-                    if surf["sky_view_factor"] == 0:
-                        typology_elements[i] = "GR"
-                    else:
-                        typology_elements[i] = "OP"
+                    typology_elements[i] = _single_zone_opaque_surface_iso_type(surf)
                 elif surf["type"] == "adiabatic":
                     typology_elements[i] = "AD"
                 elif surf["type"] == "transparent":
@@ -8615,34 +9015,7 @@ class ISO52016:
             for i, surf in enumerate(building_object["building_surface"]):
                 azimuth = float(surf["orientation"]["azimuth"])
                 tilt = float(surf["orientation"]["tilt"])
-
-                # Tolerances for robustness
-                def is_close(x, target, tol=1e-6):
-                    return abs(x - target) <= tol
-
-                if is_close(tilt, 0.0):
-                    orientation_elements[i] = "HOR"
-                elif is_close(tilt, 90.0):
-                    # normalizza azimuth in [0, 360)
-                    az = azimuth % 360.0
-                    if is_close(az, 0.0) or is_close(az, 360.0):
-                        orientation_elements[i] = "NV"
-                    elif is_close(az, 90.0):
-                        orientation_elements[i] = "EV"
-                    elif is_close(az, 180.0):
-                        orientation_elements[i] = "SV"
-                    elif is_close(az, 270.0):
-                        orientation_elements[i] = "WV"
-                    else:
-                        # fallback: choose the closest cardinal point
-                        # (NV=0, EV=90, SV=180, WV=270)
-                        candidates = np.array([0.0, 90.0, 180.0, 270.0])
-                        labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
-                        orientation_elements[i] = labels[np.argmin(np.abs((az - candidates) % 360.0))]
-                else:
-                    # if tilt is not exactly 0 or 90, decide the logic (here we map for threshold)
-                    orientation_elements[i] = "HOR" if tilt < 45.0 else "NV"
-
+                orientation_elements[i] = _classify_surface_orientation(azimuth, tilt)
                 surf["ISO52016_orientation_string"] = orientation_elements[i]
 
             # 2) Aggregate (once only) and recalculate helpers
@@ -9162,10 +9535,16 @@ class ISO52016:
                             
                             # case with shading reduction factor
                             Ffr_wi = 0.25 # <- to modify with shading calculation annex F. o.25 is a good approximation
-                            F_sh_obst_wi_t = F_sh_el[Tstepi, Eli] if g_gl_wi_t[Eli] != 0 else 1.0
+                            if isinstance(building_object, dict):
+                                _, g_step, _ = cls._window_movable_shading_properties(
+                                    building_object["building_surface"][Eli], sim_df, Tstepi
+                                )
+                            else:
+                                g_step = g_gl_wi_t[Eli]
+                            F_sh_obst_wi_t = F_sh_el[Tstepi, Eli] if g_step != 0 else 1.0
 
                             Phi_sol_dir_zt_t += (
-                                g_gl_wi_t[Eli]
+                                g_step
                                 * cls._solar_irradiance_after_method1_shading(
                                     I_sol_dif_el[Tstepi, Eli],
                                     I_sol_dir_el[Tstepi, Eli],
@@ -9511,8 +9890,34 @@ class ISO52016:
                                 MatA[ri, ci - 1] -= h_pli_eli[Pli - 1, Eli] # - hpli-1,eli * teta,pli-1,eli,t
                             
                             if Pli < n_nodes - 1:
-                                MatA[ri, ci] += h_pli_eli[Pli, Eli] # hpli,eli * teta,pli,eli,t
-                                MatA[ri, ci + 1] -= h_pli_eli[Pli, Eli] # - hpli,eli * teta,pli+1,eli,t
+                                h_pli = h_pli_eli[Pli, Eli]
+                                if (
+                                    isinstance(building_object, dict)
+                                    and Type_eli[Eli] == "EXT"
+                                    and building_object["building_surface"][Eli].get("ISO52016_type_string") == "W"
+                                    and Pli == 0
+                                    and building_object["building_surface"][Eli].get("movable_shading") is not None
+                                ):
+                                    _, _, u_now = cls._window_movable_shading_properties(
+                                        building_object["building_surface"][Eli], sim_df, Tstepi
+                                    )
+                                    r_si = 1.0 / (
+                                        heat_convective_elements_internal_t[Eli]
+                                        + heat_radiative_elements_internal[Eli]
+                                    )
+                                    r_se = 1.0 / (
+                                        heat_convective_elements_external[Eli]
+                                        + heat_radiative_elements_external[Eli]
+                                    )
+                                    r_core = 1.0 / u_now - r_si - r_se
+                                    if r_core <= 0.0:
+                                        raise ValueError(
+                                            f"Window '{building_object['building_surface'][Eli].get('name', '')}': "
+                                            "closed/open U-value is incompatible with its surface heat-transfer coefficients"
+                                        )
+                                    h_pli = 1.0 / r_core
+                                MatA[ri, ci] += h_pli # hpli,eli * teta,pli,eli,t
+                                MatA[ri, ci + 1] -= h_pli # - hpli,eli * teta,pli+1,eli,t
                     
                     '''
                     Temperature calculation of:
@@ -9667,7 +10072,7 @@ class ISO52016:
 
                 # 1) Storage (air + envelope): always update state tracking,
                 # but accumulate only after warm-up.
-                Theta_curr_state = VecB[:, colB_act]
+                Theta_curr_state = VecB[:, colB_act].copy()  # copy: VecB is a reused buffer (_VecB.fill), a view would alias Theta_prev_state
                 dTheta_state = Theta_curr_state - Theta_prev_state
                 if Tstepi >= Tstep_first_act:
                     q_storage = float(np.dot(C_state, dTheta_state)) / float(Dtime[Tstepi])
@@ -9698,19 +10103,29 @@ class ISO52016:
                     if q_tb > 0:  E_tb_loss_Wh += q_tb * dt_h
                     else:         E_solar_Wh   += (-q_tb) * dt_h
 
-                    # 6) Ground
-                    T_gr = float(t_Th.Theta_gr_ve[month_arr[Tstepi]])
-                    h_ground = _ground_conductance_w_per_k(
-                        float(getattr(t_Th, "ground_contact_area", 0.0)),
-                        t_Th,
+                    # 6) Ground: heat flowing from the zone into the ground-contact
+                    # elements (same balance as the transmission terms below).
+                    # The radiative share of internal/solar/HC gains is injected
+                    # on the internal surface nodes (area-weighted) and leaves
+                    # through the envelope, so it is added to each element flux.
+                    T_air = float(Theta_int_air[Tstepi, 0])
+                    T_rad = float(Theta_int_r_mn[Tstepi, 0])
+                    f_hc_c = f_H_c if phi_hc > 0 else f_C_c
+                    phi_rad_surf = (
+                        (1.0 - f_int_c) * phi_int
+                        + (1.0 - f_sol_c) * phi_solar
+                        + (1.0 - f_hc_c) * phi_hc
                     )
-                    q_ground = h_ground * (T_in - T_gr)
+                    q_rad_per_area = phi_rad_surf / area_int_surfaces_tot
+                    q_ground = _single_zone_ground_flux_w(
+                        bui_eln, nodes, surface_types, VecB, colB_act, area_elements,
+                        heat_convective_elements_internal, heat_radiative_elements_internal,
+                        T_air, T_rad, q_rad_per_area,
+                    )
                     if q_ground > 0:  E_ground_loss_Wh += q_ground * dt_h
                     else:             E_solar_Wh       += (-q_ground) * dt_h
 
                     # 7) Transmission for element (OP, W)
-                    T_air = float(Theta_int_air[Tstepi, 0])
-                    T_rad = float(Theta_int_r_mn[Tstepi, 0])
                     q_tr_by_surface = {col: 0.0 for col in surface_report_cols.values()}
                     q_tr_total = 0.0
                     q_tr_opaque = 0.0
@@ -9724,7 +10139,7 @@ class ISO52016:
                         A   = float(area_elements[Eli])
                         hci = float(heat_convective_elements_internal[Eli])
                         hri = float(heat_radiative_elements_internal[Eli])
-                        q_cond = A * (hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int))
+                        q_cond = A * (hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int) + q_rad_per_area)
                         if   q_cond > 0: E_trans_loss_by_surface_Wh[surface_names[Eli]] += q_cond * dt_h
                         elif q_cond < 0: E_solar_Wh += (-q_cond) * dt_h
                         q_tr_total += q_cond

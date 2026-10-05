@@ -687,7 +687,7 @@ All files are saved to `result_test/` (or the folder specified by `--output-dir`
 | `multizone_v2_hybrid_temperatures.html` | Hourly operative temperatures by zone (V2 hybrid) |
 | `multizone_v2_hybrid_monthly_consumptions.html` | Monthly energy by zone (V2 hybrid) |
 | `multizone_v1_vs_v2_hybrid_report.html` | Full comparison report V1 vs V2 (5 panels + tables) |
-| `multizone_v1_sankey_by_zone.html` | Sankey diagrams of the annual balance for each thermal zone |
+| `multizone_v1_sankey_by_zone.html` | Sankey diagrams of the annual balance for each thermal zone, followed by the annual Sankey and monthly chart of net heat exchanged through internal partitions; a positive monthly value is from zone A to zone B |
 
 ### V1 vs V2 comparison report structure
 

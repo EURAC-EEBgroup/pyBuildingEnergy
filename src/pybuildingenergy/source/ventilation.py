@@ -608,7 +608,16 @@ class VentilationInternalGains:
         # Optional full-load overrides from BUI -> internal_gains
         building_object = getattr(self, "building_object", None)
         if building_object:
-            for gain in building_object.get("internal_gains", []):
+            # Single-zone BUI keeps the gains under building_parameters; the
+            # multizone path copies them to the top level of the zone object.
+            # `is not None` (not truthiness) so an explicit empty list at the
+            # top level is honoured as "no overrides", not treated as absent.
+            gains_cfg = building_object.get("internal_gains")
+            if gains_cfg is None:
+                gains_cfg = building_object.get("building_parameters", {}).get(
+                    "internal_gains", []
+                )
+            for gain in gains_cfg:
                 gname = gain.get("name")
                 full_load = gain.get("full_load")
                 if full_load is None:

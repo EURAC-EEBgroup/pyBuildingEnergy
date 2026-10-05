@@ -1,4 +1,147 @@
-# Chapter: Interpretation of Distribution Inputs According to EN 15316-3
+# Building and HVAC Input Reference
+
+## Building Input (`building`)
+
+This section documents the building input accepted by the modular configuration shown in `example_building_emission_only.json`. The building model is located in the top-level `building` object; systems are independent optional blocks under `systems`.
+
+```json
+{
+  "$schema": "pybuildingenergy-system-config-v2",
+  "weather": {"source": "pvgis", "file": null},
+  "building": {"...": "building model"},
+  "systems": {"...": "enabled simulation subsystems"}
+}
+```
+
+### Weather
+
+`weather.source` selects the weather source. The example uses `pvgis`. `weather.file` is `null` when no local weather file is supplied. When a file-based weather workflow is used, set `file` to the corresponding path and configure a compatible source in the simulation call.
+
+### Basic Building Data
+
+The `building.building` object contains the geometric, location and classification data shared by the envelope calculation.
+
+| Input | Unit | Meaning |
+|---|---:|---|
+| `name` | — | Building identifier. |
+| `azimuth_relative_to_true_north` | ° | Rotation of the building reference axes from true north. |
+| `latitude`, `longitude` | ° | Site coordinates used for weather and solar geometry. |
+| `exposed_perimeter` | m | Exposed perimeter used by the ground model. |
+| `height` | m | Building height. |
+| `wall_thickness` | m | Wall thickness; used by the ground calculation. The same value is also declared under `building_parameters.construction` in the example. |
+| `n_floors` | — | Number of floors. |
+| `building_type_class` | — | Building-use classification. |
+| `adj_zones_present` | boolean | States whether adjacent zones are modelled. |
+| `number_adj_zone` | — | Number of adjacent zones. |
+| `net_floor_area` | m² | Net conditioned floor area. |
+| `construction_class` | — | Thermal-mass class, for example `class_i`. |
+
+### Envelope Surfaces (`building_surface`)
+
+`building_surface` is a list of roof, wall, slab and window objects. Every surface in the example includes `name`, `type`, `area`, `sky_view_factor`, `u_value`, `orientation` and `name_adj_zone`.
+
+| Input | Unit | Meaning |
+|---|---:|---|
+| `name` | — | Unique, readable surface identifier. |
+| `type` | — | `opaque` for roof/wall/slab, or `transparent` for a window. |
+| `area` | m² | Gross surface area. For windows this is the total window area, including the frame. |
+| `sky_view_factor` | — | Fraction between 0 and 1 representing the view to the sky. The example uses `0.0` for the ground slab. |
+| `boundary` | — | Optional, but recommended over relying on `sky_view_factor`. One of `OUTDOORS` (default), `GROUND`, `ADIABATIC`, `INTERNAL`. Always set this explicitly for a ground slab or for a partition to another zone/unmodelled space — see the note below. |
+| `u_value` | W/(m² K) | Thermal transmittance in the normal/open state. |
+| `orientation.azimuth` | ° | Azimuth: 0 north, 90 east, 180 south, 270 west. |
+| `orientation.tilt` | ° | Tilt: 0 horizontal/upward-facing, 90 vertical. |
+
+**Ground contact vs. internal partitions.** For backward compatibility, an opaque surface with no explicit `boundary` and `sky_view_factor == 0` is still inferred as ground contact ("GR") — but only when it is near-horizontal (tilt close to 0° or 180°), matching the ground-slab convention. A *vertical* opaque surface with `sky_view_factor == 0` (e.g. a party wall shared with an attached building, or an internal partition between two zones with no sky view) is **not** inferred as ground contact: it stays a normal exposed wall unless you tag it explicitly. Partitions towards another zone or an unmodelled space — whether vertical (a wall) or horizontal (a floor/ceiling between two stacked zones, as in a multizone model) — should always be tagged `"boundary": "ADIABATIC"` (or `"INTERNAL"` for a real multizone coupling); relying on `sky_view_factor == 0` for that purpose is ambiguous and, for a horizontal partition, would incorrectly resolve to ground contact.
+| `name_adj_zone` | — / `null` | Adjacent-zone identifier. Use `null` for the exterior surfaces in the example. |
+
+Opaque surfaces additionally use:
+
+| Input | Unit | Meaning |
+|---|---:|---|
+| `solar_absorptance` | — | Solar absorptance of the outer opaque surface, between 0 and 1. |
+| `thermal_capacity` | J/(m² K) | Areal thermal capacity of the construction. |
+
+Transparent surfaces additionally use:
+
+| Input | Unit | Meaning |
+|---|---:|---|
+| `g_value` | — | Total solar energy transmittance of the window in its normal/open state. |
+| `height`, `width` | m | Window geometry used by the shading calculation. |
+| `parapet` | m | Height of the lower window edge above the reference level. |
+| `shading` | boolean | Enables the configured fixed shading calculation. |
+| `shading_type` | — | Fixed-shading geometry type, such as `horizontal_overhang`. |
+| `width_or_distance_of_shading_elements` | m | Geometric input for the fixed shading object. |
+| `overhang_properties.width_of_horizontal_overhangs` | m | Projection width of a horizontal overhang. |
+
+### Optional Movable Shading per Window
+
+`movable_shading` is optional and is placed inside the individual transparent-surface object. If it is omitted, no roller shutter, external shutter or venetian blind is connected to that window and the calculation uses the window `u_value` and `g_value` unchanged.
+
+When present, the hourly calculation uses the open window properties and the `closed` properties according to the selected control rule. `closed.u_value` and `closed.g_value` must be product-specific values, not generic default values.
+
+```json
+{
+  "name": "Window S",
+  "type": "transparent",
+  "area": 6.0,
+  "u_value": 1.4,
+  "g_value": 0.45,
+  "movable_shading": {
+    "type": "external_shutter",
+    "closed": {
+      "u_value": 1.2,
+      "g_value": 0.12
+    },
+    "control": {
+      "mode": "solar",
+      "months": [4, 5, 6, 7, 8, 9],
+      "solar_irradiance_threshold_W_m2": 180
+    }
+  }
+}
+```
+
+| `movable_shading` input | Unit | Accepted values / meaning |
+|---|---:|---|
+| `type` | — | `roller_shutter`, `external_shutter` or `venetian_blind`. |
+| `closed.u_value` | W/(m² K) | Thermal transmittance while the device is closed. |
+| `closed.g_value` | — | Total solar energy transmittance while the device is closed, between 0 and 1. |
+| `control.mode` | — | `solar`, `night`, `night_and_solar`, `schedule` or `always_closed`. |
+| `control.months` | — | Optional active months, numbered 1 to 12. It defaults to all months. |
+| `control.solar_irradiance_threshold_W_m2` | W/m² | Window-plane irradiance threshold used by `solar` control. Default: 150 W/m². |
+| `control.night_start_hour`, `control.night_end_hour` | h | Closing/opening hour for `night` control. Defaults: 22 and 7. |
+| `control.closed_start_hour`, `control.closed_end_hour` | h | Closing/opening hour for `schedule` control. Defaults: 22 and 7. |
+
+Fixed shading (`shading`, overhangs and obstacles) and movable shading are separate inputs: the former changes the incident solar irradiance, while the latter selects the window properties for the current state.
+
+### Building Parameters (`building_parameters`)
+
+`building_parameters` contains operating conditions and envelope-related data.
+
+| Section | Inputs in the example | Unit / meaning |
+|---|---|---|
+| `temperature_setpoints` | `heating_setpoint`, `heating_setback`, `cooling_setpoint`, `cooling_setback` | °C zone setpoints. |
+| `system_capacities` | `heating_capacity`, `cooling_capacity` | W maximum ideal HVAC capacity. |
+| `airflow_rates` | `infiltration_rate` | h⁻¹ air-change rate. |
+| `construction` | `wall_thickness`, `thermal_bridge_heat_W_K` | m wall thickness; W/K total thermal-bridge coefficient. |
+| `climate_parameters` | `coldest_month` | Month number from 1 to 12. |
+| `internal_gains` | `name`, `full_load`, `weekday`, `weekend` | Full-load gain and 24 hourly multipliers for each gain source. |
+| `heating_profile`, `cooling_profile`, `ventilation_profile` | `weekday`, `weekend` | 24 hourly availability multipliers, indexed from hour 0 to hour 23. |
+
+The `weekday` and `weekend` arrays in all profiles must contain 24 values. A zero disables the corresponding service or gain at that hour; one represents its configured full level.
+
+### Units Block
+
+The example declares the main envelope units explicitly:
+
+```json
+"units": {
+  "area": "m2",
+  "u_value": "W/m2K"
+}
+```
+
+Use SI values consistently throughout the building input. In particular, areas are in m², dimensions in m, temperatures in °C, thermal capacities in J/(m² K), and thermal bridge coefficients in W/K.
 
 ## EN 15316-2 - Emission System
 

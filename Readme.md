@@ -543,6 +543,30 @@ pip install pybuildingenergy
 
 **New examples will follow soon...**
 
+### Run a simulation with progress and HTML reports
+
+From the repository root (paths are relative, so the commands work on any machine):
+
+```bash
+# single zone (building + emission system)
+python examples/thermal_report_example.py \
+  --config examples/FH_Poland_DC_baseline_two_floors.json \
+  --mode single-zone
+
+# multizone (ground floor + first floor)
+python examples/thermal_report_example.py \
+  --config examples/FH_Poland_DC_multizone_ideal_envelope.json \
+  --mode multizone
+```
+
+The engine shows a progress bar (tqdm) while it computes the hourly balance.
+The reports are written to `examples/outputs/thermal_report/` (use `--output-dir <folder>` to change it):
+
+- `thermal_report_single_zone.html` or `thermal_report_multizone.html`
+- hourly, daily and monthly charts (ECharts): thermal need, operative temperature per zone, outdoor temperature and outdoor relative humidity
+
+The Poland case JSON files are not shipped with the package: they must be placed in `examples/` (or the `--config` path must point to them).
+
 ## Contributing and Support
 
 **Bug reports / Questions**  

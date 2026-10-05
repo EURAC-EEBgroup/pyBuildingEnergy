@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--idf-path",
-        default="/Users/dantonucci/Downloads/two_zone_ideal_24_2_ideal_multizone_definitive.idf",
+        default="",
         help="Percorso IDF (usato solo come riferimento nel report).",
     )
     parser.add_argument(
