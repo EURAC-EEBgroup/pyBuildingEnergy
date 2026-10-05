@@ -9,7 +9,7 @@
   },
   "weather": {
     "source": "epw",
-    "file": "/Users/dantonucci/Documents/gitHub/pybuildingenergy/examples/2020_Milan.epw"
+    "file": "examples/2020_Milan.epw"
   },
   "building": {
     "building": {

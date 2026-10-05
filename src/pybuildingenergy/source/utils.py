@@ -1448,6 +1448,47 @@ def _legacy_svf_zero_implies_ground_contact(surface: dict) -> bool:
     return abs(tilt) < 45.0 or abs(tilt - 180.0) < 45.0
 
 
+# Vertical-orientation buckets on a 45 degree grid (geographical azimuth: N=0,
+# E=90, S=180, W=270): the 4 cardinals plus the 4 intermediate directions.
+# Replaces the older 90 degree grid (N/E/S/W only), which forced any diagonal
+# facade (e.g. 225 deg, south-west) onto the nearest cardinal -- up to 45 deg
+# of error on its solar exposure. Used consistently by every surface
+# classification in this module so aggregation, solar irradiance and shading
+# all key on the same 9 labels (HOR + the 8 below).
+_ORIENTATION_LABELS_8 = ("NV", "NEV", "EV", "SEV", "SV", "SWV", "WV", "NWV")
+_ORIENTATION_AZIMUTHS_8 = np.array([0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0])
+
+
+def _classify_surface_orientation(
+    azimuth: float,
+    tilt: float,
+    horizontal_tilt_threshold: float = 45.0,
+    fallback_vertical_label: str = "NV",
+) -> str:
+    """Classify a surface into one of the 9 ISO52016 orientation buckets.
+
+    ``tilt`` close to 0 -> "HOR" (horizontal). ``tilt`` close to 90 -> one of
+    the 8 vertical labels in ``_ORIENTATION_LABELS_8``, snapped to the
+    nearest 45 degree point (exact cardinals/diagonals match themselves
+    exactly; anything else -- e.g. a real-world facade at a non-standard
+    angle -- is approximated by its closest neighbour). Any other tilt is a
+    degenerate case (neither horizontal nor vertical) handled by the legacy
+    45 degree threshold; ``fallback_vertical_label`` preserves whichever
+    placeholder each call site used before this helper existed.
+    """
+
+    def is_close(x, target, tol=1e-6):
+        return abs(x - target) <= tol
+
+    if is_close(tilt, 0.0):
+        return "HOR"
+    if is_close(tilt, 90.0):
+        az = float(azimuth) % 360.0
+        diffs = np.abs(((az - _ORIENTATION_AZIMUTHS_8 + 180.0) % 360.0) - 180.0)
+        return str(_ORIENTATION_LABELS_8[int(np.argmin(diffs))])
+    return "HOR" if tilt < horizontal_tilt_threshold else fallback_vertical_label
+
+
 def _single_zone_opaque_surface_iso_type(surface: dict) -> str:
     """Resolve the ISO52016 type string ("GR"/"AD"/"OP") for an *opaque*
     surface in the single-zone engine.
@@ -1739,7 +1780,7 @@ def _surface_tilt_for_internal_convection(surface: dict) -> float:
     ori_tag = str(surface.get("ISO52016_orientation_string", "")).upper() if isinstance(surface, dict) else ""
     if _surface_is_ground_contact(surface):
         return 180.0
-    if ori_tag in {"NV", "EV", "SV", "WV"}:
+    if ori_tag in {"NV", "EV", "SV", "WV", "NEV", "SEV", "SWV", "NWV"}:
         return 90.0
     if ori_tag in {"HF"}:
         return 180.0
@@ -2472,25 +2513,29 @@ class ISO52010:
             return None
 
         # 2) Use the project-wide geographical azimuth convention:
-        #    N=0, E=90, S=180, W=270
+        #    N=0, E=90, S=180, W=270 (45 deg grid: cardinals + intermediates)
         #    (solar_azimuth_angle from ISO52010 is converted below)
         orientation_lookup = {
             "NV": 0.0,
+            "NEV": 45.0,
             "EV": 90.0,
+            "SEV": 135.0,
             "SV": 180.0,
+            "SWV": 225.0,
             "WV": 270.0,
+            "NWV": 315.0,
         }
         if orientation not in orientation_lookup:
             raise ValueError(f"Unknown orientation '{orientation}' passed to shading calculation.")
 
         orientation_angle = float(orientation_lookup[orientation])
 
-        # 3) Transparent window filter by cardinal orientation label.
-        #    This keeps filtering independent from the azimuth convention
-        #    used for gamma in shading_reduction_factor.
+        # 3) Transparent window filter by orientation label (9 buckets: HOR +
+        #    the 8 directions above). This keeps filtering independent from
+        #    the azimuth convention used for gamma in shading_reduction_factor.
         def _surface_orientation_label(surface):
             ori_tag = str(surface.get("ISO52016_orientation_string", "")).upper()
-            if ori_tag in {"HOR", "NV", "EV", "SV", "WV"}:
+            if ori_tag in {"HOR"} | set(_ORIENTATION_LABELS_8):
                 return ori_tag
 
             ori = surface.get("orientation", {}) or {}
@@ -2502,14 +2547,7 @@ class ISO52010:
             except (TypeError, ValueError):
                 return None
 
-            if np.isclose(tilt_f, 0.0, atol=1e-6):
-                return "HOR"
-            if np.isclose(tilt_f, 90.0, atol=1e-6):
-                candidates = np.array([0.0, 90.0, 180.0, 270.0], dtype=float)
-                labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
-                diffs = np.abs(((az_f - candidates + 180.0) % 360.0) - 180.0)
-                return str(labels[int(np.argmin(diffs))])
-            return "HOR" if tilt_f < 45.0 else "SV"
+            return _classify_surface_orientation(az_f, tilt_f, fallback_vertical_label="SV")
 
         def _matches_orientation(surface):
             return _surface_orientation_label(surface) == orientation
@@ -2944,9 +2982,13 @@ def Calculation_ISO_52010(building_object, path_weather_file, weather_source="pv
     or_tilt_azim_dic = {
         "HOR": (0, 0),
         "SV": (90, 0),
+        "SEV": (90, 45),
         "EV": (90, 90),
+        "NEV": (90, 135),
         "NV": (90, 180),
+        "NWV": (90, -135),
         "WV": (90, -90),
+        "SWV": (90, -45),
     }  # dictionary mapping orientation in orientation_elements with (beta_ic_deg=elevation/tilt, gamma_ic_deg=azimuth), see util.util.ISO52010_calc()
 
     if len(sim_df) > 8760:
@@ -2957,7 +2999,7 @@ def Calculation_ISO_52010(building_object, path_weather_file, weather_source="pv
         n_days_year = 365
     # Convert the NumPy array to a tuple
     if isinstance(building_object, dict):
-        orientation_elements = ["EV", "HOR", "SV", "NV", "WV"]
+        orientation_elements = ["EV", "HOR", "SV", "NV", "WV", "NEV", "SEV", "SWV", "NWV"]
     else:
         orientation_elements = building_object.__getattribute__("orientation_elements")
 
@@ -3049,9 +3091,13 @@ class ISO52016:
     or_tilt_azim_dic = {
         "HOR": (0, 0),
         "SV": (90, 0),
+        "SEV": (90, 45),
         "EV": (90, 90),
+        "NEV": (90, 135),
         "NV": (90, 180),
+        "NWV": (90, -135),
         "WV": (90, -90),
+        "SWV": (90, -45),
     }  # dictionary mapping orientation in orientation_elements with (beta_ic_deg=elevation/tilt, gamma_ic_deg=azimuth), see util.util.ISO52010_calc()
 
     def __init__(self):
@@ -4180,9 +4226,13 @@ class ISO52016:
                 orientation_map = {
                     "HOR": {"azimuth": 0, "tilt": 0},
                     "NV": {"azimuth": 0, "tilt": 90},
+                    "NEV": {"azimuth": 45, "tilt": 90},
                     "EV": {"azimuth": 90, "tilt": 90},
+                    "SEV": {"azimuth": 135, "tilt": 90},
                     "SV": {"azimuth": 180, "tilt": 90},
+                    "SWV": {"azimuth": 225, "tilt": 90},
                     "WV": {"azimuth": 270, "tilt": 90},
+                    "NWV": {"azimuth": 315, "tilt": 90},
                 }
                 agg["orientation"] = orientation_map.get(
                     b["ISO52016_orientation_string"],
@@ -4847,7 +4897,7 @@ class ISO52016:
 
         def _orientation_string(surf):
             ori_existing = str(surf.get("ISO52016_orientation_string", "")).upper()
-            if ori_existing in {"HOR", "NV", "EV", "SV", "WV"}:
+            if ori_existing in {"HOR"} | set(_ORIENTATION_LABELS_8):
                 return ori_existing
             ori = surf.get("orientation", {}) or {}
             az = ori.get("azimuth", None)
@@ -4857,14 +4907,7 @@ class ISO52016:
                 tilt_f = float(tilt)
             except Exception:
                 return "SV"
-            if abs(tilt_f) < 1e-6:
-                return "HOR"
-            if abs(tilt_f - 90.0) < 1e-6:
-                candidates = np.array([0.0, 90.0, 180.0, 270.0], dtype=float)
-                labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
-                diffs = np.abs(((az_f - candidates + 180.0) % 360.0) - 180.0)
-                return str(labels[int(np.argmin(diffs))])
-            return "HOR" if tilt_f < 45.0 else "SV"
+            return _classify_surface_orientation(az_f, tilt_f, fallback_vertical_label="SV")
 
         # coefficients and orientation defaults
         for surf in surfaces:
@@ -6483,7 +6526,7 @@ class ISO52016:
 
         def _orientation_string(surf):
             ori_existing = str(surf.get("ISO52016_orientation_string", "")).upper()
-            if ori_existing in {"HOR", "NV", "EV", "SV", "WV"}:
+            if ori_existing in {"HOR"} | set(_ORIENTATION_LABELS_8):
                 return ori_existing
             ori = surf.get("orientation", {}) or {}
             az = ori.get("azimuth", None)
@@ -6493,14 +6536,7 @@ class ISO52016:
                 tilt_f = float(tilt)
             except Exception:
                 return "SV"
-            if abs(tilt_f) < 1e-6:
-                return "HOR"
-            if abs(tilt_f - 90.0) < 1e-6:
-                candidates = np.array([0.0, 90.0, 180.0, 270.0], dtype=float)
-                labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
-                diffs = np.abs(((az_f - candidates + 180.0) % 360.0) - 180.0)
-                return str(labels[int(np.argmin(diffs))])
-            return "HOR" if tilt_f < 45.0 else "SV"
+            return _classify_surface_orientation(az_f, tilt_f, fallback_vertical_label="SV")
 
         for surf in surfaces:
             surf.setdefault("sky_view_factor", 0.0)
@@ -7444,34 +7480,7 @@ class ISO52016:
             for i, surf in enumerate(building_object["building_surface"]):
                 azimuth = float(surf["orientation"]["azimuth"])
                 tilt = float(surf["orientation"]["tilt"])
-
-                # Tolerances for robustness
-                def is_close(x, target, tol=1e-6):
-                    return abs(x - target) <= tol
-
-                if is_close(tilt, 0.0):
-                    orientation_elements[i] = "HOR"
-                elif is_close(tilt, 90.0):
-                    # normalize azimuth to [0, 360)
-                    az = azimuth % 360.0
-                    if is_close(az, 0.0) or is_close(az, 360.0):
-                        orientation_elements[i] = "NV"
-                    elif is_close(az, 90.0):
-                        orientation_elements[i] = "EV"
-                    elif is_close(az, 180.0):
-                        orientation_elements[i] = "SV"
-                    elif is_close(az, 270.0):
-                        orientation_elements[i] = "WV"
-                    else:
-                        # fallback: choose the closest cardinal point
-                        # (NV=0, EV=90, SV=180, WV=270)
-                        candidates = np.array([0.0, 90.0, 180.0, 270.0])
-                        labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
-                        orientation_elements[i] = labels[np.argmin(np.abs((az - candidates) % 360.0))]
-                else:
-                    # if tilt is not exactly 0 or 90, decide the logic (here we map for threshold)
-                    orientation_elements[i] = "HOR" if tilt < 45.0 else "NV"
-
+                orientation_elements[i] = _classify_surface_orientation(azimuth, tilt)
                 surf["ISO52016_orientation_string"] = orientation_elements[i]
 
             # 2) Aggregate (once only) and recalculate helpers
@@ -9006,34 +9015,7 @@ class ISO52016:
             for i, surf in enumerate(building_object["building_surface"]):
                 azimuth = float(surf["orientation"]["azimuth"])
                 tilt = float(surf["orientation"]["tilt"])
-
-                # Tolerances for robustness
-                def is_close(x, target, tol=1e-6):
-                    return abs(x - target) <= tol
-
-                if is_close(tilt, 0.0):
-                    orientation_elements[i] = "HOR"
-                elif is_close(tilt, 90.0):
-                    # normalizza azimuth in [0, 360)
-                    az = azimuth % 360.0
-                    if is_close(az, 0.0) or is_close(az, 360.0):
-                        orientation_elements[i] = "NV"
-                    elif is_close(az, 90.0):
-                        orientation_elements[i] = "EV"
-                    elif is_close(az, 180.0):
-                        orientation_elements[i] = "SV"
-                    elif is_close(az, 270.0):
-                        orientation_elements[i] = "WV"
-                    else:
-                        # fallback: choose the closest cardinal point
-                        # (NV=0, EV=90, SV=180, WV=270)
-                        candidates = np.array([0.0, 90.0, 180.0, 270.0])
-                        labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
-                        orientation_elements[i] = labels[np.argmin(np.abs((az - candidates) % 360.0))]
-                else:
-                    # if tilt is not exactly 0 or 90, decide the logic (here we map for threshold)
-                    orientation_elements[i] = "HOR" if tilt < 45.0 else "NV"
-
+                orientation_elements[i] = _classify_surface_orientation(azimuth, tilt)
                 surf["ISO52016_orientation_string"] = orientation_elements[i]
 
             # 2) Aggregate (once only) and recalculate helpers

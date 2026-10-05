@@ -46,7 +46,7 @@ print(WEATHER_FILE)
 
 GENERATE_EXTRA_REPORTS = False
 
-file_dir = "/Users/dantonucci/Documents/GitHub/pybuildingenergy/result_test"
+file_dir = str(Path(__file__).resolve().parent / "result_test")
 
 def _run_iso52016(building_obj):
     kwargs = {

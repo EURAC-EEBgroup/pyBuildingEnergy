@@ -277,14 +277,14 @@ def sanitize_and_validate_BUI(bui: dict,
                 add_issue("WARN", f"{path}.orientation.tilt", f"tilt non-standard ({tilt}); normalized to {s['orientation']['tilt']}", fixed=True)
             else:
                 add_issue("WARN", f"{path}.orientation.tilt", f"tilt recommended 0 or 90; value={tilt}", fixed=False)
-        if not (isinstance(az, (int, float)) and az in (0, 90, 180, 270)):
+        if not (isinstance(az, (int, float)) and az in (0, 45, 90, 135, 180, 225, 270, 315)):
             if fix and isinstance(az, (int, float)):
-                snapped = int(round(az / 90.0) * 90) % 360
+                snapped = int(round(az / 45.0) * 45) % 360
                 if snapped == 360: snapped = 0
                 s["orientation"]["azimuth"] = snapped
                 add_issue("WARN", f"{path}.orientation.azimuth", f"azimuth non-standard ({az}); normalized to {snapped}", fixed=True)
             else:
-                add_issue("WARN", f"{path}.orientation.azimuth", f"azimuth recommended in {{0,90,180,270}}; value={az}", fixed=False)
+                add_issue("WARN", f"{path}.orientation.azimuth", f"azimuth recommended in {{0,45,90,135,180,225,270,315}}; value={az}", fixed=False)
 
     # ---------------------------
     # 3) ADJACENT ZONES CHECKS

@@ -18,6 +18,7 @@ _PUBLIC_IMPORTS = {
     "check_heating_system_inputs": (".source.check_input", "check_heating_system_inputs"),
     "ISO52016": (".source.utils", "ISO52016"),
     "Graphs_and_report": (".source.graphs", "Graphs_and_report"),
+    "thermal_html_report": (".source.graphs", "thermal_html_report"),
     "HeatingSystemCalculator": (".source.iso_15316_1", "HeatingSystemCalculator"),
     "MultiZoneHeatingSystemCalculator": (".source.iso_15316_1", "MultiZoneHeatingSystemCalculator"),
     "EmissionSimulationResult": (".source.emission_15316_2", "EmissionSimulationResult"),

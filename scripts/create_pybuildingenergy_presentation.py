@@ -3,7 +3,6 @@ import os
 import sys
 import zipfile
 
-sys.path.insert(0, "/private/tmp/pybe_pptx_libs")
 
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -17,8 +16,8 @@ from pptx.enum.text import MSO_AUTO_SIZE
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TEMPLATE = Path("/Users/dantonucci/Downloads/EEB_conference_agenticAI.pptx")
-ISO_SCREENSHOT = Path("/Users/dantonucci/Desktop/Screenshot 2026-09-14 at 15.19.12.png")
+TEMPLATE = Path(os.environ.get("PBE_PPTX_TEMPLATE", ROOT / "EEB_conference_agenticAI.pptx"))
+ISO_SCREENSHOT = Path(os.environ.get("PBE_ISO_SCREENSHOT", ROOT / "iso_screenshot.png"))
 OUTPUT = ROOT / "pyBuildingEnergy_overview_EEB_layout_EN.pptx"
 
 RED = RGBColor(226, 28, 19)
