@@ -8048,6 +8048,9 @@ class ISO52016:
                         if list_adj_zones == 1:
                             adj_zone = building_object['adjacent_zones'][0]
                             H_ztu, b_ztu, F_ztc_ztu_m =ISO52016().transmission_heat_transfer_coefficient_ISO13789(adj_zone)
+                            H_ztu_zones_df = pd.DataFrame(
+                                [[H_ztu], [b_ztu], [F_ztc_ztu_m], [adj_zone['orientation_zone']['azimuth']]],
+                                columns=[adj_zone['name']], index=['H_ztu', 'b_ztu', 'F_ztc_ztu_m', 'orientation'])
                         else: 
                             H_ztu_zones = np.zeros((4, list_adj_zones))
                             name_zones = []
@@ -9626,6 +9629,9 @@ class ISO52016:
                         if list_adj_zones == 1:
                             adj_zone = building_object['adjacent_zones'][0]
                             H_ztu, b_ztu, F_ztc_ztu_m =ISO52016().transmission_heat_transfer_coefficient_ISO13789(adj_zone)
+                            H_ztu_zones_df = pd.DataFrame(
+                                [[H_ztu], [b_ztu], [F_ztc_ztu_m], [adj_zone['orientation_zone']['azimuth']]],
+                                columns=[adj_zone['name']], index=['H_ztu', 'b_ztu', 'F_ztc_ztu_m', 'orientation'])
                         else: 
                             H_ztu_zones = np.zeros((4, list_adj_zones))
                             name_zones = []

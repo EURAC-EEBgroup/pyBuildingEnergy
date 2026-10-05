@@ -2503,6 +2503,30 @@ def test_transmission_heat_transfer_coefficient_uses_geographical_orientation_ma
 
 
 @pytest.mark.slow
+def test_single_adjacent_zone_unconditioned_path_runs(building_data):
+    """Una sola zona adiacente non riscaldata (adj_zones_present=True) deve
+    attraversare il ramo ISO 52016 senza UnboundLocalError su H_ztu_zones_df."""
+    import pybuildingenergy as pybui
+
+    bui = copy.deepcopy(building_data)
+    bui["building"]["adj_zones_present"] = True
+    bui["building"]["number_adj_zone"] = 1
+    bui["adjacent_zones"] = [bui["adjacent_zones"][0]]
+    for surf in bui["building_surface"]:
+        if surf.get("name_adj_zone") == "adj_2":
+            surf["name_adj_zone"] = None
+            surf["type"] = "opaque"
+
+    bui_checked, issues = pybui.sanitize_and_validate_BUI(bui, fix=True)
+    assert [i for i in issues if i["level"] == "ERROR"] == []
+
+    hourly_sim, _ = pybui.ISO52016.Temperature_and_Energy_needs_calculation(
+        bui_checked, weather_source="pvgis"
+    )
+    assert len(hourly_sim) == 8760
+
+
+@pytest.mark.slow
 def test_iso52016_calculation(building_data, output_dir):
     """Test per il calcolo ISO52016 (può richiedere tempo)"""
     import pybuildingenergy as pybui
