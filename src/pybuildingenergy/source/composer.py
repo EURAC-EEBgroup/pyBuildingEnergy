@@ -64,6 +64,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -545,7 +546,8 @@ def simulate_config(config: dict[str, Any], hourly: pd.DataFrame | None = None):
     if "hvac_system" not in normalized:
         if hourly is not None:
             raise ValueError("hourly override is not supported by the emission-only simulation path.")
-        return simulate_emission_only(normalized)
+        method = str((normalized.get("options") or {}).get("emission_inc_method", "recalculate"))
+        return simulate_emission_only(normalized, emission_inc=method)
     return simulate(normalized, hourly=hourly)
 
 
@@ -1052,6 +1054,9 @@ def save_outputs(res: CompositionResult, out_dir: str | Path) -> None:
 # Minimal chain: building + emission system ONLY (no distribution, no generation, no AHU)
 # --------------------------------------------------------------------------------------
 
+EMISSION_INC_METHODS = ("recalculate", "approximate")
+
+
 @dataclass
 class EmissionOnlyResult:
     """Result of simulate_emission_only(): building need -> emission input, nothing further."""
@@ -1059,6 +1064,7 @@ class EmissionOnlyResult:
     config: dict[str, Any]
     hourly: pd.DataFrame
     summary: dict[str, float]
+    emission_inc_method: str = "recalculate"
 
     def report(self) -> str:
         s = self.summary
@@ -1072,10 +1078,27 @@ class EmissionOnlyResult:
             "=" * 60,
             "Note: this is energy at the EMITTERS, not final/delivered energy -",
             "no distribution or generation step is modelled here.",
+            f"Emission output at modified set point: {self.emission_inc_method}"
+            + (" (building need recalculated with ISO 52016)" if self.emission_inc_method == "recalculate"
+               else " (temperature-ratio approximation: shorter computation time, approximate results)"),
         ])
 
 
-def simulate_emission_only(config: dict[str, Any]) -> EmissionOnlyResult:
+def _shift_setpoints(building: dict[str, Any], h_delta: float, c_delta: float) -> dict[str, Any]:
+    """Copy of the building with heating/cooling set-points moved by the EN 15316-2 equivalent
+    temperature increase (eq. 16: theta_inc = theta_ini + delta, cooling deltas are negative)."""
+    shifted = copy.deepcopy(building)
+    sp = shifted["building_parameters"]["temperature_setpoints"]
+    for key in ("heating_setpoint", "heating_setback"):
+        if key in sp:
+            sp[key] = float(sp[key]) + h_delta
+    for key in ("cooling_setpoint", "cooling_setback"):
+        if key in sp:
+            sp[key] = float(sp[key]) + c_delta
+    return shifted
+
+
+def simulate_emission_only(config: dict[str, Any], emission_inc: str = "recalculate") -> EmissionOnlyResult:
     """Run ONLY ISO 52016 (building need) -> EmissionSystemCalculator (EN 15316-2).
 
     ``config`` is a plain ``{"building": {...}, "weather": {...},
@@ -1085,7 +1108,18 @@ def simulate_emission_only(config: dict[str, Any]) -> EmissionOnlyResult:
     standalone here, unlike HeatingSystemCalculator (which always bundles
     emission + distribution for space heating) or simulate()/compose_config()
     (which always require a generator under "external_generation").
+
+    ``emission_inc`` selects how the emission output at the modified set point
+    (EN 15316-2 Q_em,out,inc) is obtained:
+      * ``"recalculate"`` (default): the building need is recalculated with ISO 52016
+        at the equivalent set points, as the standard requires (M2-2);
+      * ``"approximate"``: scaled by the temperature ratios. Faster, but the results
+        are approximate and a notification is raised.
     """
+    if emission_inc not in EMISSION_INC_METHODS:
+        raise ValueError(f"emission_inc must be one of {EMISSION_INC_METHODS}, got {emission_inc!r}")
+    if "emission_system_config" not in config:
+        config = normalize_system_config(config)
 
     bui = config["building"]
     weather = config["weather"]
@@ -1101,6 +1135,11 @@ def simulate_emission_only(config: dict[str, Any]) -> EmissionOnlyResult:
     hourly = ISO52016.Temperature_and_Energy_needs_calculation(checked, **kwargs)[0]
 
     dt = float(pd.Series(hourly.index).diff().dt.total_seconds().median() / 3600.0)
+    emission_cfg = copy.deepcopy(config["emission_system_config"])
+    if emission_inc == "approximate":
+        for svc in ("heating", "cooling"):
+            emission_cfg.setdefault(svc, {})["notify_inc_fallback"] = False
+    calc = EmissionSystemCalculator(emission_cfg)
     em_input = pd.DataFrame({
         "T_ext": hourly["T_ext"], "T_op": hourly["T_op"],
         "Q_H_kWh": hourly["Q_H"].clip(lower=0.0) / 1000.0 * dt,   # W -> kWh
@@ -1108,7 +1147,22 @@ def simulate_emission_only(config: dict[str, Any]) -> EmissionOnlyResult:
         "time_step_hours": dt,
     }, index=hourly.index)
 
-    result = EmissionSystemCalculator(config["emission_system_config"]).run_timeseries(em_input)
+    if emission_inc == "recalculate":
+        shifted = _shift_setpoints(checked, calc.temperature_increase_K("H"), calc.temperature_increase_K("C"))
+        hourly_inc = ISO52016.Temperature_and_Energy_needs_calculation(shifted, **kwargs)[0]
+        em_input["Q_H_em_out_inc_kWh"] = hourly_inc["Q_H"].clip(lower=0.0).reindex(hourly.index).to_numpy() / 1000.0 * dt
+        em_input["Q_C_em_out_inc_kWh"] = hourly_inc["Q_C"].clip(lower=0.0).reindex(hourly.index).to_numpy() / 1000.0 * dt
+    else:
+        warnings.warn(
+            "Emission output at the modified set point is approximated by temperature ratios: "
+            "shorter computation time, but approximate results (EN 15316-2 requires the building "
+            "need to be recalculated at the equivalent set point; use emission_inc='recalculate').",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    result = calc.run_timeseries(em_input)
     summary = dict(result.summary)
     summary["floor_area_m2"] = float(bui["building"]["net_floor_area"])
-    return EmissionOnlyResult(config=config, hourly=result.timeseries, summary=summary)
+    return EmissionOnlyResult(config=config, hourly=result.timeseries, summary=summary,
+                              emission_inc_method=emission_inc)

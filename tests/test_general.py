@@ -2503,6 +2503,223 @@ def test_transmission_heat_transfer_coefficient_uses_geographical_orientation_ma
 
 
 @pytest.mark.slow
+def test_single_adjacent_zone_unconditioned_path_runs(building_data):
+    """Una sola zona adiacente non riscaldata (adj_zones_present=True) deve
+    attraversare il ramo ISO 52016 senza UnboundLocalError su H_ztu_zones_df."""
+    import pybuildingenergy as pybui
+
+    bui = copy.deepcopy(building_data)
+    bui["building"]["adj_zones_present"] = True
+    bui["building"]["number_adj_zone"] = 1
+    bui["adjacent_zones"] = [bui["adjacent_zones"][0]]
+    for surf in bui["building_surface"]:
+        if surf.get("name_adj_zone") == "adj_2":
+            surf["name_adj_zone"] = None
+            surf["type"] = "opaque"
+
+    bui_checked, issues = pybui.sanitize_and_validate_BUI(bui, fix=True)
+    assert [i for i in issues if i["level"] == "ERROR"] == []
+
+    hourly_sim, _ = pybui.ISO52016.Temperature_and_Energy_needs_calculation(
+        bui_checked, weather_source="pvgis"
+    )
+    assert len(hourly_sim) == 8760
+
+
+def test_cooling_emission_sign_follows_en15316_2():
+    """Raffrescamento: theta_int,inc = theta_int,ini + SUM(delta) con delta negativi
+    (EN 15316-2 eq. 16, Table B.11); la perdita incorporata segue lo stesso segno (eq. 20)."""
+    import pandas as pd
+    from pybuildingenergy.source.emission_15316_2 import EmissionSystemCalculator
+
+    strat, ctr, auto, emb = -1.2, -1.2, -0.5, -0.7
+    cfg = {"demand_unit": "kWh", "cooling": {
+        "stratification_K": strat, "control_K": ctr, "room_automation_K": auto,
+        "embedded_K": emb, "nominal_power_kW": 50.0, "convective_fraction": 0.95}}
+    idx = pd.date_range("2009-07-15 01:00", periods=1, freq="h")
+    df = pd.DataFrame({"T_ext": 30.0, "T_op": 26.0, "Q_H_kWh": 0.0, "Q_C_kWh": 1.0,
+                       "time_step_hours": 1.0}, index=idx)
+    row = EmissionSystemCalculator(cfg).run_timeseries(df).timeseries.iloc[0]
+
+    theta_ini, e_comb = 26.0, 30.0 + 8.0
+    theta_inc = theta_ini + (strat + ctr + auto)
+    assert row["theta_C_int_inc_C"] == pytest.approx(theta_inc)
+    q_inc = 1.0 * (e_comb - theta_inc) / (e_comb - theta_ini)
+    assert row["Q_C_em_out_inc_kWh"] == pytest.approx(q_inc)
+    assert row["Q_C_emb_ls_kWh"] == pytest.approx(q_inc * emb / (theta_inc - e_comb))
+
+
+def test_undersized_emitter_backup_and_unmet_are_explicit():
+    """EN 15316-1 eq. 16: Q_back = Q_exp - Q_act; without a backup the deficit is
+    unmet load and is flagged. EN 15316-2 eq. 22-23 hold literally, so the loss is
+    negative when the emitter is capped and Q_in = Q_out + Q_ls."""
+    import warnings
+    import pandas as pd
+    from pybuildingenergy.source.emission_15316_2 import EmissionSystemCalculator
+
+    idx = pd.date_range("2009-01-15 01:00", periods=1, freq="h")
+    df = pd.DataFrame({"T_ext": 0.0, "T_op": 20.0, "Q_H_kWh": 5.0, "Q_C_kWh": 0.0,
+                       "time_step_hours": 1.0}, index=idx)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        row = EmissionSystemCalculator({"demand_unit": "kWh", "heating": {"nominal_power_kW": 1.0}}).run_timeseries(df).timeseries.iloc[0]
+    assert row["Q_H_em_unmet_kWh"] == pytest.approx(4.0)
+    assert row["Q_H_em_back_out_kWh"] == pytest.approx(0.0)
+    assert row["Q_H_em_ls_kWh"] == pytest.approx(row["Q_H_em_out_inc_kWh"] - row["Q_H_em_out_kWh"] + 0.0)
+    assert row["Q_H_em_in_kWh"] == pytest.approx(row["Q_H_em_out_kWh"] + row["Q_H_em_ls_kWh"])
+    assert any("undersized" in str(x.message) for x in w)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        row = EmissionSystemCalculator({"demand_unit": "kWh", "heating": {"nominal_power_kW": 1.0, "backup_available": True}}).run_timeseries(df).timeseries.iloc[0]
+    assert row["Q_H_em_back_out_kWh"] == pytest.approx(4.0)
+    assert row["Q_H_em_unmet_kWh"] == pytest.approx(0.0)
+    assert row["Q_H_em_in_kWh"] + row["Q_H_em_back_out_kWh"] == pytest.approx(5.0)
+    assert row["Q_H_em_in_kWh"] == pytest.approx(row["Q_H_em_out_kWh"] + row["Q_H_em_ls_kWh"])
+    assert not any("undersized" in str(x.message) for x in w)
+
+
+def test_emission_backup_is_added_to_heating_system_demand():
+    """EN 15316-1 eq. 16: with a declared backup the deficit is supplied through the
+    heating system, so distribution and generation receive emission input + backup."""
+    import warnings
+    import pandas as pd
+    from pybuildingenergy.source.iso_15316_1 import HeatingSystemCalculator
+
+    idx = pd.date_range("2009-01-15 01:00", periods=1, freq="h")
+    df = pd.DataFrame({"Q_H_kWh": [5.0], "T_op": [20.0], "T_ext": [0.0], "time_step_hours": 1.0}, index=idx)
+
+    def make(backup):
+        emm = {"nominal_power_kW": 1.0}
+        if backup:
+            emm["backup_available"] = True
+        return HeatingSystemCalculator({
+            "emitter_type": "Floor heating", "nominal_power": 1.0, "emission_efficiency": 90.0,
+            "selected_emm_cont_circuit": 0, "mixing_valve": False,
+            "flow_temp_control_type": "Type 3 - Constant temperature", "constant_flow_temp": [42.0],
+            "generator_circuit": "independent", "gen_flow_temp_control_type": "Type B",
+            "emission_calculation_mode": "en15316-2",
+            "emission_15316_2_config": {"demand_unit": "kWh", "heating": emm},
+        })
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        calc = make(backup=True)
+        calc._precompute_emission_timeseries(df)
+        assert calc._emission_ts_cache["QH_em_i_in"][0] == pytest.approx(5.0)
+        assert calc._emission_ts_cache["QH_em_back_out_kWh"][0] == pytest.approx(4.0)
+
+        calc = make(backup=False)
+        calc._precompute_emission_timeseries(df)
+        assert calc._emission_ts_cache["QH_em_i_in"][0] == pytest.approx(1.0)
+        assert calc._emission_ts_cache["QH_em_unmet_kWh"][0] == pytest.approx(4.0)
+
+
+def test_emission_inc_shift_and_method_validation():
+    """Set points move by the EN 15316-2 equivalent increase (eq. 16); unknown methods are rejected."""
+    import pybuildingenergy as pybui
+    from pybuildingenergy.source.composer import _shift_setpoints, demo_building
+
+    shifted = _shift_setpoints(demo_building(), 1.5, -2.0)
+    sp = shifted["building_parameters"]["temperature_setpoints"]
+    assert sp["heating_setpoint"] == pytest.approx(21.5)
+    assert sp["cooling_setpoint"] == pytest.approx(24.0)
+    with pytest.raises(ValueError):
+        pybui.simulate_emission_only({"building": {}}, emission_inc="exact")
+
+
+@pytest.mark.slow
+def test_emission_inc_approximate_is_notified():
+    """The approximation runs only on request and raises a notification; recalculation does not."""
+    import warnings
+    import pybuildingenergy as pybui
+    from pybuildingenergy.source.composer import demo_building
+
+    config = {
+        "building": demo_building(),
+        "weather": {"source": "pvgis", "file": None},
+        "emission_system_config": {"demand_unit": "kWh", "heating": {"nominal_power_kW": 50.0}},
+    }
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        res = pybui.simulate_emission_only(config, emission_inc="approximate")
+    assert any("approximated" in str(x.message) for x in w)
+    assert res.emission_inc_method == "approximate"
+
+
+def test_fan_auxiliary_uses_effective_operating_time():
+    """EN 15316-2 eq. 14: fan energy uses the operation time t_h,rL, not the full hour."""
+    import pandas as pd
+    from pybuildingenergy.source.emission_15316_2 import EmissionSystemCalculator
+
+    cfg = {"demand_unit": "kWh", "heating": {"nominal_power_kW": 10.0, "fan_count": 4.0, "fan_power_W": 10.0}}
+    idx = pd.date_range("2009-01-15 01:00", periods=1, freq="h")
+    base = {"T_ext": 0.0, "T_op": 20.0, "Q_H_kWh": 1.0, "Q_C_kWh": 0.0, "time_step_hours": 1.0}
+
+    # load factor 0.1 on a 10 kW emitter -> about 0.1 h of fan operation
+    row = EmissionSystemCalculator(cfg).run_timeseries(pd.DataFrame([base], index=idx)).timeseries.iloc[0]
+    assert row["W_H_em_fan_aux_kWh"] == pytest.approx(4 * 10 * 0.1 / 1000.0, rel=1e-3)
+
+    # explicit operation time overrides the estimate
+    row = EmissionSystemCalculator(cfg).run_timeseries(pd.DataFrame([dict(base, t_h_rl=0.5)], index=idx)).timeseries.iloc[0]
+    assert row["W_H_em_fan_aux_kWh"] == pytest.approx(4 * 10 * 0.5 / 1000.0)
+
+
+def test_standalone_emission_fallback_is_notified():
+    """Without Q_*_em_out_inc the standalone calculator uses the temperature-ratio fallback
+    and must say so; with the modified-set-point output supplied it must stay silent."""
+    import warnings
+    import pandas as pd
+    from pybuildingenergy.source.emission_15316_2 import EmissionSystemCalculator
+
+    idx = pd.date_range("2009-01-15 01:00", periods=1, freq="h")
+    base = {"T_ext": 0.0, "T_op": 20.0, "Q_H_kWh": 1.0, "Q_C_kWh": 0.0, "time_step_hours": 1.0}
+    cfg = {"demand_unit": "kWh", "heating": {"stratification_K": 0.5, "nominal_power_kW": 50.0}}
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        EmissionSystemCalculator(cfg).run_timeseries(pd.DataFrame([base], index=idx))
+    assert any("temperature ratios" in str(x.message) for x in w)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        EmissionSystemCalculator(cfg).run_timeseries(pd.DataFrame([dict(base, Q_H_em_out_inc_kWh=1.04)], index=idx))
+    assert not any("temperature ratios" in str(x.message) for x in w)
+
+
+def test_compute_step_exposes_backup_and_unmet_emission_energy():
+    """The per-step output of the heating-system calculator reports the emission backup
+    and the unmet load explicitly, not only through the demand passed downstream."""
+    import warnings
+    from pybuildingenergy.source.iso_15316_1 import HeatingSystemCalculator
+
+    def make(backup):
+        emm = {"nominal_power_kW": 1.0}
+        if backup:
+            emm["backup_available"] = True
+        return HeatingSystemCalculator({
+            "emitter_type": "Floor heating", "nominal_power": 1.0, "emission_efficiency": 90.0,
+            "selected_emm_cont_circuit": 0, "mixing_valve": False,
+            "flow_temp_control_type": "Type 3 - Constant temperature", "constant_flow_temp": [42.0],
+            "generator_circuit": "independent", "gen_flow_temp_control_type": "Type B",
+            "emission_calculation_mode": "en15316-2",
+            "emission_15316_2_config": {"demand_unit": "kWh", "heating": emm},
+        })
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        out = make(backup=True).compute_step(5.0, 20.0, 0.0)
+        assert out["QH_em_back_out(kWh)"] == pytest.approx(4.0)
+        assert out["QH_em_unmet(kWh)"] == pytest.approx(0.0)
+        step = make(backup=True)._calculate_emission_step(5.0, 20.0, 0.0)
+        assert step["ΦH_em_eff"] == pytest.approx(5.0)
+        out = make(backup=False).compute_step(5.0, 20.0, 0.0)
+        assert out["QH_em_back_out(kWh)"] == pytest.approx(0.0)
+        assert out["QH_em_unmet(kWh)"] == pytest.approx(4.0)
+
+
+@pytest.mark.slow
 def test_iso52016_calculation(building_data, output_dir):
     """Test per il calcolo ISO52016 (può richiedere tempo)"""
     import pybuildingenergy as pybui

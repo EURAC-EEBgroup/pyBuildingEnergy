@@ -270,7 +270,11 @@ class HeatingSystemCalculator:
         self._emission_ts_cache = {
             'q_h_em_out_kWh':     ts['Q_H_em_out_kWh'].to_numpy(dtype=float),
             'theta_H_int_inc_C':  ts['theta_H_int_inc_C'].to_numpy(dtype=float),
-            'QH_em_i_in':         ts['Q_H_em_in_kWh'].to_numpy(dtype=float),
+            # EN 15316-1 eq. 16: backup energy is supplied through the same heating system;
+            # the backup emitter input is taken equal to its output (no backup losses modelled).
+            'QH_em_i_in':         (ts['Q_H_em_in_kWh'] + ts['Q_H_em_back_out_kWh']).to_numpy(dtype=float),
+            'QH_em_back_out_kWh': ts['Q_H_em_back_out_kWh'].to_numpy(dtype=float),
+            'QH_em_unmet_kWh':    ts['Q_H_em_unmet_kWh'].to_numpy(dtype=float),
             'W_H_em_aux_kWh':     ts['W_H_em_aux_kWh'].to_numpy(dtype=float),
             'QH_em_ls_kWh':       ts['Q_H_em_ls_kWh'].to_numpy(dtype=float),
             'q_h_em_out_inc_kWh': ts['Q_H_em_out_inc_kWh'].to_numpy(dtype=float),
@@ -301,6 +305,8 @@ class HeatingSystemCalculator:
                 'ΦH_em_eff': float(common['ΦH_em_eff']),
                 'W_H_em_aux_kWh': 0.0,
                 'QH_em_ls_kWh': max(qh_in - float(q_h_kWh), 0.0),
+                'QH_em_back_out_kWh': 0.0,
+                'QH_em_unmet_kWh': 0.0,
                 'q_h_em_out_inc_kWh': float(q_h_kWh),
                 'theta_H_int_inc_K': 0.0,
                 'fH_em_conv': np.nan,
@@ -316,6 +322,8 @@ class HeatingSystemCalculator:
                     'q_h_em_out_kWh':     float(cache['q_h_em_out_kWh'][pos]),
                     'θint_eff':           float(cache['theta_H_int_inc_C'][pos]),
                     'QH_em_i_in':         qh_in,
+                    'QH_em_back_out_kWh': float(cache['QH_em_back_out_kWh'][pos]),
+                    'QH_em_unmet_kWh':    float(cache['QH_em_unmet_kWh'][pos]),
                     'ΦH_em_eff':          qh_in / max(ts_h, 1e-9),
                     'W_H_em_aux_kWh':     float(cache['W_H_em_aux_kWh'][pos]),
                     'QH_em_ls_kWh':       float(cache['QH_em_ls_kWh'][pos]),
@@ -338,11 +346,14 @@ class HeatingSystemCalculator:
         result = emission_calc.run_timeseries(emission_input)
         row = result.timeseries.iloc[0]
         summary = result.summary
+        qh_in_total = float(summary.get('QH_em_in_kWh', q_h_kWh)) + float(summary.get('QH_em_back_out_kWh', 0.0))
         return {
             'q_h_em_out_kWh': float(row.get('Q_H_em_out_kWh', q_h_kWh)),
             'θint_eff': float(row.get('theta_H_int_inc_C', θint + summary.get('theta_H_int_inc_K', 0.0))),
-            'QH_em_i_in': float(summary.get('QH_em_in_kWh', q_h_kWh)),
-            'ΦH_em_eff': float(summary.get('QH_em_in_kWh', q_h_kWh) / max(time_step_hours, 1e-9)),
+            'QH_em_i_in': qh_in_total,
+            'QH_em_back_out_kWh': float(summary.get('QH_em_back_out_kWh', 0.0)),
+            'QH_em_unmet_kWh': float(summary.get('QH_em_unmet_kWh', 0.0)),
+            'ΦH_em_eff': qh_in_total / max(time_step_hours, 1e-9),
             'W_H_em_aux_kWh': float(summary.get('WH_em_aux_kWh', 0.0)),
             'QH_em_ls_kWh': float(summary.get('QH_em_ls_kWh', 0.0)),
             'q_h_em_out_inc_kWh': float(summary.get('QH_em_out_inc_kWh', q_h_kWh)),
@@ -1689,6 +1700,8 @@ class HeatingSystemCalculator:
             'V_H_dis(m3/h)': dist['V_H_dis'],
             'QH_em_i_in(kWh)': q_h_em_in,
             'QH_em_ls(kWh)': em_step['QH_em_ls_kWh'],
+            'QH_em_back_out(kWh)': float(em_step.get('QH_em_back_out_kWh', 0.0)),
+            'QH_em_unmet(kWh)': float(em_step.get('QH_em_unmet_kWh', 0.0)),
             'W_H_em_aux(kWh)': em_step['W_H_em_aux_kWh'],
             'theta_H_int_inc_K': em_step['theta_H_int_inc_K'],
             'emission_calculation_mode': self.emission_calculation_mode,

@@ -154,6 +154,75 @@ EN 15316-2 describes the emission subsystem, namely the transition from the usef
 
 In the model, the emission subsystem is the connection point between the zone load and distribution. Here the thermal need is corrected by accounting for stratification, control, radiation, hydraulic balancing, room automation and, when required, intermittent operation effects.
 
+### How to Load the Emission System (JSON, schema `pybuildingenergy-system-config-v2`)
+
+The emission system is declared in the `systems.emission` block of a v2 document:
+
+```json
+"systems": {
+  "emission": {
+    "enabled": true,
+    "emitter_type": "Radiator",
+    "nominal_power_kW": 41.0,
+    "config": {
+      "demand_unit": "kWh",
+      "heating": { "stratification_K": 1.2, "control_K": 1.2, "radiation_K": 0.0,
+                   "hydraulic_balancing_K": 0.0, "room_automation_K": -0.5,
+                   "embedded_K": 0.0, "nominal_power_kW": 41.0,
+                   "fan_power_W": 0.0, "fan_count": 0, "control_power_W": 0.0, "control_count": 0,
+                   "convective_fraction": 0.70 },
+      "cooling":  { "...same keys, cooling sign convention..." }
+    }
+  }
+}
+```
+
+Rules:
+
+- `enabled` must be `true`: the emission system is the interface between the zone load and the HVAC system, so it cannot be disabled.
+- `config` is the EN 15316-2 configuration. `heating` and `cooling` are both required blocks; a system without cooling uses zeros and `nominal_power_kW: 0`.
+- `nominal_power_kW` at the top level of the block is optional; if absent, `config.heating.nominal_power_kW` is used.
+- If only `systems.emission` is enabled, the document is an emission-only simulation: `simulate_config(config)` runs ISO 52016 for the building and then EN 15316-2 for the emitter. If distribution, DHW, PV or AHU are also enabled, `systems.generation` must be enabled too.
+- The document can be loaded with `pybuildingenergy.load_config(path)` and simulated with `pybuildingenergy.simulate_config(config)`.
+
+**Variables of `config.heating` and `config.cooling`** (same keys for both blocks):
+
+| Key | Unit | Meaning (EN 15316-2) | Sign / typical value |
+|---|---|---|---|
+| `stratification_K` | K | Δθstr, spatial temperature variation | heating positive (Annex B, e.g. radiators 1.2 K); cooling negative |
+| `control_K` | K | Δθctr, control variation (use Δθctr,1 for uncertified, Δθctr,2 for certified products) | heating positive (PI controller, uncertified: 1.2 K for radiators); cooling negative |
+| `radiation_K` | K | Δθrad, radiation effect of the emitter (product value, EN 442) | 0 unless the product value is known |
+| `hydraulic_balancing_K` | K | Δθhydr, hydraulic imbalance | 0 when balanced; positive otherwise; cooling negative |
+| `room_automation_K` | K | Δθroomaut, room automation | negative (stand-alone: −0.5 K) |
+| `embedded_K` | K | Δθemb, embedded emitters (not part of the temperature sum) | 0 for radiators; cooling negative (Table B.11) |
+| `nominal_power_kW` | kW | design useful output per hour; caps Q_em,out,inc | positive |
+| `fan_count`, `fan_power_W` | –, W | fans for auxiliary energy (eq. 14) | 0 for radiators |
+| `control_count`, `control_power_W` | –, W | control devices; included only with `electric_control_aux: true` | 0 for mechanical TRV |
+| `electric_control_aux` | bool | the control devices are electrical with auxiliary energy (Table A.12) | `false` by default |
+| `convective_fraction` | – | f_em,conv (Table B.17) | radiators 0.70; floor heating 0.50; fan coils 0.95 |
+| `backup_available` | bool | a backup or supplementary system covers the emitter deficit (eq. 16) | `false` by default |
+| `undersize_tolerance` | – | relative deficit above which the undersizing warning is raised without backup | 0.05 by default |
+| `notify_inc_fallback` | bool | warn when Q_em,out,inc is estimated by temperature ratios | `true` by default |
+
+The equivalent internal temperature is `θ_int,inc = θ_int,ini + SUM(delta)` with `delta = stratification + control + radiation + hydraulic balancing + room automation` (EN 15316-2 eq. 16-17). The standard is not fully consistent on the cooling sign; see the note in the Readme.
+
+**Time-series inputs** (for the `EmissionSystemCalculator` used directly, or passed by `simulate_config`):
+
+| Column | Unit | Required | Note |
+|---|---|---|---|
+| `T_ext` | °C | yes | outdoor temperature |
+| `T_op` (or `T_H_int_ini_C`, `T_C_int_ini_C`) | °C | yes | operative temperature of the zone |
+| `Q_H_kWh`, `Q_C_kWh` | kWh per step | yes | building need (ISO 52016) |
+| `time_step_hours` | h | yes | time step |
+| `Q_H_em_out_inc_kWh`, `Q_C_em_out_inc_kWh` | kWh per step | recommended | output at the modified set point, recalculated with ISO 52016 (the default path does it); if absent, a temperature-ratio estimate is used and notified |
+| `t_h_rl` | h per step | recommended | operation time of the emitter from the EN 15316-1 schedule; if absent, estimated from the load factor |
+
+**Main outputs** (per step and as annual summary): `Q_*_em_out_kWh` (expected output), `Q_*_em_out_inc_kWh`, `Q_*_em_temp_effect_kWh`, `Q_*_emb_ls_kWh`, `Q_*_em_ls_kWh` (EN 15316-2 eq. 22, signed), `Q_*_em_in_kWh` (eq. 23), `W_*_em_aux_kWh`, `theta_*_int_inc_C`, `Q_*_em_back_out_kWh` (backup, eq. 16) and `Q_*_em_unmet_kWh` (uncovered load).
+
+**Options of the emission-only document** (top-level `options`): `emission_inc_method` = `"recalculate"` (default, ISO 52016 at the equivalent set point) or `"approximate"` (faster, approximate, notified).
+
+**Radiator example.** The Poland case file includes a radiator alternative in `emission_alternatives.radiators_b2`, with values taken from EN 15316-2 Annex B: supply 70/55 °C (over-temperature 42.5 K, Δθstr,1 = 0.7 K), radiator on an external wall without radiation protection (Δθstr,2 = 1.7 K, so Δθstr = 1.2 K), uncertified PI controller (Δθctr,1 = 1.2 K), stand-alone room automation (−0.5 K), Δθemb = 0, f_em,conv = 0.70. To use it, copy the block into `systems.emission`.
+
 ### Interface Parameters Used by `iso_15316_1.py`
 
 These are the inputs read directly by the `HeatingSystemCalculator`.
@@ -224,19 +293,19 @@ The aliases `iso_15316_2`, `15316_2` and `en15316_2` are automatically normalize
 
 ### Parameters of the `heating` Section
 
-The `heating` section collects the equivalent contributions that increase the indoor temperature seen by the terminal.
+The `heating` section collects the equivalent contributions to the indoor temperature seen by the terminal. The implementation uses the hourly procedure of EN 15316-2 (eq. 16-17): `theta_int,inc = theta_int,ini + SUM(delta)`, where `SUM(delta)` is the sum of `stratification_K`, `control_K`, `radiation_K`, `hydraulic_balancing_K` and `room_automation_K`. The values are entered with the sign tabulated in the standard: stratification, control, radiation and hydraulic balancing are typically positive (increase of the temperature seen by the terminal); room automation is typically negative (reduction).
 
-`stratification_K: 0.0` is the equivalent contribution due to stratification, expressed in `K`. It must be greater than or equal to `0 K`. Typical values are small, often between `0` and `2 K`.
+`stratification_K: 0.0` is the equivalent contribution due to stratification, expressed in `K`. Typical values are small and positive, often between `0` and `2 K` (Annex B tables).
 
-`control_K: 0.0` is the equivalent contribution due to terminal control, expressed in `K`. The minimum value is also `0 K`.
+`control_K: 0.0` is the equivalent contribution due to terminal control, expressed in `K`. Typically positive (Annex B, tables B.2-B.4).
 
-`radiation_K: 0.0` is the equivalent contribution due to radiation, expressed in `K`. It must be greater than or equal to `0 K`.
+`radiation_K: 0.0` is the equivalent contribution due to radiation, expressed in `K`. Typically zero or positive, depending on the emitter type.
 
-`hydraulic_balancing_K: 0.0` is the equivalent contribution due to hydraulic balancing, expressed in `K`. It must be greater than or equal to `0 K`.
+`hydraulic_balancing_K: 0.0` is the equivalent contribution due to hydraulic balancing, expressed in `K`. Typically positive when the hydraulic system is not balanced, zero when it is.
 
-`room_automation_K: 0.0` is the equivalent contribution of room automation, expressed in `K`. It must be greater than or equal to `0 K`.
+`room_automation_K: 0.0` is the equivalent contribution of room automation, expressed in `K`. Typically negative (for example `-0.5 K` for stand-alone automation), because automation reduces the temperature increase.
 
-`embedded_K: 0.0` represents the thermal contribution of emitters embedded in the building structure, expressed in `K` as an equivalent effect on the calculation. It must be greater than or equal to `0 K`.
+`embedded_K: 0.0` is the temperature variation of embedded emitters (`Δθemb`), expressed in `K`. It is not part of the temperature sum: it enters only the embedded loss of EN 15316-2 eq. 20, `Q_emb,ls = Q_em,out,inc · Δθemb / (θ_int,inc − θe,comb)`, with the signed denominator. Heating values are positive; cooling values are negative (Table B.11).
 
 `nominal_power_kW: 8.0` is the nominal power of the heating branch, in `kW`. It must be positive and coherent with the upper-level `nominal_power`.
 
@@ -244,7 +313,7 @@ The `heating` section collects the equivalent contributions that increase the in
 
 `fan_count: 0` is the number of fans. It is an integer count, so the minimum is `0`.
 
-`control_power_W: 0.0` is the electrical power of the control devices, in `W`. The minimum allowed value is `0 W`.
+`control_power_W: 0.0` is the electrical power of the control devices, in `W`. The minimum allowed value is `0 W`. It is included in the auxiliary energy only when `electric_control_aux: true` (electrical control system with auxiliary energy, EN 15316-2 Table A.12); by default the auxiliary energy is the fans only (EN 15316-2 eq. 27-28).
 
 `control_count: 0` is the number of control devices. The minimum is `0`.
 
@@ -254,7 +323,7 @@ The `heating` section collects the equivalent contributions that increase the in
 
 The `cooling` section uses the same structure as the heating part, but with sign and thermal reference consistent with cooling.
 
-`stratification_K`, `control_K`, `radiation_K`, `hydraulic_balancing_K`, `room_automation_K` and `embedded_K` have the same units and limits as in the heating section: `K`, with a minimum value of `0`.
+The K parameters have the same units as in the heating section (`K`) and the sign convention of EN 15316-2 Table B.11: `stratification_K`, `control_K` and `hydraulic_balancing_K` are negative for cooling, `room_automation_K` is negative, and `embedded_K` is negative. The cooling equivalent temperature is `theta_C,int,inc = theta_C,int,ini + SUM(delta)`.
 
 `nominal_power_kW` has the same unit of measure as in the heating part, namely `kW`, and must be positive.
 

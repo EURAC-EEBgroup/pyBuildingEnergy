@@ -533,9 +533,9 @@
       "convective_fraction": 0.95
     },
     "cooling": {
-      "stratification_K": 0.4,
-      "control_K": 0.7,
-      "hydraulic_balancing_K": 0.1,
+      "stratification_K": -0.4,
+      "control_K": -0.7,
+      "hydraulic_balancing_K": -0.1,
       "room_automation_K": -0.5,
       "nominal_power_kW": 8.0,
       "fan_power_W": 10.0,
