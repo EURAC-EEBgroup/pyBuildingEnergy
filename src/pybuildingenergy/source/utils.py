@@ -4065,9 +4065,10 @@ class ISO52016:
             adjacent_zone,
         )
 
-        - Additive: area, thermal_capacity
+        - Additive: area
         - Area-weighted: u_value, g_value, sky_view_factor,
-                        h_conv/rad (int & ext), solar_absorptance
+                        h_conv/rad (int & ext), solar_absorptance,
+                        thermal_capacity (areal heat capacity [J/(m2 K)])
         - Non-aggregated fields: keep first reasonable 'name' with a suffix
         """
         if not isinstance(building_object, dict):
@@ -4098,7 +4099,7 @@ class ISO52016:
             "hceA": 0.0,          # convective ext * A
             "hreA": 0.0,          # radiative  ext * A
             "a_sol_A": 0.0,       # solar_absorptance * A
-            "thermal_capacity": 0.0,
+            "CthA": 0.0,          # thermal_capacity [J/(m2 K)] * A
             "ISO52016_type_string": None,
             "ISO52016_orientation_string": None,
             "width_sum": 0.0,
@@ -4158,7 +4159,7 @@ class ISO52016:
             b["hceA"] += hce * A
             b["hreA"] += hre * A
             b["a_sol_A"] += a_sol * A
-            b["thermal_capacity"] += Cth
+            b["CthA"] += Cth * A
             b["width_sum"] += width_
             b["height_sum"] += height_
             b["parapet_sum"] += parapet_
@@ -4198,7 +4199,7 @@ class ISO52016:
                 "u_value": b["uA"] / A,
                 "sky_view_factor": b["svfA"] / A,
                 "solar_absorptance": b["a_sol_A"] / A,
-                "thermal_capacity": b["thermal_capacity"],
+                "thermal_capacity": b["CthA"] / A,
                 "ISO52016_type_string": b["ISO52016_type_string"],
                 "ISO52016_orientation_string": b["ISO52016_orientation_string"],
                 # carry typical window fields if present (area-weighted g)
@@ -7643,7 +7644,8 @@ class ISO52016:
         if isinstance(building_object, dict):
             for _surf in building_object["building_surface"]:
                 if _surf.get("ISO52016_type_string") == "AD":
-                    C_int += float(_surf.get("thermal_capacity", 0.0))
+                    # thermal_capacity is areal [J/(m2 K)]; C_int is in J/K
+                    C_int += float(_surf.get("thermal_capacity", 0.0)) * float(_surf.get("area", 0.0))
 
         """
         CALCULATION OF SENSIBLE HEATING AND COOLING LOAD (following the procedure of poin 6.5.5.2 of UNI ISO 52016)
@@ -9181,7 +9183,8 @@ class ISO52016:
         if isinstance(building_object, dict):
             for _surf in building_object["building_surface"]:
                 if _surf.get("ISO52016_type_string") == "AD":
-                    C_int += float(_surf.get("thermal_capacity", 0.0))
+                    # thermal_capacity is areal [J/(m2 K)]; C_int is in J/K
+                    C_int += float(_surf.get("thermal_capacity", 0.0)) * float(_surf.get("area", 0.0))
 
         """
         CALCULATION OF SENSIBLE HEATING AND COOLING LOAD (following the procedure of poin 6.5.5.2 of UNI ISO 52016)
