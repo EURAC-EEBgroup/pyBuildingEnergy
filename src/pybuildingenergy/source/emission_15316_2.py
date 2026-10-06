@@ -22,6 +22,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import warnings
+
 import numpy as np
 import pandas as pd
 
@@ -87,7 +89,7 @@ class EmissionSystemCalculator:
     def equivalent_cooling_setpoint_C(self, setpoint_C: float) -> float:
         """Cooling setpoint modified by the EN 15316-2 equivalent temperature."""
 
-        return float(setpoint_C) - self.temperature_increase_K("C")
+        return float(setpoint_C) + self.temperature_increase_K("C")
 
     def _load_options(self) -> None:
         cfg = self.input_data
@@ -126,13 +128,6 @@ class EmissionSystemCalculator:
                 cfg.get("room_automation_K", cfg.get("roomaut_K", 0.0))
             ),
         }
-        if bool(cfg.get("include_intermittent_in_hourly", False)):
-            components["intermittent_control_K"] = float(
-                cfg.get("intermittent_control_K", cfg.get("im_ctr_K", 0.0))
-            )
-            components["intermittent_emitter_K"] = float(
-                cfg.get("intermittent_emitter_K", cfg.get("im_emt_K", 0.0))
-            )
 
         return {
             **components,
@@ -141,6 +136,10 @@ class EmissionSystemCalculator:
             "nominal_power_kW": float(cfg.get("nominal_power_kW", np.inf)),
             "fan_power_W": max(float(cfg.get("fan_power_W", 0.0)), 0.0),
             "fan_count": max(float(cfg.get("fan_count", cfg.get("n_fans", 0.0))), 0.0),
+            "electric_control_aux": bool(cfg.get("electric_control_aux", False)),
+            "backup_available": bool(cfg.get("backup_available", False)),
+            "notify_inc_fallback": bool(cfg.get("notify_inc_fallback", True)),
+            "undersize_tolerance": float(cfg.get("undersize_tolerance", 0.05)),
             "control_power_W": max(float(cfg.get("control_power_W", 0.0)), 0.0),
             "control_count": max(
                 float(cfg.get("control_count", cfg.get("n_controls", 0.0))), 0.0
@@ -204,6 +203,8 @@ class EmissionSystemCalculator:
 
         for col in ["Q_H_em_out_kWh", "Q_C_em_out_kWh"]:
             out.loc[:, col] = out[col].fillna(0.0).clip(lower=0.0)
+        if "t_h_rl" in df.columns:
+            out["t_h_rl"] = pd.to_numeric(df["t_h_rl"], errors="coerce").fillna(0.0).clip(lower=0.0)
         return out
 
     def _demand_from_columns(
@@ -238,18 +239,27 @@ class EmissionSystemCalculator:
         theta_ini = prepared[f"T_{prefix}_int_ini_C"].astype(float)
         delta = float(opts["temperature_increase_K"])
         emb = float(opts["embedded_K"])
-        theta_inc = theta_ini + delta if is_heating else theta_ini - delta
+        theta_inc = theta_ini + delta
         e_comb = prepared["T_ext_C"].astype(float)
         if not is_heating:
             e_comb = e_comb + self.cooling_solar_gain_temperature_C
 
-        denom_base = theta_ini - e_comb if is_heating else e_comb - theta_ini
-        denom_inc = theta_inc - e_comb if is_heating else e_comb - theta_inc
+        denom_base = theta_ini - e_comb
+        denom_inc = theta_inc - e_comb
         denom_base = denom_base.where(denom_base.abs() > _KWH_EPS, np.nan)
         denom_inc = denom_inc.where(denom_inc.abs() > _KWH_EPS, np.nan)
 
         q_inc_input = prepared[f"Q_{prefix}_em_out_inc_input_kWh"]
         q_inc_approx = q_out * (denom_inc / denom_base)
+        fallback_rows = q_inc_input.isna() & (q_out > _KWH_EPS)
+        if bool(fallback_rows.any()) and bool(opts["notify_inc_fallback"]):
+            warnings.warn(
+                f"EN 15316-2 {service}: Q_{prefix}_em_out_inc_kWh not supplied for {int(fallback_rows.sum())} "
+                "step(s); the emission output at the modified set point is estimated by temperature ratios "
+                "(engineering fallback, not the M2-2 recalculation required by the standard).",
+                UserWarning,
+                stacklevel=2,
+            )
         q_inc = q_inc_input.where(q_inc_input.notna(), q_inc_approx)
         q_inc = q_inc.replace([np.inf, -np.inf], np.nan).fillna(q_out).clip(lower=0.0)
 
@@ -257,18 +267,46 @@ class EmissionSystemCalculator:
         if np.isfinite(nominal_power) and nominal_power > 0:
             q_inc = np.minimum(q_inc, nominal_power * hours)
 
-        emb_denom = denom_inc.abs().where(denom_inc.abs() > _KWH_EPS, np.nan)
-        q_emb_ls = (q_inc * emb / emb_denom).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-        q_emb_ls = q_emb_ls.clip(lower=0.0)
+        # EN 15316-1 eq. 16: when the emitter cannot deliver the expected output,
+        # the difference is backup energy (or unmet load if no backup exists).
+        q_act = np.minimum(q_out, q_inc)
+        q_deficit = (q_out - q_act).clip(lower=0.0)
+        backup = bool(opts["backup_available"])
+        q_back = q_deficit if backup else q_deficit * 0.0
+        q_unmet = q_deficit * 0.0 if backup else q_deficit
+        undersized = (q_deficit > float(opts["undersize_tolerance"]) * q_out) & (q_out > _KWH_EPS)
+        if not backup and bool(undersized.any()):
+            warnings.warn(
+                f"EN 15316-2 {service}: emitter undersized in {int(undersized.sum())} hour(s); "
+                f"largest unmet load {float(q_deficit.max()):.3f} kWh with no backup or supplementary "
+                "system declared (backup_available=false).",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+        q_emb_ls = (q_inc * emb / denom_inc).replace([np.inf, -np.inf], np.nan).fillna(0.0)
         q_temp_effect = q_inc - q_out
         q_em_ls = q_temp_effect + q_emb_ls
-        q_em_in = (q_out + q_em_ls).clip(lower=0.0)
+        q_em_in = q_out + q_em_ls
 
-        operating_hours = hours.where(q_em_in > _KWH_EPS, 0.0)
+        # EN 15316-2 eq. 14: W_fan = n_fan * P_fan * t_h,rL / 1000, where t_h,rL is the
+        # operation time of the system in the period (EN 15316-1 operating time). If not given,
+        # the run time is estimated from the load factor (emitted energy / nominal power).
+        if "t_h_rl" in prepared.columns:
+            operating_hours = prepared["t_h_rl"].astype(float).clip(upper=hours)
+        elif np.isfinite(nominal_power) and nominal_power > 0:
+            capacity = (nominal_power * hours).replace(0.0, np.nan)
+            operating_hours = hours * (q_em_in / capacity).clip(lower=0.0, upper=1.0).fillna(0.0)
+        else:
+            operating_hours = hours
+        operating_hours = operating_hours.where(q_em_in > _KWH_EPS, 0.0)
         w_fan = opts["fan_count"] * opts["fan_power_W"] * operating_hours / 1000.0
-        w_control = (
-            opts["control_count"] * opts["control_power_W"] * operating_hours / 1000.0
-        )
+        if opts["electric_control_aux"]:
+            w_control = (
+                opts["control_count"] * opts["control_power_W"] * operating_hours / 1000.0
+            )
+        else:
+            w_control = pd.Series(0.0, index=prepared.index)
         w_aux = w_fan + w_control
 
         out = pd.DataFrame(index=prepared.index)
@@ -279,6 +317,8 @@ class EmissionSystemCalculator:
         out[f"Q_{prefix}_em_temp_effect_kWh"] = q_temp_effect
         out[f"Q_{prefix}_emb_ls_kWh"] = q_emb_ls
         out[f"Q_{prefix}_em_ls_kWh"] = q_em_ls
+        out[f"Q_{prefix}_em_back_out_kWh"] = q_back
+        out[f"Q_{prefix}_em_unmet_kWh"] = q_unmet
         out[f"Q_{prefix}_em_in_kWh"] = q_em_in
         out[f"W_{prefix}_em_fan_aux_kWh"] = w_fan
         out[f"W_{prefix}_em_control_aux_kWh"] = w_control
@@ -321,6 +361,8 @@ class EmissionSystemCalculator:
             ),
             "fH_em_conv": float(self.services["H"]["convective_fraction"]),
             "e_H_em_ls_an": _ratio(q_h_out + q_h_ls, q_h_out),
+            "QH_em_back_out_kWh": s("Q_H_em_back_out_kWh"),
+            "QH_em_unmet_kWh": s("Q_H_em_unmet_kWh"),
             "QC_em_out_kWh": q_c_out,
             "QC_em_out_inc_kWh": s("Q_C_em_out_inc_kWh"),
             "QC_em_temp_effect_kWh": s("Q_C_em_temp_effect_kWh"),
@@ -334,6 +376,8 @@ class EmissionSystemCalculator:
             ),
             "fC_em_conv": float(self.services["C"]["convective_fraction"]),
             "e_C_em_ls_an": _ratio(q_c_out + q_c_ls, q_c_out),
+            "QC_em_back_out_kWh": s("Q_C_em_back_out_kWh"),
+            "QC_em_unmet_kWh": s("Q_C_em_unmet_kWh"),
             "W_em_aux_kWh": s("W_H_em_aux_kWh") + s("W_C_em_aux_kWh"),
             "Q_em_ls_kWh": q_h_ls + q_c_ls,
         }

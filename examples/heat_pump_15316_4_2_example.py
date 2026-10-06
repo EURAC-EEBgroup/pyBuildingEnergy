@@ -1175,10 +1175,10 @@ def emission_system_config(scenario: str = "athens") -> dict:
             "convective_fraction": 0.95,
         },
         "cooling": {
-            "stratification_K": 0.40,
-            "control_K": 0.70,
+            "stratification_K": -0.40,
+            "control_K": -0.70,
             "radiation_K": 0.0,
-            "hydraulic_balancing_K": 0.10,
+            "hydraulic_balancing_K": -0.10,
             "room_automation_K": -0.50,
             "embedded_K": 0.0,
             "nominal_power_kW": 8.0,
@@ -1213,7 +1213,7 @@ def building_with_emission_setpoints(
             setpoints[key] = float(setpoints[key]) + h_delta
     for key in ["cooling_setpoint", "cooling_setback"]:
         if key in setpoints:
-            setpoints[key] = float(setpoints[key]) - c_delta
+            setpoints[key] = float(setpoints[key]) + c_delta
 
     return adjusted
 

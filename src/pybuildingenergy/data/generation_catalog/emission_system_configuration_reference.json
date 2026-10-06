@@ -19,7 +19,7 @@
     ],
     "notes": [
       "Every key is optional (cfg.get with a default) unless marked required.",
-      "The code does not enforce the '>= 0' limits stated in examples/new_building_input_en.md for the K contributions: only fan_power_W/control_power_W/fan_count/control_count are clipped at 0 and convective_fraction at [0, 1]. Negative K values are legitimate (the repo's fan-coil example uses room_automation_K = -0.5)."
+      "The K contributions are signed as in EN 15316-2 (Table B.11): no lower bound is enforced on them. Only fan_power_W/control_power_W/fan_count/control_count are clipped at 0 and convective_fraction at [0, 1]. Negative values are expected for room_automation_K and for all cooling K contributions."
     ]
   },
 
@@ -125,28 +125,28 @@
     },
     "per_service_blocks": {
       "_blocks": ["heating", "cooling"],
-      "_note": "Both blocks share the same keys. The temperature increase applied is the SUM of the five effects (plus the two intermittent effects when enabled); embedded_K is NOT part of that sum.",
+      "_note": "Both blocks share the same keys. The temperature increase applied is the SUM of the five effects; embedded_K is NOT part of that sum. Sign convention as in EN 15316-2 eq. 16: theta_int,inc = theta_int,ini + SUM(delta); for cooling the stratification/control/hydraulic values are NEGATIVE (Table B.11), room automation is negative in both modes.",
       "stratification_K": { "type": "number", "default": 0.0, "unit": "K", "aliases": ["str_K"], "description": "Vertical temperature stratification effect." },
       "control_K": { "type": "number", "default": 0.0, "unit": "K", "aliases": ["ctr_K"], "description": "Room temperature control (emitter control accuracy)." },
       "radiation_K": { "type": "number", "default": 0.0, "unit": "K", "aliases": ["rad_K"], "description": "Radiant asymmetry / radiation effect." },
       "hydraulic_balancing_K": { "type": "number", "default": 0.0, "unit": "K", "aliases": ["hydr_K"], "description": "Hydraulic balancing effect." },
       "room_automation_K": { "type": "number", "default": 0.0, "unit": "K", "aliases": ["roomaut_K"], "description": "Room automation effect (negative values reduce the increase)." },
-      "include_intermittent_in_hourly": { "type": "boolean", "default": false, "description": "true adds intermittent_control_K and intermittent_emitter_K to the temperature increase." },
-      "intermittent_control_K": { "type": "number", "default": 0.0, "unit": "K", "aliases": ["im_ctr_K"], "used_when": "include_intermittent_in_hourly" },
-      "intermittent_emitter_K": { "type": "number", "default": 0.0, "unit": "K", "aliases": ["im_emt_K"], "used_when": "include_intermittent_in_hourly" },
-      "embedded_K": { "type": "number", "default": 0.0, "unit": "K", "aliases": ["emb_K"], "description": "Embedded-emitter losses (floor/ceiling/wall panels): Q_emb_ls = Q_inc * embedded_K / |delta-T between equivalent internal and external temperature|." },
+      "embedded_K": { "type": "number", "default": 0.0, "unit": "K", "aliases": ["emb_K"], "description": "Embedded-emitter temperature variation (EN 15316-2 eq. 20): Q_emb_ls = Q_inc * embedded_K / (theta_int,inc - theta_e,comb), signed denominator; heating values positive, cooling values negative (Table B.11). Not part of the temperature sum." },
       "nominal_power_kW": { "type": "number", "default": "infinity (no cap)", "unit": "kW", "description": "Caps the recalculated output at nominal_power_kW * hours." },
       "fan_power_W": { "type": "number", "default": 0.0, "unit": "W", "constraint": ">= 0 (clipped)", "description": "Power of ONE fan." },
       "fan_count": { "type": "number", "default": 0.0, "aliases": ["n_fans"], "constraint": ">= 0 (clipped)" },
       "control_power_W": { "type": "number", "default": 0.0, "unit": "W", "constraint": ">= 0 (clipped)", "description": "Power of ONE control device." },
       "control_count": { "type": "number", "default": 0.0, "aliases": ["n_controls"], "constraint": ">= 0 (clipped)" },
+      "backup_available": { "type": "boolean", "default": false, "description": "true when a backup or other supplementary system covers any emitter deficit (EN 15316-1 eq. 16). False: the deficit is reported as unmet load and a warning is raised when it exceeds undersize_tolerance." },
+      "undersize_tolerance": { "type": "number", "default": 0.05, "unit": "fraction", "description": "Relative deficit (of the expected emission output) above which the undersizing warning is raised when no backup is declared." },
+      "electric_control_aux": { "type": "boolean", "default": false, "description": "true only for electrical control systems with auxiliary energy (EN 15316-2 Table A.12). Default false: auxiliary energy is the fans only (eq. 27-28)." },
       "convective_fraction": { "type": "fraction", "default": 0.7, "aliases": ["f_em_conv"], "description": "Convective share of the emission; reported as fH_em_conv / fC_em_conv." }
     },
     "calculation": [
-      "delta = sum of the K effects; heating: T_inc = T_int_ini + delta ; cooling: T_inc = T_int_ini - delta",
+      "delta = sum of the K effects; heating and cooling: T_inc = T_int_ini + delta (cooling deltas are negative, Table B.11)",
       "Q_out_inc = Q_out * (T_inc - T_ext_comb) / (T_int_ini - T_ext_comb)  (or the user-supplied Q_*_em_out_inc_kWh column)",
       "Q_em_ls = (Q_out_inc - Q_out) + Q_emb_ls ; Q_em_in = Q_out + Q_em_ls",
-      "W_aux = (fan_count * fan_power_W + control_count * control_power_W) * operating_hours / 1000"
+      "W_aux = fan_count * fan_power_W * operating_hours / 1000 (EN 15316-2 eq. 27-28); control_count * control_power_W is added only when electric_control_aux = true (Table A.12 case: electrical control system with auxiliary energy)"
     ],
     "timeseries_input": {
       "outdoor_temperature": { "required": true, "columns": ["T_ext", "theta_ext", "outdoor_temperature_C", "T_external_C"] },
@@ -245,21 +245,7 @@
           "demand_unit": "kWh",
           "cooling_solar_gain_temperature_C": 8.0,
           "heating": { "stratification_K": 0.35, "control_K": 0.70, "radiation_K": 0.0, "hydraulic_balancing_K": 0.10, "room_automation_K": -0.50, "embedded_K": 0.0, "nominal_power_kW": 10.0, "fan_power_W": 10.0, "fan_count": 4.0, "control_power_W": 0.1, "control_count": 4.0, "convective_fraction": 0.95 },
-          "cooling": { "stratification_K": 0.40, "control_K": 0.70, "radiation_K": 0.0, "hydraulic_balancing_K": 0.10, "room_automation_K": -0.50, "embedded_K": 0.0, "nominal_power_kW": 8.0, "fan_power_W": 10.0, "fan_count": 4.0, "control_power_W": 0.1, "control_count": 4.0, "convective_fraction": 0.95 }
-        }
-      }
-    },
-
-    "radiator_en15316_2_with_intermittent_effects": {
-      "description": "Radiators with intermittent-operation effects enabled. K values are ILLUSTRATIVE placeholders to show the keys, not standard values.",
-      "hvac_emission_keys": {
-        "emitter_type": "Radiator",
-        "nominal_power": 10.0,
-        "flow_temp_control_type": "Type 2 - Based on outdoor temperature",
-        "selected_emm_cont_circuit": 1,
-        "emission_calculation_mode": "en15316-2",
-        "emission_15316_2_config": {
-          "heating": { "stratification_K": 0.5, "control_K": 0.3, "radiation_K": 0.2, "hydraulic_balancing_K": 0.1, "room_automation_K": 0.0, "include_intermittent_in_hourly": true, "intermittent_control_K": 0.2, "intermittent_emitter_K": 0.1, "embedded_K": 0.0, "nominal_power_kW": 10.0, "convective_fraction": 0.6 }
+          "cooling": { "stratification_K": -0.40, "control_K": -0.70, "radiation_K": 0.0, "hydraulic_balancing_K": -0.10, "room_automation_K": -0.50, "embedded_K": 0.0, "nominal_power_kW": 8.0, "fan_power_W": 10.0, "fan_count": 4.0, "control_power_W": 0.1, "control_count": 4.0, "convective_fraction": 0.95 }
         }
       }
     },
@@ -269,7 +255,7 @@
       "emission_system_config": {
         "demand_unit": "kWh",
         "heating": { "stratification_K": 0.35, "control_K": 0.70, "hydraulic_balancing_K": 0.10, "room_automation_K": -0.50, "nominal_power_kW": 10.0, "fan_power_W": 10.0, "fan_count": 4.0, "control_power_W": 0.1, "control_count": 4.0, "convective_fraction": 0.95 },
-        "cooling": { "stratification_K": 0.40, "control_K": 0.70, "hydraulic_balancing_K": 0.10, "room_automation_K": -0.50, "nominal_power_kW": 8.0, "fan_power_W": 10.0, "fan_count": 4.0, "control_power_W": 0.1, "control_count": 4.0, "convective_fraction": 0.95 }
+        "cooling": { "stratification_K": -0.40, "control_K": -0.70, "hydraulic_balancing_K": -0.10, "room_automation_K": -0.50, "nominal_power_kW": 8.0, "fan_power_W": 10.0, "fan_count": 4.0, "control_power_W": 0.1, "control_count": 4.0, "convective_fraction": 0.95 }
       }
     }
   }

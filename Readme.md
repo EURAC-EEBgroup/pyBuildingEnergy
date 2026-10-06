@@ -69,6 +69,44 @@ losses, emission auxiliary electricity and annual emission expenditure factors.
 For an audit trail between the standard, code and output files, open
 [Emission EN 15316-2 Implementation Audit](docs/emission_15316_2_audit.html).
 
+**Auxiliary energy.** By default the emission auxiliary energy is the fans only
+(EN 15316-2 eq. 27-28). Control-device power (`control_power_W`, `control_count`) is
+included only when the system is an electrical control system with auxiliary energy
+(Table A.12), by setting `electric_control_aux: true`.
+
+**Undersized emitters (EN 15316-1 eq. 16).** If the emitter cannot deliver the expected
+output, the deficit is backup energy when `backup_available: true` (`Q_*_em_back_out_kWh`).
+Otherwise it is reported as unmet load (`Q_*_em_unmet_kWh`) and a warning is raised when it
+exceeds `undersize_tolerance` (default 5 % of the expected output).
+With `backup_available: true` the backup energy is added to the heating-system demand passed to
+distribution and generation (backup input taken equal to its output; backup losses not modelled).
+In undersized hours the literal EN 15316-2 eq. 22 gives a negative `Q_*_em_ls` (the capped
+emitter output is below the expected output); the energy identities eq. 22-23 are kept as written.
+
+**Emission output at the modified set point.** `simulate_config` (emission-only path) recalculates
+the building need with ISO 52016 at the equivalent set points, as EN 15316-2 requires. Set
+`options.emission_inc_method: "approximate"` to use the temperature-ratio approximation instead:
+it is faster (about half the time, since ISO 52016 runs once) but the results are approximate,
+and a notification is raised. The difference is material for cooling (the example gives about
+790 kWh with recalculation and 401 kWh with the approximation). The standalone
+`EmissionSystemCalculator` has no building, so it can only use the approximation unless
+`Q_*_em_out_inc_kWh` is supplied.
+
+**Fan auxiliary energy (EN 15316-2 eq. 14).** `W_fan = n_fan · P_fan · t_h,rL / 1000`. Provide the
+system operation time per step as `t_h_rl` (hours, from the EN 15316-1 operating schedule). If it is
+not given, the run time is estimated as the load factor (emitted energy / nominal power) times the
+time step, instead of assuming the fan runs the full hour whenever there is output.
+
+**Sign convention for cooling (note on the standard).** The implementation
+uses `theta_int,inc = theta_int,ini + SUM(delta)` for both heating and cooling,
+as in the hourly procedure (EN 15316-2:2017, eq. 16-17), with cooling deltas
+entered as negative values (Table B.11). The standard is not fully consistent
+on this point: the general description (section 5.2, eq. 1a/1b) gives
+`theta_C,int,inc = theta_C,int,ini - delta`. With the negative Table B.11
+values the two formulas give opposite results, so the cooling sign should be
+checked against the national annex or the standard's clarification before
+using cooling results for compliance.
+
 ## Water-Based Distribution Systems - EN 15316-3 **(New)**
 
 `DistributionSystemCalculator` evaluates water-based distribution systems for
