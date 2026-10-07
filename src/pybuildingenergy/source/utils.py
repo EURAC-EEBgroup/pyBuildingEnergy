@@ -3968,8 +3968,8 @@ class ISO52016:
         orientation_name = str(labels[int(np.argmin(diffs))])
 
         # --- Step 2: Extract arrays
-        areas = adj_zone["area_facade_elements"].astype(float)
-        U_values = adj_zone["transmittance_U_elements"].astype(float)
+        areas = np.asarray(adj_zone["area_facade_elements"], dtype=float)
+        U_values = np.asarray(adj_zone["transmittance_U_elements"], dtype=float)
         orientations = np.asarray(adj_zone["orientation_elements"], dtype=object)
 
         # --- Step 3: Boolean masks
@@ -7798,6 +7798,8 @@ class ISO52016:
         _report_q_storage_all: list[float] = []
         _report_q_tb_all: list[float] = []
         _report_q_ground_all: list[float] = []
+        _report_q_adj_all: list[float] = []
+        _report_theta_ztu_all: list = []
         _report_q_tr_total_all: list[float] = []
         _report_q_tr_opaque_all: list[float] = []
         _report_q_tr_window_all: list[float] = []
@@ -8551,6 +8553,20 @@ class ISO52016:
                             q_tr_window += q_cond
                         q_tr_by_surface[surface_report_cols[Eli]] = q_cond
 
+                    q_adj_total = 0.0
+                    for Eli in range(bui_eln):
+                        if surface_types[Eli] != "ADJ" or nodes.Pln[Eli] == 0:  continue
+                        T_surf_int = float(VecB[nodes.PlnSum[Eli] + nodes.Pln[Eli], colB_act])
+                        A   = float(area_elements[Eli])
+                        hci = float(heat_convective_elements_internal[Eli])
+                        hri = float(heat_radiative_elements_internal[Eli])
+                        q_cond = A * (hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int) + q_rad_per_area)
+                        if   q_cond > 0: E_trans_loss_by_surface_Wh[surface_names[Eli]] += q_cond * dt_h
+                        elif q_cond < 0: E_solar_Wh += (-q_cond) * dt_h
+                        q_adj_total += q_cond
+                    _report_q_adj_all.append(q_adj_total)
+                    if building_object['building']['adj_zones_present']:
+                        _report_theta_ztu_all.append(np.atleast_1d(theta_ztu[Tstepi]).copy())
                     _report_q_solar_gains_all.append(phi_solar)
                     _report_q_internal_gains_all.append(phi_int)
                     _report_q_storage_all.append(q_storage)
@@ -8684,6 +8700,15 @@ class ISO52016:
         hourly_results["Q_tr_window"] = np.asarray(_report_q_tr_window_all, dtype=float)
         hourly_results["Q_tb"] = np.asarray(_report_q_tb_all, dtype=float)
         hourly_results["Q_ground"] = np.asarray(_report_q_ground_all, dtype=float)
+        hourly_results["Q_adj"] = np.asarray(_report_q_adj_all, dtype=float)
+        if _report_theta_ztu_all:
+            _theta_ztu_arr = np.vstack(_report_theta_ztu_all)
+            _ztu_names = H_ztu_zones_df.columns.tolist()
+            if len(_ztu_names) == 1:
+                hourly_results["theta_ztu"] = _theta_ztu_arr[:, 0]
+            else:
+                for _j, _name in enumerate(_ztu_names):
+                    hourly_results[f"theta_ztu_{_name}"] = _theta_ztu_arr[:, _j]
         for _surface_col, _surface_values in _report_q_tr_surface_all.items():
             hourly_results[_surface_col] = np.asarray(_surface_values, dtype=float)
         _ve_stream_cols, _ve_stream_q_cols = _ventilation_stream_diag_to_columns(
@@ -9343,6 +9368,8 @@ class ISO52016:
         _report_q_storage_all: list[float] = []
         _report_q_tb_all: list[float] = []
         _report_q_ground_all: list[float] = []
+        _report_q_adj_all: list[float] = []
+        _report_theta_ztu_all: list = []
         _report_q_tr_total_all: list[float] = []
         _report_q_tr_opaque_all: list[float] = []
         _report_q_tr_window_all: list[float] = []
@@ -10158,6 +10185,20 @@ class ISO52016:
                             q_tr_window += q_cond
                         q_tr_by_surface[surface_report_cols[Eli]] = q_cond
 
+                    q_adj_total = 0.0
+                    for Eli in range(bui_eln):
+                        if surface_types[Eli] != "ADJ" or nodes.Pln[Eli] == 0:  continue
+                        T_surf_int = float(VecB[nodes.PlnSum[Eli] + nodes.Pln[Eli], colB_act])
+                        A   = float(area_elements[Eli])
+                        hci = float(heat_convective_elements_internal[Eli])
+                        hri = float(heat_radiative_elements_internal[Eli])
+                        q_cond = A * (hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int) + q_rad_per_area)
+                        if   q_cond > 0: E_trans_loss_by_surface_Wh[surface_names[Eli]] += q_cond * dt_h
+                        elif q_cond < 0: E_solar_Wh += (-q_cond) * dt_h
+                        q_adj_total += q_cond
+                    _report_q_adj_all.append(q_adj_total)
+                    if building_object['building']['adj_zones_present']:
+                        _report_theta_ztu_all.append(np.atleast_1d(theta_ztu[Tstepi]).copy())
                     _report_q_solar_gains_all.append(phi_solar)
                     _report_q_internal_gains_all.append(phi_int)
                     _report_q_storage_all.append(q_storage)
@@ -10296,6 +10337,15 @@ class ISO52016:
         hourly_results["Q_tr_window"] = np.asarray(_report_q_tr_window_all, dtype=float)
         hourly_results["Q_tb"] = np.asarray(_report_q_tb_all, dtype=float)
         hourly_results["Q_ground"] = np.asarray(_report_q_ground_all, dtype=float)
+        hourly_results["Q_adj"] = np.asarray(_report_q_adj_all, dtype=float)
+        if _report_theta_ztu_all:
+            _theta_ztu_arr = np.vstack(_report_theta_ztu_all)
+            _ztu_names = H_ztu_zones_df.columns.tolist()
+            if len(_ztu_names) == 1:
+                hourly_results["theta_ztu"] = _theta_ztu_arr[:, 0]
+            else:
+                for _j, _name in enumerate(_ztu_names):
+                    hourly_results[f"theta_ztu_{_name}"] = _theta_ztu_arr[:, _j]
         for _surface_col, _surface_values in _report_q_tr_surface_all.items():
             hourly_results[_surface_col] = np.asarray(_surface_values, dtype=float)
         _ve_stream_cols, _ve_stream_q_cols = _ventilation_stream_diag_to_columns(

@@ -1166,3 +1166,64 @@ def simulate_emission_only(config: dict[str, Any], emission_inc: str = "recalcul
     summary["floor_area_m2"] = float(bui["building"]["net_floor_area"])
     return EmissionOnlyResult(config=config, hourly=result.timeseries, summary=summary,
                               emission_inc_method=emission_inc)
+
+
+# --------------------------------------------------------------------------------------
+# Multizone ideal-envelope documents (schema "pybuildingenergy-building-config-v2":
+# top-level "weather" / "building" / "simulation", building.zones has 2+ entries)
+# --------------------------------------------------------------------------------------
+
+@dataclass
+class MultizoneResult:
+    """Result of simulate_multizone(): per-zone ISO 52016 energy need, no HVAC/emission step."""
+
+    config: dict[str, Any]
+    hourly: pd.DataFrame
+    annual: pd.DataFrame
+
+    def report(self) -> str:
+        lines = ["=" * 60, f"{'Zone':12s} {'Q_H [kWh]':>12s} {'Q_C [kWh]':>12s}"]
+        for _, row in self.annual.iterrows():
+            lines.append(f"{row['zone']:12s} {row['Q_H_annual_kWh']:12.0f} {row['Q_C_annual_kWh']:12.0f}")
+        total_h = float(self.annual["Q_H_annual_kWh"].sum())
+        total_c = float(self.annual["Q_C_annual_kWh"].sum())
+        lines.append("-" * 60)
+        lines.append(f"{'Total':12s} {total_h:12.0f} {total_c:12.0f}")
+        lines.append("=" * 60)
+        return "\n".join(lines)
+
+
+def simulate_multizone(config: dict[str, Any], **kwargs: Any) -> MultizoneResult:
+    """Run the multizone ideal-envelope calculation from a combined JSON document.
+
+    ``config`` has top-level ``"weather"`` / ``"building"`` / ``"simulation"`` keys
+    (see examples/FH_Poland_DC_multizone_ideal_envelope.json), where
+    ``building["zones"]`` lists two or more heated zones. This is the library-side
+    counterpart of examples/multizone_ideal_envelope.py: any project that does
+    ``pip install pybuildingenergy`` can call it directly on the parsed JSON.
+
+    It calls ``ISO52016.Temperature_and_Energy_needs_calculation_multizone``
+    directly and does NOT go through the single-zone composer pipeline above
+    (``normalize_system_config``/``simulate_config``), which only accepts BUI
+    documents without a ``"zones"`` key.
+
+    Extra ``kwargs`` (e.g. ``warmup_hours``, ``hvac_control_variable``) are
+    forwarded to the underlying calculation.
+    """
+    building_object = config["building"]
+    weather = config.get("weather", {})
+    simulation = config.get("simulation", {})
+
+    params: dict[str, Any] = {
+        "weather_source": weather.get("source", "epw"),
+        "path_weather_file": weather.get("file"),
+        "include_solar": simulation.get("include_solar", True),
+        "include_internal_gains": simulation.get("include_internal_gains", True),
+        "include_ventilation": simulation.get("include_ventilation", True),
+    }
+    params.update(kwargs)
+
+    hourly, annual = ISO52016.Temperature_and_Energy_needs_calculation_multizone(
+        building_object=building_object, **params
+    )
+    return MultizoneResult(config=config, hourly=hourly, annual=annual)

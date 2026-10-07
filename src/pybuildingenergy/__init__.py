@@ -90,6 +90,8 @@ _PUBLIC_IMPORTS = {
     "save_outputs": (".source.composer", "save_outputs"),
     "EmissionOnlyResult": (".source.composer", "EmissionOnlyResult"),
     "simulate_emission_only": (".source.composer", "simulate_emission_only"),
+    "MultizoneResult": (".source.composer", "MultizoneResult"),
+    "simulate_multizone": (".source.composer", "simulate_multizone"),
 }
 
 # Compatibility for attributes historically exposed by wildcard imports.
