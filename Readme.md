@@ -136,7 +136,7 @@ For the audit trail, open
 - domestic hot water (DHW),
 - and an optional simplified reversible space-cooling branch with an EER map.
 
-The heating and DHW calculation follows the detailed EN 15316-4-2 bin-method structure: outdoor/source temperature bins, product heating capacity and COP maps, source/sink temperature operating points, runtime/capacity checks, auxiliary energy, optional simplified storage losses, backup energy and SPF outputs. The runnable examples use the EN 16798 cooling modules by default; the older heat-pump EER cooling branch is still available with `--calculation-path heat-pump-cooling`.
+The heating and DHW calculation follows EN 15316-4-2:2017's Method A (clause 6, hourly/bin) structure: outdoor/source temperature bins, product heating capacity and COP maps (EN 14511-series, Path A), part-load performance per Eq.(14)-(30), runtime/capacity checks, auxiliary energy, optional simplified storage losses, backup energy and SPF outputs. The runnable examples use the EN 16798 cooling modules by default; the older heat-pump EER cooling branch is still available with `--calculation-path heat-pump-cooling`.
 
 For a clause-by-clause audit trail between the standard, the implementation and the output files, open [Heat Pump EN 15316-4-2 Implementation Audit](docs/heat_pump_15316_4_2_audit.html).
 
@@ -145,7 +145,7 @@ For a clause-by-clause audit trail between the standard, the implementation and 
 The Athens and Bolzano system workflow can now switch the heating/DHW generator
 away from the default heat pump:
 
-- `CombustionBoilerSystemCalculator` implements an EN 15316-4-1 combustion-generator boundary with part-load/return-temperature efficiency, standby losses and auxiliaries.
+- `BoilerGeneratorCalculator` implements EN 15316-4-1 (combustion generators - gas/oil boilers and biomass) with the standard's load-interpolated efficiency/loss method, temperature correction, standby losses and auxiliaries.
 - `CogenerationSystemCalculator` implements an EN 15316-4-4 thermal-led CHP boundary with fuel input, useful electricity, self-consumption/export and backup heat.
 - `DistrictEnergySystemCalculator` implements an EN 15316-4-5 district heating/cooling substation boundary.
 - `RenewableEnergySystemCalculator` implements the EN 15316-4-3/4-6 solar thermal and PV accounting branch used by the examples and STREPIN runner.
@@ -650,7 +650,7 @@ The DHW calculation was developed with data and methods from the EPB Center spre
 - EN 15316-2:2017 - Space emission systems
 - EN 15316-3:2017 - Distribution systems
 - EN 15316-4-1:2017 - Combustion generation systems
-- EN 15316-4-2:2008 - Heat-pump generation systems
+- EN 15316-4-2:2017 - Heat-pump generation systems (Method A, clause 6)
 - EN 15316-4-3 / EN 15316-4-6 - Thermal solar systems and photovoltaic systems
 - EN 15316-4-4:2007/2008 - Cogeneration systems
 - EN 15316-4-5:2017 - District heating and cooling

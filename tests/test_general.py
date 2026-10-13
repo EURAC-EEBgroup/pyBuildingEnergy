@@ -4,6 +4,7 @@ import pytest
 import os
 import copy
 import importlib.util
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -539,6 +540,285 @@ def test_heat_pump_uses_en14825_part_load_correction():
     assert row["H_part_load_factor"] < 1.0
     assert row["H_performance"] < row["H_performance_full_load"]
     assert result.summary["EH_hp_in_kWh"] > 2.0 / 4.0
+
+
+def test_hp_part_load_cop_continuous_eq18_to_24():
+    """EN 15316-4-2:2017 Eq.(18)-(24): COP at part load for a
+    continuously-modulating compressor, hand-derived from the formulas."""
+
+    from pybuildingenergy.source.heat_pump_15316_4_2 import hp_part_load_cop_continuous
+
+    cop_full, phi_full, lr_cont_min, p_aux = 3.5, 6.0, 0.2, 0.2
+
+    # At LR=1 (full load) it must reduce exactly to cop_full_load.
+    assert hp_part_load_cop_continuous(cop_full, phi_full, 1.0, lr_cont_min, p_aux) == pytest.approx(cop_full)
+
+    # p_gen_aux_kW<=0: Eq.(18)'s correction is a no-op at every load ratio.
+    assert hp_part_load_cop_continuous(cop_full, phi_full, 0.5, lr_cont_min, 0.0) == pytest.approx(cop_full)
+
+    # Hand-derived at LR=0.5 with a non-zero auxiliary power.
+    lr = 0.5
+    p_gen_LR100 = phi_full / cop_full
+    p_comp_LR100 = p_gen_LR100 - p_aux
+    cop_net_100 = (cop_full * phi_full) / (phi_full - p_aux * cop_full)  # Eq.(18)
+    f_cont_min_net = (lr_cont_min * p_comp_LR100) / (lr_cont_min * p_gen_LR100 - p_aux)  # Eq.(19)
+    cop_net_lr = cop_net_100 * (1.0 + (f_cont_min_net - 1.0) * (1.0 - lr) / (1.0 - lr_cont_min))  # Eq.(21)
+    phi_lr = phi_full * lr
+    p_comp_lr = phi_lr / cop_net_lr  # Eq.(22)
+    expected = phi_lr / (p_comp_lr + p_aux)  # Eq.(23)/(24)
+
+    assert hp_part_load_cop_continuous(cop_full, phi_full, lr, lr_cont_min, p_aux) == pytest.approx(expected)
+
+
+def test_hp_part_load_cop_on_off_eq25_to_30():
+    """EN 15316-4-2:2017 Eq.(25)-(30): COP at part load for an ON/OFF
+    compressor, hand-derived from the formulas."""
+
+    from pybuildingenergy.source.heat_pump_15316_4_2 import hp_part_load_cop_on_off
+
+    cop_full, phi_full, lr_cont_min = 3.5, 6.0, 1.0
+    tau_eq, tau_out = 30.0, 1920.0
+
+    assert hp_part_load_cop_on_off(cop_full, phi_full, 0.0, lr_cont_min) != hp_part_load_cop_on_off(
+        cop_full, phi_full, 0.0, lr_cont_min
+    )  # NaN != NaN - no energy delivered at LR=0
+
+    lr = 0.5
+    p_gen_LR100 = phi_full / cop_full
+    p_gen_LRcont_min = p_gen_LR100 * lr_cont_min  # Eq.(26)
+    p_comp_lr = p_gen_LRcont_min * (1.0 - (lr_cont_min - lr) / lr_cont_min)  # Eq.(25)
+    p_onoff = p_gen_LRcont_min * (tau_eq * lr * (1.0 - lr) / tau_out)  # Eq.(28)
+    phi_lr = phi_full * lr
+    expected = phi_lr / (p_comp_lr + p_onoff)  # Eq.(29)/(30), p_gen_aux=0
+
+    assert hp_part_load_cop_on_off(
+        cop_full, phi_full, lr, lr_cont_min, tau_eq_s=tau_eq, tau_out_em_type_s=tau_out
+    ) == pytest.approx(expected)
+
+    # At LR=LR_cont,min the cycling-inertia penalty (Eq.28) vanishes.
+    at_boundary = hp_part_load_cop_on_off(
+        cop_full, phi_full, lr_cont_min, lr_cont_min, tau_eq_s=tau_eq, tau_out_em_type_s=tau_out
+    )
+    assert at_boundary == pytest.approx(cop_full)
+
+
+def test_heat_pump_defaults_to_method_a_2017_part_load():
+    """part_load_performance_method now DEFAULTS to 'method_a_2017' (EN
+    15316-4-2:2017 Eq.(18)-(30)) - a deliberate behaviour change replacing
+    the 2008 bin method's part-load treatment (which this module, until
+    now, left as a no-op, 'performance=full_load_performance always',
+    unless the caller opted into 'en14825'). 'none' (legacy alias
+    'simple') still disables any correction, for explicit backward compat."""
+
+    import pybuildingenergy as pybui
+
+    heating_map = pd.DataFrame({
+        "source_temperature_C": [7.0], "sink_temperature_C": [35.0],
+        "capacity_kW": [10.0], "cop": [4.0],
+    })
+    loads = pd.DataFrame(
+        {"T_ext": [7.0], "Q_H_kWh": [2.0], "Q_C_kWh": [0.0], "Q_W_kWh": [0.0], "T_H_sink_C": [35.0]},
+        index=pd.date_range("2026-01-01", periods=1, freq="h"),
+    )
+    base_config = {
+        "heating_performance_map": heating_map, "dhw_performance_map": heating_map,
+        "source_type": "air", "time_step_hours": 1.0, "demand_unit": "kWh",
+        "hp_operating_limit_C": 58.0, "external_auxiliary_power_W": 0.0, "standby_power_W": 0.0,
+        "heating_storage_loss_kWh_per_day": 0.0, "dhw_storage_loss_kWh_per_day": 0.0,
+    }
+
+    default_calc = pybui.HeatPumpSystemCalculator(base_config)
+    assert default_calc.part_load_performance_method == "method_a_2017"
+    default_row = default_calc.run_timeseries(loads).bins.iloc[0]
+
+    none_calc = pybui.HeatPumpSystemCalculator({**base_config, "part_load_performance_method": "none"})
+    none_row = none_calc.run_timeseries(loads).bins.iloc[0]
+    assert none_row["H_performance"] == pytest.approx(none_row["H_performance_full_load"])
+
+    # "simple" is still accepted as a legacy alias for "none".
+    simple_calc = pybui.HeatPumpSystemCalculator({**base_config, "part_load_performance_method": "simple"})
+    assert simple_calc.part_load_performance_method == "none"
+
+    # The new default must actually differ from the no-correction baseline.
+    assert default_row["H_performance"] != pytest.approx(none_row["H_performance"])
+
+
+def test_heat_pump_compressor_technology_sets_lr_cont_min_default():
+    """Table B.11: LR_cont,min defaults to 1.0 for 'on_off' (this module's
+    own default) and 0.2 for 'inverter' compressor technology - only for
+    the method_a_2017 path; an explicit *_part_load_minimum_capacity_ratio
+    always overrides it."""
+
+    import pybuildingenergy as pybui
+
+    base = {
+        "heating_performance_map": pd.DataFrame({
+            "source_temperature_C": [7.0], "sink_temperature_C": [35.0],
+            "capacity_kW": [10.0], "cop": [4.0],
+        }),
+        "source_type": "air",
+    }
+
+    on_off = pybui.HeatPumpSystemCalculator({**base, "compressor_technology": "on_off"})
+    assert on_off.heating_part_load_minimum_capacity_ratio == pytest.approx(1.0)
+
+    inverter = pybui.HeatPumpSystemCalculator({**base, "compressor_technology": "inverter"})
+    assert inverter.heating_part_load_minimum_capacity_ratio == pytest.approx(0.2)
+
+    overridden = pybui.HeatPumpSystemCalculator({
+        **base, "compressor_technology": "inverter", "heating_part_load_minimum_capacity_ratio": 0.35,
+    })
+    assert overridden.heating_part_load_minimum_capacity_ratio == pytest.approx(0.35)
+
+    with pytest.raises(ValueError):
+        pybui.HeatPumpSystemCalculator({**base, "compressor_technology": "scroll"})
+
+
+def test_heat_pump_powered_column_implements_eq31_eq32_zero_demand_step():
+    """EN 15316-4-2:2017 Eq.(31)-(32): the generator only draws standby
+    auxiliary power while POWERED (within its operating season); outside
+    it, energy use is zero. The 'powered' input column (default: always
+    powered, 1.0 - unchanged pre-existing behaviour) lets a caller mark
+    specific steps as outside the season to get Eq.(32) instead of
+    Eq.(31) there."""
+
+    import pybuildingenergy as pybui
+
+    heating_map = pd.DataFrame({
+        "source_temperature_C": [7.0], "sink_temperature_C": [35.0],
+        "capacity_kW": [10.0], "cop": [4.0],
+    })
+    base_config = {
+        "heating_performance_map": heating_map, "dhw_performance_map": heating_map,
+        "source_type": "air", "standby_power_W": 50.0, "external_auxiliary_power_W": 0.0,
+        "bin_width_C": 10.0,
+    }
+    idle_loads = pd.DataFrame(
+        {"T_ext": [7.0, 7.0], "Q_H_kWh": [0.0, 0.0], "Q_C_kWh": [0.0, 0.0], "Q_W_kWh": [0.0, 0.0]},
+        index=pd.date_range("2026-06-01", periods=2, freq="h"),
+    )
+
+    # Default (no 'powered' column): unchanged pre-existing behaviour -
+    # standby applies to every idle hour.
+    unchanged = pybui.HeatPumpSystemCalculator(base_config).run_timeseries(idle_loads)
+    row = unchanged.bins.iloc[0]
+    assert row["powered_hours"] == pytest.approx(2.0)
+    assert row["W_HW_gen_aux_kWh"] == pytest.approx(2.0 * 50.0 / 1000.0)
+
+    # One of the two hours marked outside the operating season (Eq.32):
+    # standby must apply to only the ONE still-powered hour.
+    seasonal_loads = idle_loads.assign(powered=[1.0, 0.0])
+    seasonal = pybui.HeatPumpSystemCalculator(base_config).run_timeseries(seasonal_loads)
+    row = seasonal.bins.iloc[0]
+    assert row["powered_hours"] == pytest.approx(1.0)
+    assert row["W_HW_gen_aux_kWh"] == pytest.approx(1.0 * 50.0 / 1000.0)
+
+    # Entirely outside the season: zero energy, not just zero demand.
+    off_season_loads = idle_loads.assign(powered=[0.0, 0.0])
+    off_season = pybui.HeatPumpSystemCalculator(base_config).run_timeseries(off_season_loads)
+    row = off_season.bins.iloc[0]
+    assert row["powered_hours"] == pytest.approx(0.0)
+    assert row["W_HW_gen_aux_kWh"] == pytest.approx(0.0)
+
+
+def test_heat_pump_independent_mode_caps_combined_runtime_no_double_counting():
+    """combined_operation='independent' must not let heating and DHW each
+    claim the full step duration from the SAME compressor: EN 15316-4-2:
+    2017 clause 5.9 requires dedicated simultaneous-mode test data for a
+    genuine simultaneous calculation (not modelled here), so this module
+    instead caps their COMBINED runtime at the step duration, shifting any
+    shortfall to back-up/unmet - rather than silently double-counting more
+    HP output than the unit could physically deliver in one step."""
+
+    import pybuildingenergy as pybui
+
+    heating_map = pd.DataFrame({
+        "source_temperature_C": [-7.0], "sink_temperature_C": [35.0],
+        "capacity_kW": [5.0], "cop": [3.0],
+    })
+    overload_loads = pd.DataFrame(
+        {"T_ext": [-7.0], "Q_H_kWh": [4.0], "Q_C_kWh": [0.0], "Q_W_kWh": [3.0], "T_H_sink_C": [35.0]},
+        index=pd.date_range("2026-01-01", periods=1, freq="h"),
+    )
+    calc = pybui.HeatPumpSystemCalculator({
+        "heating_performance_map": heating_map, "dhw_performance_map": heating_map,
+        "source_type": "air", "combined_operation": "independent",
+        "backup_mode": "parallel", "heating_backup_efficiency": 1.0, "dhw_backup_efficiency": 1.0,
+        "external_auxiliary_power_W": 0.0, "standby_power_W": 0.0,
+    })
+    row = calc.run_timeseries(overload_loads).bins.iloc[0]
+
+    combined_runtime = row["H_hp_runtime_h"] + row["W_hp_runtime_h"]
+    assert combined_runtime <= row["effective_hours"] + 1e-6
+    # The HP + back-up split must still add up to the original requirement
+    # for each service (nothing lost, nothing invented).
+    assert row["H_Q_hp_out_kWh"] + row["H_Q_backup_out_kWh"] == pytest.approx(4.0)
+    assert row["W_Q_hp_out_kWh"] + row["W_Q_backup_out_kWh"] == pytest.approx(3.0)
+
+    # Demand that fits within the step is a no-op (unchanged behaviour).
+    light_loads = pd.DataFrame(
+        {"T_ext": [-7.0], "Q_H_kWh": [1.0], "Q_C_kWh": [0.0], "Q_W_kWh": [0.5], "T_H_sink_C": [35.0]},
+        index=pd.date_range("2026-01-01", periods=1, freq="h"),
+    )
+    light_calc = pybui.HeatPumpSystemCalculator({
+        "heating_performance_map": pd.DataFrame({
+            "source_temperature_C": [-7.0], "sink_temperature_C": [35.0],
+            "capacity_kW": [10.0], "cop": [3.0],
+        }),
+        "dhw_performance_map": pd.DataFrame({
+            "source_temperature_C": [-7.0], "sink_temperature_C": [35.0],
+            "capacity_kW": [10.0], "cop": [3.0],
+        }),
+        "source_type": "air", "combined_operation": "independent",
+        "external_auxiliary_power_W": 0.0, "standby_power_W": 0.0,
+        "hp_operating_limit_C": None,
+    })
+    light_row = light_calc.run_timeseries(light_loads).bins.iloc[0]
+    assert light_row["H_Q_hp_out_kWh"] == pytest.approx(1.0)
+    assert light_row["W_Q_hp_out_kWh"] == pytest.approx(0.5)
+    assert light_row["H_Q_backup_out_kWh"] == pytest.approx(0.0)
+    assert light_row["W_Q_backup_out_kWh"] == pytest.approx(0.0)
+
+
+def test_heat_pump_performance_map_quality_warnings():
+    """Data-quality sanity checks (NOT an EN 14511 conformance check):
+    warns on a map with fewer than 2x2 distinct source/sink points, and on
+    conflicting duplicate (source, sink) rows - without refusing either."""
+
+    import pybuildingenergy as pybui
+
+    single_point_map = pd.DataFrame({
+        "source_temperature_C": [7.0], "sink_temperature_C": [35.0],
+        "capacity_kW": [10.0], "cop": [4.0],
+    })
+    with pytest.warns(UserWarning, match="distinct source temperature"):
+        pybui.HeatPumpSystemCalculator({
+            "heating_performance_map": single_point_map, "source_type": "air",
+        })
+
+    conflicting_map = pd.DataFrame({
+        "source_temperature_C": [7.0, 7.0, -7.0, -7.0],
+        "sink_temperature_C": [35.0, 35.0, 35.0, 35.0],
+        "capacity_kW": [6.0, 6.0, 5.0, 5.0],
+        "cop": [4.0, 3.5, 3.2, 3.2],  # two different cop values at the SAME (7.0, 35.0) point
+    })
+    with pytest.warns(UserWarning, match="DIFFERENT"):
+        pybui.HeatPumpSystemCalculator({
+            "heating_performance_map": conflicting_map, "source_type": "air",
+        })
+
+    # A well-formed 2x2 grid with no conflicts must NOT warn.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        pybui.HeatPumpSystemCalculator({
+            "heating_performance_map": pd.DataFrame({
+                "source_temperature_C": [-7.0, -7.0, 7.0, 7.0],
+                "sink_temperature_C": [35.0, 55.0, 35.0, 55.0],
+                "capacity_kW": [5.0, 4.0, 7.0, 6.0],
+                "cop": [3.2, 2.4, 4.2, 3.2],
+            }),
+            "source_type": "air",
+        })
 
 
 def test_emission_system_calculator_heating_cooling_effects():

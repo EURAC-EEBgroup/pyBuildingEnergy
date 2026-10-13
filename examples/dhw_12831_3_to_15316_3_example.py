@@ -33,15 +33,9 @@ for _p in (SRC_DIR, PROJECT_ROOT):
 
 import pybuildingenergy as pybui  # noqa: E402
 from pybuildingenergy.source.DHW import Volume_and_energy_DHW_calculation  # noqa: E402
-
-
-DHW_DAY_TYPE_COLUMNS = ("Workday", "Weekend", "Holiday")
-DHW_ANNEX_B_TABLE_B2_VOLUME_PERCENT = {
-    "single_family_dwelling": [
-        1.8, 1.0, 0.6, 0.3, 0.4, 0.6, 2.4, 4.7, 6.8, 5.7, 6.1, 6.1,
-        6.3, 6.4, 5.1, 4.4, 4.3, 4.7, 5.7, 6.5, 6.6, 5.8, 4.5, 3.1,
-    ],
-}
+from pybuildingenergy import (  # noqa: E402
+    dhw_annex_b_table_b2_hourly_fractions,
+)
 
 
 def default_output_dir() -> Path:
@@ -99,23 +93,6 @@ def build_annual_dhw_profile() -> pd.DataFrame:
     )
     profile.index.name = "timestamp"
     return profile
-
-
-def dhw_annex_b_table_b2_hourly_fractions(profile_key: str = "single_family_dwelling") -> pd.DataFrame:
-    if profile_key not in DHW_ANNEX_B_TABLE_B2_VOLUME_PERCENT:
-        available = ", ".join(sorted(DHW_ANNEX_B_TABLE_B2_VOLUME_PERCENT))
-        raise ValueError(f"Unknown DHW profile '{profile_key}'. Available: {available}")
-
-    percent = pd.Series(
-        DHW_ANNEX_B_TABLE_B2_VOLUME_PERCENT[profile_key],
-        index=range(24),
-        dtype=float,
-    )
-    total = float(percent.sum())
-    if total <= 0.0:
-        raise ValueError(f"DHW profile '{profile_key}' must have a positive sum.")
-    fractions = percent / total
-    return pd.DataFrame({column: fractions.values for column in DHW_DAY_TYPE_COLUMNS})
 
 
 def distribution_config() -> dict:

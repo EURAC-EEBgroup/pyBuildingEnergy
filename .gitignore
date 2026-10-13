@@ -3,6 +3,7 @@ src/pybuildingenergy/data/
 src/pybuildingenergy/data/*
 !src/pybuildingenergy/data/__init__.py
 !src/pybuildingenergy/data/italian_strepin.py
+!src/pybuildingenergy/data/dhw_profiles.json
 !src/pybuildingenergy/data/generation_catalog/
 !src/pybuildingenergy/data/generation_catalog/*.json
 create_archetype.py

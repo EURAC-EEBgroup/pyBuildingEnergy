@@ -269,17 +269,28 @@ def run_generation_configs():
         }).run_timeseries(hp_loads)
         assert result.summary["E_total_electricity_kWh"] > 0
 
-    def _biomass_boiler():
-        result = pybui.BiomassBoilerSystemCalculator(
-            {"nominal_power_kW": 20.0}
-        ).run_timeseries(loads)
-        assert result.summary["E_biomass_delivered_kWh"] > result.summary["QHW_gen_out_kWh"]
-
-    def _combustion_boiler():
-        result = pybui.CombustionBoilerSystemCalculator(
-            {"nominal_power_kW": 20.0, "full_load_efficiency": 0.94}
-        ).run_timeseries(loads)
-        assert result.summary["eta_HW_gen"] > 0.9
+    def _boiler_generator_timeseries():
+        # BoilerGeneratorCalculator is the sole EN 15316-4-1 implementation
+        # (the former CombustionBoilerSystemCalculator/BiomassBoilerSystemCalculator
+        # wrappers have been folded into it); it also accepts the generic
+        # Q_H_kWh/Q_W_kWh/Q_C_kWh/T_ext loads shape the other generators use.
+        result = pybui.BoilerGeneratorCalculator({
+            "boiler_type": "biomass_pellet", "fuel_type": "biomass_pellet",
+            "rated_power_kW": 20.0, "intermediate_load_fraction": 0.30,
+            "eta_Pn_test_pct": 90.0, "eta_Pint_test_pct": 92.0,
+            "theta_test_Pn_C": 70.0, "theta_test_Pint_C": 50.0,
+            "f_corr_pct_per_K": 0.02, "P_gen_ls_P0_W": 250.0,
+            "P_aux_on_W": 90.0, "P_aux_off_W": 8.0, "f_jacket": 0.50,
+            "f_location": 1.0, "f_aux_recoverable": 0.75, "dew_point_C": 55.0,
+            "condensing_gain_pct": 0.0, "boiler_location": "inside_heated",
+            "efficiency_table": {"biomass_pellet": {
+                "eta_Pn_test_pct": 90.0, "eta_Pint_test_pct": 92.0,
+                "theta_test_Pn_C": 70.0, "theta_test_Pint_C": 50.0,
+            }},
+            "loss_table": {"biomass_pellet": {"P_gen_ls_P0_W": 250.0}},
+        }).run_timeseries(loads)
+        assert result.summary["eta_HW_gen"] > 0.7
+        assert result.summary["E_total_fuel_kWh"] > result.summary["QHW_gen_out_kWh"]
 
     def _district_heating():
         result = pybui.DistrictEnergySystemCalculator(
@@ -297,8 +308,7 @@ def run_generation_configs():
     generators = {
         "condensing_boiler": _condensing_boiler,
         "heat_pump": _heat_pump,
-        "biomass_boiler": _biomass_boiler,
-        "combustion_boiler": _combustion_boiler,
+        "boiler_generator_timeseries": _boiler_generator_timeseries,
         "district_heating": _district_heating,
         "cogeneration": _cogeneration,
     }

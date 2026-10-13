@@ -72,7 +72,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .biomass_15316_4 import BiomassBoilerSystemCalculator
 from .check_input import sanitize_and_validate_BUI
 from .cogeneration_15316_4_4 import CogenerationSystemCalculator
 from .distribution_15316_3 import DistributionSystemCalculator
@@ -125,10 +124,26 @@ BOILER_15316_4_1_CONFIG: dict[str, Any] = {
     "boiler_location": "inside_heated",
 }
 
+# Biomass pellet boiler, same BoilerGeneratorCalculator shape as above (EN
+# 15316-4-1:2017 absorbed the former EN 15316-4-7 biomass-boiler standard, so
+# this is the SAME calculator and formulas, just a different case/fuel_type).
+# Typical catalogue figures for a condensing-grade pellet boiler; lower
+# full-load efficiency and higher standby loss than the gas case above.
+BIOMASS_BOILER_CONFIG: dict[str, Any] = {
+    "boiler_type": "biomass_pellet", "fuel_type": "biomass_pellet", "rated_power_kW": 20.0,
+    "intermediate_load_fraction": 0.30, "eta_Pn_test_pct": 90.0, "eta_Pint_test_pct": 92.0,
+    "theta_test_Pn_C": 70.0, "theta_test_Pint_C": 50.0, "f_corr_pct_per_K": 0.02,
+    "P_gen_ls_P0_W": 250.0, "P_aux_on_W": 90.0, "P_aux_off_W": 8.0, "f_jacket": 0.50,
+    "f_location": 1.0, "f_aux_recoverable": 0.75, "dew_point_C": 55.0, "condensing_gain_pct": 0.0,
+    "efficiency_table": {"biomass_pellet": {"eta_Pn_test_pct": 90.0, "eta_Pint_test_pct": 92.0, "theta_test_Pn_C": 70.0, "theta_test_Pint_C": 50.0}},
+    "loss_table": {"biomass_pellet": {"P_gen_ls_P0_W": 250.0}},
+    "boiler_location": "inside_heated",
+}
+
 # Generators HeatingSystemCalculator has NO internal path for: run externally,
 # fed with the heating/cooling/DHW demand produced by the shared emission/distribution config.
 EXTERNAL_GENERATORS: dict[str, dict[str, Any]] = {
-    "biomass_boiler": {"kind": "biomass_boiler", "description": "Biomass boiler EN 15316-4 wrapper, sized to the peak.", "config": {"nominal_power_kW": 20.0}},
+    "biomass_boiler": {"kind": "boiler_15316_4_1", "description": "Biomass pellet boiler, EN 15316-4-1 (sized to the peak).", "config": copy.deepcopy(BIOMASS_BOILER_CONFIG)},
     "district_heating": {"kind": "district", "description": "District heating substation (with cooling branch).", "config": {"cooling_enabled": True, "heating_substation_efficiency": 0.97}},
     "cogeneration": {"kind": "cogeneration", "description": "CHP EN 15316-4-4 (thermal 0.56, electric 0.30), sized at 40% of the peak.", "config": {"nominal_thermal_power_kW": 5.0, "thermal_efficiency": 0.56, "electrical_efficiency": 0.30}},
 }
@@ -812,9 +827,6 @@ def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> Comp
                 gcfg["cooling_performance_map"], f_c = _scale_map_to_peak(gcfg["cooling_performance_map"], gcfg, "cooling", peak_cool, margin)
                 notes.append(f"heat pump cooling map capacities scaled x{f_c:.2f} to the cooling peak {peak_cool:.1f} kW")
             notes.append(f"heat pump heating map capacities scaled x{f_h:.2f}{dhw_note} so capacity at the design point = {margin:.1f} x peak {peak_gen:.1f} kW")
-        elif kind == "biomass_boiler":
-            gcfg["nominal_power_kW"] = round(peak_gen * margin, 3)
-            notes.append(f"{kind} nominal power = {peak_gen * margin:.1f} kW")
         elif kind == "cogeneration":
             gcfg["nominal_thermal_power_kW"] = round(0.4 * peak_gen, 3)
             notes.append(f"CHP thermal power = 40% of the peak = {0.4 * peak_gen:.1f} kW (heuristic; the remainder is covered by its backup)")
@@ -828,10 +840,20 @@ def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> Comp
 
     if kind == "boiler_15316_4_1":
         # BoilerGeneratorCalculator (the class BEHIND EN 15316-4-1) natively accepts
-        # Q_H_gen_out_kWh and Q_W_gen_out_kWh in the SAME call: it sizes the loss/
-        # efficiency curve on the combined load and splits E_gen_in back into
-        # E_H_gen_in / E_W_gen_in proportionally - the same idea as the standard's
-        # separate expenditure factors epsilon_H,gen / epsilon_W,gen (Table 4).
+        # Q_H_gen_out_kWh and Q_W_gen_out_kWh in the SAME call: by default (gcfg's
+        # priority_mode left unset, i.e. "proportional") it sizes the loss/efficiency
+        # curve on the combined load and splits E_gen_in back into E_H_gen_in/
+        # E_W_gen_in proportionally - the same idea as the standard's separate
+        # expenditure factors epsilon_H,gen / epsilon_W,gen (Table 4). A caller who
+        # wants clause 6.10's DHW-priority sequential-operation treatment instead
+        # (separate beta_H/beta_W, DHW served first out of the hour's capacity when
+        # demand exceeds it) can set gcfg["priority_mode"] = "dhw_priority" on the
+        # generation config BEFORE calling simulate() (e.g. on the catalog entry, or
+        # the composed config's hvac_system.external_generation.config) - no further
+        # change to this function is needed, since gcfg flows straight into
+        # BoilerGeneratorCalculator. This does NOT remove the temperature-blending
+        # simplification just below (compute_step() still takes ONE operating
+        # temperature per hour in either mode).
         dcfg = hvac.get("distribution_15316_3_config", {})
         heat_supply = float(dcfg.get("heating", {}).get("supply_temperature_C", 45.0))
         heat_return = float(dcfg.get("heating", {}).get("return_temperature_C", 35.0))
@@ -864,26 +886,32 @@ def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> Comp
             "Q_H_gen_out_kWh": q_h_gen, "Q_W_gen_out_kWh": q_w_gen,
             "t_use_h": dt, "theta_avg_C": theta_avg, "theta_return_C": theta_ret,
         }, index=idx)
-        gr_timeseries = BoilerGeneratorCalculator(gcfg).run_timeseries(boiler_ts)
-        # compute_step does not cap Q_out by rated_power_kW (only the part-load ratio beta is
-        # clipped at 1.0), so with autosize on the boiler always meets the requested load.
-        out_h, out_w, out_c = float(q_h_gen.sum()), float(q_w_gen.sum()), 0.0
-        e_gen_in = float(gr_timeseries["E_gen_in(kWh)"].sum())
-        e_h_gen_in = float(gr_timeseries["E_H_gen_in(kWh)"].sum())
-        e_w_gen_in = float(gr_timeseries["E_W_gen_in(kWh)"].sum())
-        e_gen_aux = float(gr_timeseries["W_gen_aux(kWh)"].sum())
+        gr = BoilerGeneratorCalculator(gcfg).run_timeseries(boiler_ts)
+        gr_timeseries, gs = gr.timeseries, gr.summary
+        # Demand beyond rated_power_kW is capped and reported as unmet by
+        # BoilerGeneratorCalculator itself (consistent with the heat pump/
+        # district/cogeneration generators below), so these are the SERVED
+        # amounts, not simply the requested q_h_gen/q_w_gen sums.
+        out_h, out_w, out_c = gs["QH_gen_out_kWh"], gs["QW_gen_out_kWh"], 0.0
+        e_gen_in = gs["EHW_gen_in_kWh"]
+        e_h_gen_in, e_w_gen_in = gs["EH_gen_in_kWh"], gs["EW_gen_in_kWh"]
+        e_gen_aux = gs["WHW_gen_aux_kWh"]
         fuel_carrier = "natural_gas_kWh" if str(gcfg.get("fuel_type", "natural_gas")).lower() in ("natural_gas", "gas", "lpg") else "biomass_kWh"
         carriers[fuel_carrier] = e_gen_in
         carriers["electricity_kWh"] = e_gen_aux
-        gs = {"E_gen_in_kWh": e_gen_in, "E_H_gen_in_kWh": e_h_gen_in, "E_W_gen_in_kWh": e_w_gen_in, "W_gen_aux_kWh": e_gen_aux}
-        notes.append(f"boiler EN 15316-4-1: {e_h_gen_in:.0f} kWh of fuel attributed to heating, {e_w_gen_in:.0f} kWh to DHW (split proportionally to each service's share of the hourly combined load).")
+        split_note = (
+            "DHW served first out of each hour's capacity, clause 6.10 priority_mode='dhw_priority'"
+            if str(gcfg.get("priority_mode", "proportional")).lower() == "dhw_priority"
+            else "split proportionally to each service's share of the hourly combined load"
+        )
+        notes.append(f"boiler EN 15316-4-1: {e_h_gen_in:.0f} kWh of fuel attributed to heating, {e_w_gen_in:.0f} kWh to DHW ({split_note}).")
     else:
         gen_loads = pd.DataFrame({"T_ext": t_ext, "Q_H_kWh": q_h_gen, "Q_W_kWh": q_w_gen, "Q_C_kWh": q_c_gen, "time_step_hours": dt}, index=idx)
         if kind == "cogeneration":
             gen_loads["E_site_el_load_kWh"] = site_load_pre
 
         cls = {
-            "heat_pump": HeatPumpSystemCalculator, "biomass_boiler": BiomassBoilerSystemCalculator,
+            "heat_pump": HeatPumpSystemCalculator,
             "district": DistrictEnergySystemCalculator, "cogeneration": CogenerationSystemCalculator,
         }[kind]
         gr = cls(gcfg).run_timeseries(gen_loads)
@@ -893,8 +921,6 @@ def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> Comp
         carriers["electricity_kWh"] = float(gs.get("E_total_electricity_kWh", 0.0))
         if kind == "cogeneration":
             carriers["natural_gas_kWh"] = float(gs.get("E_total_fuel_kWh", 0.0))
-        elif kind == "biomass_boiler":
-            carriers["biomass_kWh"] = float(gs.get("E_biomass_delivered_kWh", 0.0))
         elif kind == "district":
             carriers["district_heat_kWh"] = float(gs.get("EHW_district_in_kWh", 0.0))
             carriers["district_cooling_kWh"] = float(gs.get("EC_district_in_kWh", 0.0))
@@ -930,7 +956,7 @@ def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> Comp
     else:
         gen_el_alloc = weights * (carriers["electricity_kWh"] - float(chiller_el.sum()))
     site_load = site_load_pre + gen_el_alloc + chiller_el
-    if kind in ("heat_pump", "biomass_boiler"):
+    if kind == "heat_pump":
         notes.append("hourly generator electricity is an allocation of the annual total in proportion to the hourly thermal demand (the bin method has no hourly series).")
 
     residual = site_load.copy()

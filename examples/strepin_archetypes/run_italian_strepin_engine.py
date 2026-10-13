@@ -353,6 +353,45 @@ def _strepin_hp_map(scop: float, capacity_kW: float) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _strepin_boiler_config(
+    efficiency: float,
+    nominal_capacity_kW: float,
+    *,
+    fuel_type: str,
+    boiler_type: str,
+    condensing: bool = False,
+) -> dict:
+    """Build a BoilerGeneratorCalculator (EN 15316-4-1) config from the single
+    archetype efficiency/capacity figures this script otherwise works with.
+
+    eta_Pint is nudged a few points from eta_Pn in the direction a real
+    generator curve moves (up for condensing gas at part load, down for
+    biomass), since the archetype data gives only one efficiency figure.
+    """
+
+    eta_pn_pct = min(max(float(efficiency), 0.50), 1.05) * 100.0
+    eta_pint_pct = eta_pn_pct + (4.0 if condensing else -4.0)
+    return {
+        "boiler_type": boiler_type, "fuel_type": fuel_type,
+        "rated_power_kW": max(float(nominal_capacity_kW), 1.0),
+        "intermediate_load_fraction": 0.30,
+        "eta_Pn_test_pct": eta_pn_pct, "eta_Pint_test_pct": eta_pint_pct,
+        "theta_test_Pn_C": 60.0, "theta_test_Pint_C": 40.0,
+        "f_corr_pct_per_K": 0.04 if condensing else 0.01,
+        "P_gen_ls_P0_W": 0.006 * max(float(nominal_capacity_kW), 1.0) * 1000.0,
+        "P_aux_on_W": 0.020 * max(float(nominal_capacity_kW), 1.0) * 1000.0,
+        "P_aux_off_W": 0.002 * max(float(nominal_capacity_kW), 1.0) * 1000.0,
+        "f_jacket": 0.5, "f_location": 1.0, "f_aux_recoverable": 0.5,
+        "dew_point_C": 55.0, "condensing_gain_pct": 8.0 if condensing else 0.0,
+        "efficiency_table": {boiler_type: {
+            "eta_Pn_test_pct": eta_pn_pct, "eta_Pint_test_pct": eta_pint_pct,
+            "theta_test_Pn_C": 60.0, "theta_test_Pint_C": 40.0,
+        }},
+        "loss_table": {boiler_type: {"P_gen_ls_P0_W": 0.006 * max(float(nominal_capacity_kW), 1.0) * 1000.0}},
+        "boiler_location": "inside_heated",
+    }
+
+
 def _strepin_cooling_result(
     loads: pd.DataFrame,
     *,
@@ -640,17 +679,15 @@ def _run_strepin_standard_chain(
         )
         heating_standard = "EN 15316-4-2"
     elif carrier == "biomass" or "biomass" in system_type:
-        heating_result = pybui.BiomassBoilerSystemCalculator(
-            {
-                "demand_unit": "kWh",
-                "nominal_power_kW": nominal_capacity_kW,
-                "full_load_efficiency": min(max(efficiency, 0.50), 0.95),
-                "part_load_efficiency": min(max(efficiency - 0.04, 0.45), 0.90),
-            }
+        heating_result = pybui.BoilerGeneratorCalculator(
+            _strepin_boiler_config(
+                efficiency, nominal_capacity_kW,
+                fuel_type="biomass_pellet", boiler_type="biomass_pellet",
+            )
         ).run_timeseries(solar_loads)
         heating_summary = heating_result.summary
         gas_final_kWh = 0.0
-        biomass_final_kWh = heating_summary.get("E_biomass_delivered_kWh", 0.0)
+        biomass_final_kWh = heating_summary.get("EHW_gen_in_kWh", 0.0)
         district_heat_final_kWh = 0.0
         chp_el_generation_kWh = 0.0
         chp_el_self_consumed_kWh = 0.0
@@ -699,21 +736,16 @@ def _run_strepin_standard_chain(
         hp_electricity_kWh = heating_summary.get("WHW_gen_aux_kWh", 0.0)
         heating_standard = "EN 15316-4-4"
     else:
-        heating_result = pybui.CombustionBoilerSystemCalculator(
-            {
-                "demand_unit": "kWh",
-                "fuel": "natural_gas",
-                "nominal_power_kW": nominal_capacity_kW,
-                "full_load_efficiency": min(max(efficiency, 0.50), 1.05),
-                "part_load_efficiency": min(max(efficiency + 0.03, 0.50), 1.08),
-                "condensing": "condensing" in system_type,
-                "auxiliary_power_kW": 0.020,
-                "standby_auxiliary_power_kW": 0.002,
-                "standby_loss_kWh_per_h": 0.006,
-            }
+        condensing = "condensing" in system_type
+        heating_result = pybui.BoilerGeneratorCalculator(
+            _strepin_boiler_config(
+                efficiency, nominal_capacity_kW, fuel_type="natural_gas",
+                boiler_type="condensing" if condensing else "standard",
+                condensing=condensing,
+            )
         ).run_timeseries(solar_loads)
         heating_summary = heating_result.summary
-        gas_final_kWh = heating_summary.get("EHW_fuel_in_kWh", 0.0)
+        gas_final_kWh = heating_summary.get("EHW_gen_in_kWh", 0.0)
         biomass_final_kWh = 0.0
         district_heat_final_kWh = 0.0
         chp_el_generation_kWh = 0.0

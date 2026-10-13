@@ -1,20 +1,111 @@
-"""Heat-pump generation according to EN 15316-4-2 bin-method logic.
+"""Heat-pump generation according to EN 15316-4-2:2017, Method A (hourly/bin).
 
-The module implements the case-specific bin approach described in
-EN 15316-4-2:2008 for heat-pump generation systems. It is intended to sit
-after the building/distribution calculations: users provide the thermal energy
-requirements for space heating, domestic hot water and, for reversible heat
-pumps, space cooling. Product performance data are supplied as COP/EER and
-capacity maps as a function of source and sink temperatures.
+This module implements EN 15316-4-2:2017's Method A (clause 6, "Generation
+with heat pump systems - Energy calculation (hourly, bin)"), REPLACING the
+EN 15316-4-2:2008 bin-method part-load treatment this module previously
+used. The 2017 edition still steps through hourly/bin time steps (clause
+3.7's "bin" - a statistical outdoor-temperature class - and clause 6.4's
+"hourly (or lower)"/"bin" time steps are both still core concepts of the
+2017 edition; Method A keeps the hourly/bin stepping this module already
+used), but the PART-LOAD performance calculation at each step is now the
+2017 edition's own Eq.(14)-(30) (clause 6.7.2.6/6.7.2.7), not the 2008
+edition's bin-ratio approach.
 
-The cooling mode is treated as a reversible heat-pump extension using the same
-temperature-bin and product-map structure. EN 15316-4-2 itself is a heating/DHW
-generation standard, so the cooling results are reported separately as EER/SEER
-style outputs.
+It is intended to sit after the building/distribution calculations: users
+provide the thermal energy requirements for space heating, domestic hot
+water and, for reversible heat pumps, space cooling. Product performance
+data are supplied as COP/EER and capacity maps as a function of source
+(evaporator inlet) and sink (condenser outlet) temperatures - clause
+6.7.2's "Path A" (EN 14511 series), whose Table 11/12 bidirectional
+temperature-correction matrix (Eq.(3)-(9)) is, by construction, the SAME
+bilinear interpolation over a source/sink temperature grid this module
+already implements (_interpolate_performance()/_bilinear_or_linear()) -
+reused unchanged for full-load COP/capacity.
+
+Formulas implemented from EN 15316-4-2:2017, clause 6:
+
+* Eq.(1): generation sub-system energy balance (E_HW,gen,in x COP_HW,gen
+  = Q_HW,gen,out + Q_HW,gen,ls,tot - Q_HW,gen,in - f_gen,auxls,rvd x
+  W_HW,gen,aux).
+* Eq.(3)-(9) (clause 6.7.2.2/6.7.2.3, Path A): full-load COP/capacity from
+  the EN 14511-series rated points, bidirectionally interpolated over
+  inlet (evaporator)/outlet (condenser) temperature - reuses this module's
+  existing bilinear interpolation over heating_performance_map/
+  dhw_performance_map/cooling_performance_map.
+* Eq.(10)-(13) (clause 6.7.2.5): energy delivered and operating time at
+  full load, compared against the demand.
+* Eq.(14)-(24) (clause 6.7.2.6/6.7.2.7.1): part-load ratio LR and COP at
+  part load for CONTINUOUSLY-MODULATING (inverter) compressors - net COP
+  (auxiliary power P_gen,aux stripped out, Eq.(18)-(20)), then corrected
+  for part load between LR_cont,min and 1 (Eq.(21)).
+* Eq.(25)-(30) (clause 6.7.2.7.2): part-load COP/energy for ON/OFF
+  compressors (or an inverter compressor below its own LR_cont,min), using
+  the cycling-inertia parameters tau_eq (product-specific, Table B default)
+  and tau_out,em,type (Table 13, by emitter inertia category).
+* Eq.(31)-(32): zero-demand step - standby_power_W only accrues while the
+  generator is POWERED (Eq.31); the input "powered"/"hp_powered"/
+  "operating_season" column (default: always powered, 1.0 - unchanged
+  pre-existing behaviour) lets a caller mark specific steps as outside the
+  unit's operating season for Eq.(32)'s zero-energy treatment instead.
+* Eq.(44) (clause 6.8): auxiliary energy, Eq.(45) (clause 6.9): energy used
+  from the heat source, Eq.(46) (clause 6.10): back-up heater energy.
+
+NOT implemented from the 2017 edition (documented gaps, not silently
+dropped):
+
+* Clause 6.7.3, "Path B" (EN 14825-series exergetic-efficiency approach,
+  Eq.(33)-(40), Annex D) - an ALTERNATIVE way to get COP/capacity from
+  EN 14825 A/B/C/D rating points via a Carnot-COP x exergetic-efficiency
+  construction, instead of Path A's direct bidirectional interpolation.
+  This module's pre-existing, simpler en14825_part_load_factor()-based
+  degradation correction (performance_14511_14825.py) remains available
+  as the part_load_performance_method="en14825" option, but it is NOT a
+  faithful implementation of Path B/Annex D.
+* Clause 6.7.4 (absorption/adsorption, combustion-engine-driven heat
+  pumps, Eq.(41)-(43), Table B.10/B.11) - this module only implements the
+  electrically-driven compressor path (Eq.(14)-(30)).
+* Clause 7 (Method B, monthly/annual) - a different time resolution,
+  requiring different input/output wiring than this module's hourly/bin
+  stepping; not implemented (see docs/standards_errata.md-style scoping
+  notes in this module's own tests if this changes).
+* Annex A's normative input-data TEMPLATE and Annex B's full default-value
+  tables are not transcribed in full; a curated, documented subset of
+  defaults is used where the formulas need one (tau_out,em,type from
+  Table 13 is transcribed in full - only 5 rows).
+* Clause 5.9's genuine SIMULTANEOUS operation (heating + DHW covered AT
+  THE SAME TIME) needs its OWN dedicated test data (capacity/COP measured
+  specifically for the combined mode - "these test results have to be
+  available"), which this module has no input for.
+  combined_operation="independent" instead runs the SAME performance map
+  for both services, each initially allocated against the full step
+  duration independently, then caps their COMBINED runtime at the step
+  duration (see _cap_combined_independent_runtime()) so one compressor
+  cannot appear to deliver output twice over - a safety cap against
+  double-counting, NOT a faithful clause 5.9 calculation.
+  combined_operation="alternative" (the default) is the more literally
+  faithful mode (clause 3.1's "alternate operation": a diverter switches
+  the SAME generator between the two services, never both at once).
+* Performance maps are interpolated as given, without checking they
+  actually contain EN 14511/14825's own mandatory rating points (see
+  _warn_about_performance_map_quality() for the sanity-check warnings
+  this module DOES apply - not an EN 14511 conformance check). Conformance
+  of the input data remains the caller's responsibility.
+* Storage losses (heating_storage_loss_kWh_per_day/
+  dhw_storage_loss_kWh_per_day) are modelled as a single normalised daily
+  loss value, temperature-corrected (_storage_loss()) - not EN 15316-5's
+  own full storage-subsystem model (StorageSystemCalculator). Use that
+  calculator upstream/downstream for a full storage-subsystem calculation.
+
+The cooling mode is treated as a reversible heat-pump extension using the
+same temperature-bin and product-map structure; EN 15316-4-2 itself is a
+heating/DHW generation standard, so cooling is NOT part of the 2017 Method
+A formulas above - the pre-existing, simplified cooling treatment is kept
+unchanged.
 """
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,6 +116,154 @@ from .performance_14511_14825 import en14825_part_load_factor
 
 
 _KWH_EPS = 1e-12
+
+# EN 15316-4-2:2017, Table B.11: default LR_cont,min (clause 6.7.2.6.1/B.1.3)
+# by compressor technology - "LR_cont,min = 1 for ON-OFF technology" (i.e.
+# no continuous-modulation range at all - Eq.(25)-(30)'s ON/OFF branch
+# applies for every LR<1), "LR_cont,min = 0,2 for inverter technology".
+DEFAULT_LR_CONT_MIN_BY_COMPRESSOR_TECH = {"on_off": 1.0, "inverter": 0.2}
+
+# Table B.11: TAU_EQ (heat pump cycling inertia, Eq.(28)) default - a
+# single value, not product/emitter-specific, unless overridden.
+DEFAULT_TAU_EQ_S = 30.0
+
+# Table B.11: TAU_OUT_EM_TYPE_W / _STO (DHW/storage distribution time
+# constant, Eq.(28)) - single default values, no emitter-type choice (that
+# only applies to space heating, Table 13 below).
+DEFAULT_TAU_OUT_EM_TYPE_W_S = 1560.0
+DEFAULT_TAU_OUT_EM_TYPE_STO_S = 1560.0
+
+# Clause 6.7.2.7.2 / Table 13: distribution time constant tau_out,em,type
+# [s] for SPACE HEATING (Eq.(28)), by emitter inertia category.
+# "heavy_embedded" (1920 s) matches Annex B's Table B.11 TAU_OUT_EM_TYPE_H
+# default exactly, and is this module's own default category.
+TAU_OUT_EM_TYPE_H_S_BY_CATEGORY = {
+    "heavy_embedded": 1920.0,
+    "light_embedded": 1370.0,
+    "low": 360.0,
+    "very_low": 120.0,
+}
+
+
+def hp_part_load_cop_continuous(
+    cop_full_load: float,
+    phi_full_load_kW: float,
+    load_ratio: float,
+    lr_cont_min: float,
+    p_gen_aux_kW: float = 0.0,
+) -> float:
+    """EN 15316-4-2:2017 Eq.(18)-(21): COP at part load for a continuously-
+    modulating (inverter) compressor operating between LR_cont,min and 1.
+
+    cop_full_load/phi_full_load_kW are the COP/thermal capacity AT FULL
+    LOAD for this step's inlet/outlet temperature (i.e. the already
+    temperature-interpolated Eq.(3)-(9) "Path A" values). Returns
+    cop_full_load unchanged at load_ratio>=1 (Eq.(21)'s own blend factor
+    is 1 there) and when p_gen_aux_kW<=0 (Eq.(18)'s net-COP correction is
+    then a no-op, matching Table B.9's f_gen,Pn,aux,int=0 default for
+    electrically-driven heat pumps).
+    """
+
+    load_ratio = max(min(float(load_ratio), 1.0), 0.0)
+    lr_cont_min = max(min(float(lr_cont_min), 1.0 - 1e-6), _KWH_EPS)
+    cop_full_load = float(cop_full_load)
+    phi_full_load_kW = float(phi_full_load_kW)
+    if cop_full_load <= 0.0 or phi_full_load_kW <= 0.0:
+        return cop_full_load
+    if load_ratio >= 1.0 - 1e-9:
+        return cop_full_load
+
+    p_gen_aux_kW = max(float(p_gen_aux_kW), 0.0)
+    p_gen_LR100 = phi_full_load_kW / cop_full_load  # Eq.(9)-derived: driving power at full load
+    p_comp_LR100 = max(p_gen_LR100 - p_gen_aux_kW, _KWH_EPS)
+
+    if p_gen_aux_kW > 0.0:
+        # Eq.(18): net (auxiliary-free) COP at full load.
+        cop_net_100 = (cop_full_load * phi_full_load_kW) / max(
+            phi_full_load_kW - p_gen_aux_kW * cop_full_load, _KWH_EPS
+        )
+        # Eq.(19): minimum-continuous-load net correction factor. t_ci
+        # cancels out of both numerator and denominator (it multiplies
+        # every term uniformly), so it is not a parameter here.
+        f_cont_min_net = (lr_cont_min * p_comp_LR100) / max(
+            lr_cont_min * p_gen_LR100 - p_gen_aux_kW, _KWH_EPS
+        )
+    else:
+        cop_net_100 = cop_full_load
+        f_cont_min_net = 1.0
+
+    # Eq.(21).
+    cop_net_lr = cop_net_100 * (
+        1.0 + (f_cont_min_net - 1.0) * (1.0 - load_ratio) / (1.0 - lr_cont_min)
+    )
+    cop_net_lr = max(cop_net_lr, _KWH_EPS)
+    if p_gen_aux_kW <= 0.0:
+        return cop_net_lr
+
+    # Eq.(22)-(24): translate the net COP back to a gross COP that
+    # includes P_gen,aux (the same correction Eq.(18) applied in reverse).
+    phi_LR = phi_full_load_kW * load_ratio
+    p_comp_LR = phi_LR / cop_net_lr
+    e_gen_in_rate = p_comp_LR + p_gen_aux_kW
+    return max(phi_LR / e_gen_in_rate, _KWH_EPS) if e_gen_in_rate > _KWH_EPS else cop_full_load
+
+
+def hp_part_load_cop_on_off(
+    cop_full_load: float,
+    phi_full_load_kW: float,
+    load_ratio: float,
+    lr_cont_min: float,
+    tau_eq_s: float = DEFAULT_TAU_EQ_S,
+    tau_out_em_type_s: float = TAU_OUT_EM_TYPE_H_S_BY_CATEGORY["heavy_embedded"],
+    p_gen_aux_kW: float = 0.0,
+) -> float:
+    """EN 15316-4-2:2017 Eq.(25)-(30): COP at part load for an ON/OFF
+    compressor, or an inverter compressor cycling below its own
+    LR_cont,min (load_ratio < lr_cont_min). Includes the cycling-inertia
+    power penalty Eq.(28) (zero at load_ratio=0 and at load_ratio=
+    lr_cont_min, maximum around the midpoint - the classic ON/OFF
+    start/stop loss shape).
+
+    Returns NaN at load_ratio<=0 (no energy delivered, so no meaningful
+    COP - see Eq.(31)-(32) for the zero-demand step instead).
+    """
+
+    load_ratio = max(min(float(load_ratio), 1.0), 0.0)
+    lr_cont_min = max(min(float(lr_cont_min), 1.0), _KWH_EPS)
+    cop_full_load = float(cop_full_load)
+    phi_full_load_kW = float(phi_full_load_kW)
+    if load_ratio <= _KWH_EPS:
+        return float("nan")
+    if cop_full_load <= 0.0 or phi_full_load_kW <= 0.0:
+        return cop_full_load
+
+    p_gen_aux_kW = max(float(p_gen_aux_kW), 0.0)
+    p_gen_LR100 = phi_full_load_kW / cop_full_load
+    # Eq.(26).
+    p_gen_LRcont_min = p_gen_LR100 * lr_cont_min
+    # Eq.(25): linear ramp of compressor power from 0 (LR=0) up to
+    # p_gen_LRcont_min (LR=LR_cont,min); flat at p_gen_LRcont_min beyond.
+    if load_ratio < lr_cont_min:
+        p_gen_comp_LR = p_gen_LRcont_min * (1.0 - (lr_cont_min - load_ratio) / lr_cont_min)
+    else:
+        p_gen_comp_LR = p_gen_LRcont_min
+    p_gen_comp_LR = max(p_gen_comp_LR, 0.0)
+
+    # Eq.(28): cycling-inertia power penalty, 0 outside (0, LR_cont,min).
+    if _KWH_EPS < load_ratio < lr_cont_min and tau_out_em_type_s > 0.0:
+        p_gen_comp_onoff = p_gen_LRcont_min * (
+            tau_eq_s * load_ratio * (1.0 - load_ratio) / tau_out_em_type_s
+        )
+    else:
+        p_gen_comp_onoff = 0.0
+
+    # Eq.(29)/(30): COP_LR(t) = Q_out(t)/E_in(t) - t_H cancels between
+    # Q_out(t)=Phi_LR x t_H and E_in(t)=(sum of powers) x t_H.
+    phi_LR = phi_full_load_kW * load_ratio
+    e_rate = p_gen_comp_LR + p_gen_aux_kW + p_gen_comp_onoff
+    if e_rate <= _KWH_EPS:
+        return cop_full_load
+    return max(phi_LR / e_rate, _KWH_EPS)
 
 
 @dataclass
@@ -179,11 +418,25 @@ class HeatPumpSystemCalculator:
         )
         self.cooling_backup_eer = _optional_float(cfg.get("cooling_backup_eer"))
 
+        # EN 15316-4-2:2017 Eq.(18)-(30) ("method_a_2017") is now the
+        # DEFAULT part-load treatment, REPLACING the 2008 edition's bin-
+        # ratio approach this module previously defaulted to ("simple" -
+        # no part-load correction at all - was the old default). "en14825"
+        # keeps this module's pre-existing, simpler multiplicative
+        # degradation-coefficient correction (NOT clause 6.7.3/Annex D's
+        # own Path B); "none" (alias "simple", for old configs) disables
+        # any part-load correction, as before. Cooling is out of EN 15316-
+        # 4-2:2017's scope entirely (it only covers heating/DHW) and always
+        # keeps using "en14825"/"none" regardless of this setting.
         self.part_load_performance_method = str(
-            cfg.get("part_load_performance_method", "simple")
+            cfg.get("part_load_performance_method", "method_a_2017")
         ).lower()
-        if self.part_load_performance_method not in {"simple", "en14825"}:
-            raise ValueError("part_load_performance_method must be 'simple' or 'en14825'.")
+        if self.part_load_performance_method == "simple":
+            self.part_load_performance_method = "none"
+        if self.part_load_performance_method not in {"method_a_2017", "en14825", "none"}:
+            raise ValueError(
+                "part_load_performance_method must be 'method_a_2017', 'en14825' or 'none'."
+            )
         self.part_load_unit_type = str(cfg.get("part_load_unit_type", "air-to-water")).lower()
         default_cd = cfg.get("part_load_degradation_coefficient", 0.9)
         self.heating_part_load_degradation_coefficient = _fraction(
@@ -198,7 +451,27 @@ class HeatPumpSystemCalculator:
             cfg.get("cooling_part_load_degradation_coefficient", default_cd),
             "cooling_part_load_degradation_coefficient",
         )
-        default_min_cr = cfg.get("part_load_minimum_capacity_ratio", 0.0)
+
+        # Table B.11: LR_cont,min DEFAULTS by compressor technology ("on_off"
+        # -> 1.0, i.e. no continuous-modulation range at all; "inverter" ->
+        # 0.2). An explicit *_part_load_minimum_capacity_ratio still
+        # overrides this per service, exactly as before.
+        self.compressor_technology = str(cfg.get("compressor_technology", "on_off")).lower()
+        if self.compressor_technology not in DEFAULT_LR_CONT_MIN_BY_COMPRESSOR_TECH:
+            raise ValueError(
+                "compressor_technology must be one of "
+                f"{sorted(DEFAULT_LR_CONT_MIN_BY_COMPRESSOR_TECH)}."
+            )
+        # The tech-based LR_cont,min default only applies to the NEW
+        # method_a_2017 path; the pre-existing "en14825"/"none" methods
+        # keep their OWN original default (0.0 - no part-load-ratio floor)
+        # so they stay byte-for-byte backward compatible on their own.
+        default_min_cr = cfg.get(
+            "part_load_minimum_capacity_ratio",
+            DEFAULT_LR_CONT_MIN_BY_COMPRESSOR_TECH[self.compressor_technology]
+            if self.part_load_performance_method == "method_a_2017"
+            else 0.0,
+        )
         self.heating_part_load_minimum_capacity_ratio = _fraction(
             cfg.get("heating_part_load_minimum_capacity_ratio", default_min_cr),
             "heating_part_load_minimum_capacity_ratio",
@@ -208,8 +481,35 @@ class HeatPumpSystemCalculator:
             "dhw_part_load_minimum_capacity_ratio",
         )
         self.cooling_part_load_minimum_capacity_ratio = _fraction(
-            cfg.get("cooling_part_load_minimum_capacity_ratio", default_min_cr),
+            cfg.get("cooling_part_load_minimum_capacity_ratio", 0.0),
             "cooling_part_load_minimum_capacity_ratio",
+        )
+
+        # Table B.11: TAU_EQ (heat pump cycling inertia) and the Table 13
+        # distribution time constant tau_out,em,type for Eq.(28)'s ON/OFF
+        # cycling-inertia power penalty. External auxiliary power (already
+        # tracked by this module as external_auxiliary_power_W, see below)
+        # doubles as Eq.(18)-(30)'s P_gen,aux - the standard's own
+        # definition ("auxiliary energy NOT included in the COP standard
+        # testing") matches exactly what this field already represents.
+        self.tau_eq_s = _positive_float(cfg.get("tau_eq_s", DEFAULT_TAU_EQ_S), "tau_eq_s")
+        self.emitter_inertia_category = str(
+            cfg.get("emitter_inertia_category", "heavy_embedded")
+        ).lower()
+        if self.emitter_inertia_category not in TAU_OUT_EM_TYPE_H_S_BY_CATEGORY:
+            raise ValueError(
+                "emitter_inertia_category must be one of "
+                f"{sorted(TAU_OUT_EM_TYPE_H_S_BY_CATEGORY)}."
+            )
+        self.tau_out_em_type_H_s = _positive_float(
+            cfg.get(
+                "tau_out_em_type_H_s",
+                TAU_OUT_EM_TYPE_H_S_BY_CATEGORY[self.emitter_inertia_category],
+            ),
+            "tau_out_em_type_H_s",
+        )
+        self.tau_out_em_type_W_s = _positive_float(
+            cfg.get("tau_out_em_type_W_s", DEFAULT_TAU_OUT_EM_TYPE_W_S), "tau_out_em_type_W_s"
         )
 
         self.combined_operation = str(cfg.get("combined_operation", "alternative")).lower()
@@ -288,6 +588,16 @@ class HeatPumpSystemCalculator:
         out = pd.DataFrame(index=df.index)
 
         out["hours"] = self._time_step_hours(df)
+        # EN 15316-4-2:2017 Eq.(31)-(32): the generator sub-system only
+        # draws P_gen,aux (here, standby_power_W) while "powered" - its own
+        # OPERATING SEASON - and nothing at all outside it. Defaults to
+        # always-powered (1.0, the pre-existing behaviour, unchanged) when
+        # no "powered"/"operating_season" column is supplied; a caller can
+        # mark specific steps as outside the season (0) to get Eq.(32)'s
+        # zero-energy treatment there instead of Eq.(31)'s standby draw.
+        out["powered"] = _series_from_aliases(
+            df, ["powered", "hp_powered", "operating_season", "HP_powered"], default=1.0
+        ).astype(float).clip(0.0, 1.0)
         out["T_ext_C"] = _series_from_aliases(
             df,
             ["T_ext", "theta_ext", "outdoor_temperature_C", "T_external_C"],
@@ -515,14 +825,22 @@ class HeatPumpSystemCalculator:
         row.update(_prefix_dict(dhw, "W"))
         row.update(_prefix_dict(cooling, "C"))
 
+        # Eq.(31)-(32): standby_power_W only applies to hours the generator
+        # is POWERED (within its operating season) - hours outside it (the
+        # "powered" column, default 1.0/always, see _prepare_timeseries())
+        # draw nothing at all, matching Eq.(32)'s "not powered" case rather
+        # than Eq.(31)'s "powered, idle" one.
+        powered_hours = float((group["hours"] * group["powered"]).sum())
+        row["powered_hours"] = powered_hours
+
         hp_active_hours_hw = heating["hp_runtime_h"] + dhw["hp_runtime_h"]
-        standby_hours_hw = max(hours - hp_active_hours_hw, 0.0)
+        standby_hours_hw = max(powered_hours - hp_active_hours_hw, 0.0)
         aux_active_hw = self.external_auxiliary_power_W * hp_active_hours_hw / 1000.0
         aux_standby_hw = self.standby_power_W * standby_hours_hw / 1000.0
         aux_hw = aux_active_hw + aux_standby_hw
 
         hp_active_hours_c = cooling["hp_runtime_h"]
-        standby_hours_c = max(hours - hp_active_hours_c, 0.0)
+        standby_hours_c = max(powered_hours - hp_active_hours_c, 0.0)
         aux_active_c = self.external_auxiliary_power_W * hp_active_hours_c / 1000.0
         aux_standby_c = self.standby_power_W * standby_hours_c / 1000.0
         aux_c = aux_active_c + aux_standby_c
@@ -690,6 +1008,7 @@ class HeatPumpSystemCalculator:
         if self.combined_operation == "independent":
             self._allocate_single_heating_service(heating, effective_hours, "H")
             self._allocate_single_heating_service(dhw, effective_hours, "W")
+            self._cap_combined_independent_runtime(heating, dhw, effective_hours)
             return
 
         if self.dhw_priority:
@@ -703,6 +1022,52 @@ class HeatPumpSystemCalculator:
         self._allocate_single_heating_service(first, remaining, "W" if self.dhw_priority else "H")
         remaining = max(remaining - first["hp_runtime_h"], 0.0)
         self._allocate_single_heating_service(second, remaining, "H" if self.dhw_priority else "W")
+
+    def _cap_combined_independent_runtime(
+        self, heating: dict[str, float], dhw: dict[str, float], effective_hours: float
+    ) -> None:
+        """combined_operation="independent" allocates heating and DHW each
+        against the FULL step duration independently - EN 15316-4-2:2017
+        clause 5.9 says genuine SIMULTANEOUS operation needs its OWN
+        dedicated test data (capacity/COP measured for the combined mode),
+        which this module does not model. Short of that, a SINGLE
+        compressor still cannot deliver more than effective_hours worth of
+        COMBINED runtime in one step: if the two services' independently-
+        allocated runtimes add up to more than that, scale BOTH back
+        proportionally - shifting the shortfall to back-up/unmet, the same
+        way a single capacity-limited service already does - rather than
+        silently double-counting output the unit could not physically
+        have delivered in this step."""
+
+        total_runtime = heating["hp_runtime_h"] + dhw["hp_runtime_h"]
+        if total_runtime <= effective_hours + _KWH_EPS or total_runtime <= _KWH_EPS:
+            return
+        scale = effective_hours / total_runtime
+        for service_result, backup_eff in (
+            (heating, self.heating_backup_efficiency),
+            (dhw, self.dhw_backup_efficiency),
+        ):
+            hp_out_before = service_result["Q_hp_out_kWh"]
+            if hp_out_before <= _KWH_EPS:
+                continue
+            hp_out_after = hp_out_before * scale
+            shortfall = hp_out_before - hp_out_after
+            service_result["hp_runtime_h"] *= scale
+            service_result["Q_hp_out_kWh"] = hp_out_after
+            part_load_hours = self._part_load_reference_hours(
+                service_result, effective_hours, service_result["hp_runtime_h"]
+            )
+            service_result["part_load_ratio"] = _ratio(
+                hp_out_after, service_result["capacity_kW"] * part_load_hours
+            )
+            if self.backup_mode == "none":
+                service_result["Q_unmet_kWh"] = service_result.get("Q_unmet_kWh", 0.0) + shortfall
+            else:
+                service_result["Q_backup_capacity_kWh"] = (
+                    service_result.get("Q_backup_capacity_kWh", 0.0) + shortfall
+                )
+                service_result["Q_backup_out_kWh"] += shortfall
+            self._finalize_heating_service(service_result, backup_eff)
 
     def _allocate_single_heating_service(
         self, service_result: dict[str, float], available_hours: float, service: str
@@ -829,14 +1194,58 @@ class HeatPumpSystemCalculator:
         service_result["part_load_ratio_for_performance"] = service_result.get(
             "part_load_ratio", 0.0
         )
-        if self.part_load_performance_method != "en14825":
-            return
         if not np.isfinite(full_load_performance) or full_load_performance <= 0:
             return
         if service_result.get("Q_hp_out_kWh", 0.0) <= _KWH_EPS:
             return
+
+        service = service_result.get("service")
+        # EN 15316-4-2:2017 covers heating/DHW only (clause 1) - cooling
+        # always falls back to the pre-existing "en14825"/"none" treatment
+        # regardless of part_load_performance_method.
+        method = self.part_load_performance_method if service != "C" else (
+            "en14825" if self.part_load_performance_method == "method_a_2017" else self.part_load_performance_method
+        )
+        if method == "none":
+            return
+
         part_load_ratio = service_result.get("part_load_ratio", 1.0)
         minimum_ratio = self._part_load_minimum_capacity_ratio(service_result)
+
+        if method == "method_a_2017":
+            # Eq.(18)-(30): continuous (inverter) correction at/above
+            # LR_cont,min, ON/OFF cycling-inertia correction below it.
+            capacity_kW = service_result.get("capacity_kW", 0.0)
+            p_gen_aux_kW = self.external_auxiliary_power_W / 1000.0
+            if part_load_ratio >= minimum_ratio - 1e-9:
+                new_performance = hp_part_load_cop_continuous(
+                    cop_full_load=full_load_performance,
+                    phi_full_load_kW=capacity_kW,
+                    load_ratio=part_load_ratio,
+                    lr_cont_min=minimum_ratio,
+                    p_gen_aux_kW=p_gen_aux_kW,
+                )
+            else:
+                tau_out_em_type_s = (
+                    self.tau_out_em_type_H_s if service == "H" else self.tau_out_em_type_W_s
+                )
+                new_performance = hp_part_load_cop_on_off(
+                    cop_full_load=full_load_performance,
+                    phi_full_load_kW=capacity_kW,
+                    load_ratio=part_load_ratio,
+                    lr_cont_min=minimum_ratio,
+                    tau_eq_s=self.tau_eq_s,
+                    tau_out_em_type_s=tau_out_em_type_s,
+                    p_gen_aux_kW=p_gen_aux_kW,
+                )
+            if np.isfinite(new_performance) and new_performance > 0:
+                service_result["part_load_ratio_for_performance"] = max(part_load_ratio, minimum_ratio)
+                service_result["part_load_factor"] = _ratio(new_performance, full_load_performance)
+                service_result["performance"] = max(new_performance, _KWH_EPS)
+            return
+
+        # method == "en14825": pre-existing simplified multiplicative
+        # degradation-coefficient correction (NOT clause 6.7.3/Annex D).
         performance_ratio = max(part_load_ratio, minimum_ratio)
         coefficient = service_result.get("part_load_degradation_coefficient", 0.9)
         factor = en14825_part_load_factor(
@@ -1055,7 +1464,54 @@ def _coerce_performance_map(
             f"{service_name}_performance_map must use non-negative capacity and positive "
             f"{performance_column.upper()} values."
         )
+    _warn_about_performance_map_quality(df, performance_column, service_name)
     return df
+
+
+def _warn_about_performance_map_quality(
+    df: pd.DataFrame, performance_column: str, service_name: str
+) -> None:
+    """Data-quality sanity checks, NOT an EN 14511 conformance check: this
+    module interpolates whatever source/sink-temperature grid it is given,
+    without verifying the points actually correspond to EN 14511's own
+    mandatory rating conditions (or EN 14825's A/B/C/D/... points, for
+    "Path A"/Table 11-12 use). Warns (does not refuse) on data shapes that
+    are very likely to give a misleading result; conformance of the
+    underlying product data to EN 14511/14825 remains the caller's
+    responsibility."""
+
+    n_source = df["source_temperature_C"].nunique()
+    n_sink = df["sink_temperature_C"].nunique()
+    if n_source < 2 or n_sink < 2:
+        warnings.warn(
+            f"{service_name}_performance_map has only {n_source} distinct source "
+            f"temperature(s) and {n_sink} distinct sink temperature(s) - EN 14511/14825 "
+            "rating points normally span several source AND sink temperatures (e.g. air-"
+            "source units are typically rated at multiple outdoor temperatures and at "
+            "least two sink/flow temperatures). With fewer than 2x2 points this module "
+            "cannot bilinearly interpolate across the real operating range and will "
+            "effectively hold the performance constant along the missing axis.",
+            UserWarning,
+            stacklevel=4,
+        )
+
+    duplicates = df.duplicated(subset=["source_temperature_C", "sink_temperature_C"], keep=False)
+    if duplicates.any():
+        conflicting = (
+            df.loc[duplicates]
+            .groupby(["source_temperature_C", "sink_temperature_C"])[performance_column]
+            .nunique()
+        )
+        if (conflicting > 1).any():
+            warnings.warn(
+                f"{service_name}_performance_map has multiple rows at the same "
+                f"(source_temperature_C, sink_temperature_C) point with DIFFERENT "
+                f"{performance_column.upper()} values - ambiguous input data; the "
+                "interpolation grid build keeps only one value per point (via a "
+                "pivot table), silently discarding the others.",
+                UserWarning,
+                stacklevel=4,
+            )
 
 
 def _interpolate_performance(

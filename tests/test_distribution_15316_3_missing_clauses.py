@@ -28,17 +28,17 @@ def _hourly_index(n: int) -> pd.DatetimeIndex:
     return pd.date_range("2026-01-01", periods=n, freq="h")
 
 
-def test_dhw_circulation_standby_loss_uses_eq15_when_not_tapping():
-    """Eq.(10): loss of a circulating DHW section while NOT tapping, using the
-    Eq.(15) stand-in theta_W,mean = 25*Psi^-0.2 for the standby temperature."""
+def test_dhw_circulation_standby_loss_is_zero_without_pipe_thermal_mass_data():
+    """Eq.(10)/(11)-(14) are undefined without the pipe's own thermal mass.
+
+    Eq.(15) is NOT a valid stand-in for this case (it is scoped by the
+    standard to pipes WITHOUT circulation / open stubs, a different physical
+    situation - see test_dhw_non_circulating_section_uses_eq15_for_the_whole_step).
+    So a circulating section with no pipe_volume_m3/pipe_mass_kg must add
+    nothing while idle, rather than reusing Eq.(15)."""
 
     idx = _hourly_index(2)
-    data = pd.DataFrame(
-        {
-            "Q_W_kWh": [1.0, 0.0],  # hour 0: tapping: hour 1: no demand
-        },
-        index=idx,
-    )
+    data = pd.DataFrame({"Q_W_kWh": [1.0, 0.0]}, index=idx)  # hour 0: tapping; hour 1: idle
     psi, length, ambient = 0.3, 10.0, 20.0
     calc = DistributionSystemCalculator(
         {
@@ -62,14 +62,51 @@ def test_dhw_circulation_standby_loss_uses_eq15_when_not_tapping():
 
     mean_temp = 55.0 - 0.5 * 5.0  # Eq.(2)
     expected_tapping = psi * length * (mean_temp - ambient) * 1.0 / 1000.0
-    theta_standby = 25.0 * psi ** -0.2  # Eq.(15)
-    expected_standby = psi * length * (theta_standby - ambient) * 1.0 / 1000.0
-
     assert result.timeseries["Q_W_dis_ls_kWh"].iloc[0] == pytest.approx(expected_tapping)
+    assert result.timeseries["Q_W_dis_ls_kWh"].iloc[1] == pytest.approx(0.0)
+
+
+def test_dhw_circulation_standby_loss_uses_eq11_14_decay_model_when_pipe_mass_given():
+    idx = _hourly_index(2)
+    data = pd.DataFrame({"Q_W_kWh": [1.0, 0.0]}, index=idx)
+    psi, length, ambient, hot, delta_t = 0.3, 10.0, 20.0, 55.0, 5.0
+    volume_m3, mass_kg, cp = 0.002, 3.0, 1.069e-4  # a modest copper pipe run
+    calc = DistributionSystemCalculator(
+        {
+            "dhw": {
+                "operation_mode": "demand",
+                "dhw_temperature_C": hot,
+                "dhw_return_deltaT_K": delta_t,
+                "pipe_sections": [
+                    {
+                        "length_m": length,
+                        "linear_thermal_transmittance_W_mK": psi,
+                        "ambient_temperature_C": ambient,
+                        "recoverable": False,
+                        "pipe_volume_m3": volume_m3,
+                        "pipe_mass_kg": mass_kg,
+                        "pipe_specific_heat_kWh_kgK": cp,
+                    }
+                ],
+            }
+        }
+    )
+    result = calc.run_timeseries(data)
+
+    mean_temp = hot - 0.5 * delta_t  # Eq.(2), = theta_W,avg,begin
+    thermal_capacitance = _CW * _RHO_W * volume_m3 + cp * mass_kg  # Eq.(12) denominator
+    delta_full = hot - ambient
+    q_L_kW = psi * delta_full * length / 1000.0  # Eq.(13)
+    c_i = (q_L_kW / thermal_capacitance) * (1.0 / delta_full)  # Eq.(12), t_atap = 1 h
+    theta_atap = ambient + (mean_temp - ambient) * math.exp(-c_i)  # Eq.(11)
+    theta_avg = (mean_temp + theta_atap) / 2.0  # Eq.(14)
+    expected_standby = psi * length * (theta_avg - ambient) * 1.0 / 1000.0  # Eq.(10)
+
     assert result.timeseries["Q_W_dis_ls_kWh"].iloc[1] == pytest.approx(expected_standby)
-    # Sanity: a 20 K-ish standby temperature drop still carries a real loss,
-    # not zero - this is exactly the term the old implementation omitted.
     assert expected_standby > 0.0
+    # The decayed average must sit strictly between the operating mean and
+    # ambient - a sanity check on the exponential-decay direction.
+    assert ambient < theta_avg < mean_temp
 
 
 def test_dhw_non_circulating_section_uses_eq15_for_the_whole_step():
@@ -203,6 +240,7 @@ def test_ribbon_heater_eq31_uses_only_flagged_sections():
                 "dhw_temperature_C": 55.0,
                 "dhw_return_deltaT_K": 5.0,
                 "ribbon_heater": True,
+                "pressure_loss_per_m_kPa": 0.0,  # no pump, to isolate the ribbon heater's own energy
                 "pipe_sections": [
                     {
                         "length_m": 10.0,
@@ -224,10 +262,119 @@ def test_ribbon_heater_eq31_uses_only_flagged_sections():
 
     mean_temp = 55.0 - 0.5 * 5.0
     expected_rib = 0.3 * 10.0 * (mean_temp - 20.0) * 1.0 / 1000.0  # only the flagged section
-    assert result.timeseries["W_W_dis_rib_kWh"].iloc[0] == pytest.approx(expected_rib)
+    row = result.timeseries.iloc[0]
+    assert row["W_W_dis_rib_kWh"] == pytest.approx(expected_rib)
     # It must be strictly less than the total loss (which includes the second,
     # non-ribbon section).
-    assert expected_rib < result.timeseries["Q_W_dis_ls_kWh"].iloc[0]
+    assert expected_rib < row["Q_W_dis_ls_kWh"]
+    # The ribbon heater's electricity must be folded into the service's total
+    # auxiliary energy (Table 4 has one W_W,dis output, not a separate ribbon
+    # category) ...
+    assert row["W_W_dis_aux_kWh"] == pytest.approx(expected_rib)  # no pump configured here
+    # ... and the thermal loss it compensates electrically must be removed
+    # from what the generator still needs to supply.
+    total_loss = row["Q_W_dis_ls_kWh"]
+    assert row["Q_W_dis_in_kWh"] == pytest.approx(1.0 + (total_loss - expected_rib))
+
+
+def test_dhw_standby_loss_chains_across_consecutive_idle_hours():
+    """theta_W,avg,begin for an idle hour must be the PREVIOUS idle hour's
+    decayed end temperature, not reset to the operating mean every hour - a
+    pipe idle for several hours keeps cooling, it does not reheat itself."""
+
+    idx = _hourly_index(3)
+    data = pd.DataFrame({"Q_W_kWh": [1.0, 0.0, 0.0]}, index=idx)  # tap, then 2 idle hours
+    psi, length, ambient = 0.3, 10.0, 20.0
+    calc = DistributionSystemCalculator(
+        {
+            "dhw": {
+                "operation_mode": "demand",
+                "dhw_temperature_C": 55.0,
+                "dhw_return_deltaT_K": 5.0,
+                "pipe_sections": [
+                    {
+                        "length_m": length,
+                        "linear_thermal_transmittance_W_mK": psi,
+                        "ambient_temperature_C": ambient,
+                        "pipe_volume_m3": 0.002,
+                        "pipe_mass_kg": 3.0,
+                        "pipe_specific_heat_kWh_kgK": 1.069e-4,
+                    }
+                ],
+            }
+        }
+    )
+    result = calc.run_timeseries(data)
+    loss_hour1 = result.timeseries["Q_W_dis_ls_kWh"].iloc[1]
+    loss_hour2 = result.timeseries["Q_W_dis_ls_kWh"].iloc[2]
+
+    # The pipe is already closer to ambient at the start of hour 2 than it was
+    # at the start of hour 1 (the operating mean); a second consecutive idle
+    # hour must therefore lose LESS than the first, not the same amount (which
+    # is what resetting to the operating mean every hour would produce).
+    assert 0.0 < loss_hour2 < loss_hour1
+
+
+def test_theta_w_avg_override_bypasses_the_decay_model():
+    idx = _hourly_index(2)
+    data = pd.DataFrame(
+        {"Q_W_kWh": [1.0, 0.0], "theta_W_avg_C": [55.0, 30.0]}, index=idx
+    )
+    psi, length, ambient = 0.3, 10.0, 20.0
+    calc = DistributionSystemCalculator(
+        {
+            "dhw": {
+                "operation_mode": "demand",
+                "dhw_temperature_C": 55.0,
+                "dhw_return_deltaT_K": 5.0,
+                # Deliberately no pipe_volume_m3/pipe_mass_kg: the override
+                # must work without any decay-model data.
+                "pipe_sections": [
+                    {
+                        "length_m": length,
+                        "linear_thermal_transmittance_W_mK": psi,
+                        "ambient_temperature_C": ambient,
+                    }
+                ],
+            }
+        }
+    )
+    result = calc.run_timeseries(data)
+    expected_standby = psi * length * (30.0 - ambient) * 1.0 / 1000.0
+    assert result.timeseries["Q_W_dis_ls_kWh"].iloc[1] == pytest.approx(expected_standby)
+
+
+def test_dhw_pump_control_code_defaults_to_a_table_defined_value():
+    """Table B.7 only defines codes 0 and 3 for DHW pumps - unlike heating's
+    Table B.5, which also defines 4. The default must not silently pick 4."""
+
+    calc = DistributionSystemCalculator({"dhw": {}})
+    assert calc.services["W"]["pump_control_code"] == 3
+    assert calc.services["H"]["pump_control_code"] == 4
+
+
+def test_taps_per_hour_can_be_a_time_varying_profile():
+    idx = _hourly_index(2)
+    data = pd.DataFrame(
+        {"Q_W_kWh": [1.0, 1.0], "n_tap_W": [1.0, 4.0]}, index=idx
+    )
+    stub_volume, ambient, hot = 0.001, 20.0, 55.0
+    calc = DistributionSystemCalculator(
+        {
+            "dhw": {
+                "operation_mode": "continuous",
+                "dhw_temperature_C": hot,
+                "pipe_sections": [],
+                "stub_volume_m3": stub_volume,
+                "stub_ambient_temperature_C": ambient,
+                "taps_per_hour": 1.0,  # must be overridden by the n_tap_W column
+            }
+        }
+    )
+    result = calc.run_timeseries(data)
+    loss_1tap = result.timeseries["Q_W_dis_stub_kWh"].iloc[0]
+    loss_4tap = result.timeseries["Q_W_dis_stub_kWh"].iloc[1]
+    assert loss_4tap == pytest.approx(4.0 * loss_1tap)
 
 
 def test_beta_override_bypasses_the_internal_heuristic():
@@ -246,6 +393,33 @@ def test_beta_override_bypasses_the_internal_heuristic():
     )
     result = calc.run_timeseries(data)
     assert result.timeseries["beta_H_dis"].iloc[0] == pytest.approx(0.4)
+
+
+def test_cooling_default_supply_return_temperatures_are_not_heating_values():
+    """An unconfigured cooling service must not default to the heating
+    circuit's 45/35 degC - that sits above any realistic ambient, clips
+    Eq.(7)'s delta to 0 and silently reports zero distribution loss."""
+
+    idx = _hourly_index(1)
+    data = pd.DataFrame({"Q_C_kWh": [2.0]}, index=idx)
+    calc = DistributionSystemCalculator(
+        {
+            "cooling": {
+                "operation_mode": "continuous",
+                "pipe_sections": [
+                    {
+                        "length_m": 20.0,
+                        "linear_thermal_transmittance_W_mK": 0.3,
+                        "ambient_temperature_C": 26.0,
+                    }
+                ],
+            }
+        }
+    )
+    result = calc.run_timeseries(data)
+    mean_temp = result.timeseries["theta_C_dis_mean_C"].iloc[0]
+    assert mean_temp < 20.0  # a chilled-water-like default, not a heating one
+    assert result.timeseries["Q_C_dis_ls_kWh"].iloc[0] > 0.0
 
 
 def test_ambient_temperature_can_reference_a_time_varying_column():

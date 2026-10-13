@@ -268,9 +268,11 @@
   <header>
     <h1>Heat Pump EN 15316-4-2 Implementation Audit</h1>
     <p>
-      A traceable crosswalk between EN 15316-4-2:2008, the pyBuildingEnergy
-      heat-pump code, and the generated result files. This page is written for
-      reviewing the standard, source code, and outputs side by side.
+      A traceable crosswalk between EN 15316-4-2:2017 (Method A, clause 6 -
+      superseding the 2008 edition this page audited previously), the
+      pyBuildingEnergy heat-pump code, and the generated result files. This
+      page is written for reviewing the standard, source code, and outputs
+      side by side.
     </p>
   </header>
 
@@ -279,9 +281,10 @@
       <p>
         <strong>Audit workflow:</strong> keep this page open next to
         <code>src/pybuildingenergy/source/heat_pump_15316_4_2.py</code> and the
-        user-supplied <strong>DIN EN 15316-4-2:2008-09</strong> PDF. Search the
-        code by function name and search the standard by the clause or annex
-        labels given below.
+        user-supplied <strong>EN 15316-4-2:2017</strong> PDF (DIN EN
+        15316-4-2:2017-09 in German-national form; this standard supersedes
+        DIN EN 15316-4-2:2008-09). Search the code by function name and
+        search the standard by the clause or annex labels given below.
       </p>
       <p class="small">
         The standard is a copyrighted document and is not redistributed here.
@@ -308,11 +311,24 @@
         <div class="card">
           <h3>Implemented Standard Path</h3>
           <p>
-            The implementation follows the detailed temperature-bin method for
-            heat-pump generators in <strong>EN 15316-4-2:2008, clause 5.3</strong>.
-            It calculates generation energy for space heating and DHW from
+            The implementation follows <strong>EN 15316-4-2:2017, clause 6,
+            "Method A" (hourly/bin)</strong> for heat-pump generators -
+            superseding the 2008 edition's clause 5.3 bin method this page
+            previously audited. The 2017 edition still steps through
+            hourly/bin time steps (clause 3.7's "bin" and clause 6.4's
+            "hourly (or lower)"/"bin" time steps are unchanged core
+            concepts), but the part-load performance calculation at each
+            step is now the 2017 edition's own Eq.(14)-(30) (clause
+            6.7.2.6/6.7.2.7), not the 2008 edition's bin-ratio approach. It
+            calculates generation energy for space heating and DHW from
             thermal requirements, source/sink temperatures, product capacity
-            data, COP maps, auxiliary energy, storage losses, and backup limits.
+            data, COP maps, auxiliary energy, storage losses, and backup
+            limits. <strong>Not implemented</strong>: clause 7's "Method B"
+            (monthly/annual - a different time resolution) and clause
+            6.7.3's "Path B" (EN 14825/Annex D exergetic-efficiency
+            approach - the <code>part_load_performance_method="en14825"</code>
+            option is a simpler, pre-existing multiplicative correction, not
+            a faithful Path B implementation).
           </p>
         </div>
         <div class="card">
@@ -328,7 +344,8 @@
         <div class="card">
           <h3>Cooling Treatment</h3>
           <p>
-            EN 15316-4-2:2008 is a heating and DHW generation standard. The
+            EN 15316-4-2:2017 (clause 1, Scope) is a heating and DHW
+            generation standard only. The
             default examples therefore use EN 16798-9, EN 16798-15 and
             EN 16798-13 for space cooling. The older reversible EER-bin
             extension remains available as a comparison path with
@@ -527,7 +544,7 @@
             <td><span class="status implemented">implemented</span></td>
           </tr>
           <tr>
-            <td>Outside EN 15316-4-2:2008 heating/DHW scope</td>
+            <td>Outside EN 15316-4-2:2017 heating/DHW scope</td>
             <td>Simplified reversible cooling with EER map.</td>
             <td>
               <code>_allocate_cooling_runtime()</code><br>
@@ -717,7 +734,7 @@
       <div class="formula">T_H_sink_C = heating_curve(T_ext_C) if no heating sink temperature is supplied</div>
 
       <h3>2. Assign Outdoor-Temperature Bins</h3>
-      <p>Functions: <code>_simulate_bins()</code>, <code>_simulate_one_bin()</code>. Standard audit pointer: EN 15316-4-2:2008, clause 5.2 BIN method.</p>
+      <p>Functions: <code>_simulate_bins()</code>, <code>_simulate_one_bin()</code>. Standard audit pointer: EN 15316-4-2:2017, clause 6 "Method A" (hourly/bin), clause 3.7's "bin" definition.</p>
       <div class="formula">bin_lower_C = floor(T_ext_C / bin_width_C) * bin_width_C</div>
       <div class="formula">bin_upper_C = bin_lower_C + bin_width_C</div>
       <div class="formula">hours = sum(time_step_hours)</div>
@@ -1023,7 +1040,7 @@ examples/outputs/heat_pump_15316_4_2_bolzano/</code></pre>
           </tr>
           <tr>
             <td>Cooling</td>
-            <td>Implemented as a reversible EER-bin extension, not as a normative EN 15316-4-2:2008 heating/DHW result.</td>
+            <td>Implemented as a reversible EER-bin extension, not as a normative EN 15316-4-2:2017 heating/DHW result.</td>
             <td>Keep cooling outputs separate when making claims about EN 15316-4-2 compliance.</td>
           </tr>
           <tr>
@@ -1036,6 +1053,60 @@ examples/outputs/heat_pump_15316_4_2_bolzano/</code></pre>
             <td>Not calculated here.</td>
             <td>Feed generator energy outputs into the relevant overall energy/performance calculation.</td>
           </tr>
+          <tr>
+            <td>Method B (clause 7, monthly/annual)</td>
+            <td>Only Method A (clause 6, hourly/bin) is implemented.</td>
+            <td>Method B needs different input/output wiring (a different time resolution); not implemented.</td>
+          </tr>
+          <tr>
+            <td>Path B (clause 6.7.3, EN 14825/Annex D exergetic approach)</td>
+            <td><code>part_load_performance_method="en14825"</code> is a simpler,
+            pre-existing multiplicative degradation correction, NOT a faithful
+            Path B/Annex D implementation (Carnot COP x interpolated
+            exergetic-efficiency factor from EN 14825 A/B/C/D points).</td>
+            <td>The default <code>"method_a_2017"</code> path (Path A, EN
+            14511-series, clause 6.7.2) is the one that is faithfully implemented.</td>
+          </tr>
+          <tr>
+            <td>Zero-demand / operating-season distinction (Eq.(31)-(32))</td>
+            <td>By default every idle hour is treated as "powered, zero
+            output" (Eq.(31): standby_power_W applies). A <code>powered</code>
+            input column lets a caller mark specific steps as outside the
+            unit's operating season (Eq.(32): zero energy, no standby draw
+            either) when that distinction matters.</td>
+            <td>Omit the column to keep the pre-existing always-powered
+            behaviour unchanged.</td>
+          </tr>
+          <tr>
+            <td>Simultaneous operation (<code>combined_operation="independent"</code>)</td>
+            <td>Clause 5.9 says simultaneous heating+DHW needs its OWN
+            dedicated test data (capacity/COP measured for the combined
+            mode) - this module has no such input and instead runs the SAME
+            map for both services, capping their COMBINED runtime at the
+            step duration so one compressor cannot appear to deliver more
+            than 100% of the period twice over.</td>
+            <td>Not a faithful clause 5.9 simultaneous-mode calculation;
+            treat <code>"independent"</code> as an approximation, and
+            <code>"alternative"</code> (the default - sequential,
+            diverter-valve-style) as the more literally faithful mode.</td>
+          </tr>
+          <tr>
+            <td>Performance map validation</td>
+            <td>Interpolated maps are not checked against EN 14511's own
+            mandatory rating-point grid; a map with too few points, or
+            conflicting duplicate points, only gets a warning, not a hard
+            error.</td>
+            <td>Conformance of the input data to EN 14511 remains the
+            caller's responsibility.</td>
+          </tr>
+          <tr>
+            <td>Storage losses (heating/DHW buffer tanks)</td>
+            <td>Modelled as a single normalised daily loss value
+            (<code>*_storage_loss_kWh_per_day</code>), temperature-corrected -
+            not EN 15316-5's own full storage-subsystem model.</td>
+            <td>Use <code>StorageSystemCalculator</code> (EN 15316-5)
+            upstream/downstream for a full storage-subsystem calculation.</td>
+          </tr>
         </tbody>
       </table>
     </section>
@@ -1044,10 +1115,15 @@ examples/outputs/heat_pump_15316_4_2_bolzano/</code></pre>
       <h2>References For The Audit</h2>
       <ul>
         <li>
-          <strong>DIN EN 15316-4-2:2008-09 / EN 15316-4-2:2008</strong>,
-          user-supplied PDF: <em>Heating systems in buildings - Method for
-          calculation of system energy requirements and system efficiencies -
-          Part 4-2: Space heating generation systems, heat pump systems</em>.
+          <strong>EN 15316-4-2:2017</strong> (DIN EN 15316-4-2:2017-09 in
+          German-national form), user-supplied PDF: <em>Energy performance
+          of buildings - Method for calculation of system energy
+          requirements and system efficiencies - Part 4-2: Space heating
+          generation systems, heat pump systems, Module M3-8-2, M8-8-2</em>.
+          Supersedes DIN EN 15316-4-2:2008-09 / EN 15316-4-2:2008, this
+          page's previous audit target (still implemented alongside the
+          current code as <code>Standards/DIN EN 15316-4-2_2008-09.pdf</code>
+          for reference, but no longer what the code follows).
         </li>
         <li>
           <a href="https://build-up.ec.europa.eu/sites/default/files/content/P103_EN_CENSE_EN_15316-4-2.pdf">CENSE Information Paper P103</a>,

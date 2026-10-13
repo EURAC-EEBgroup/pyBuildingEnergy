@@ -91,7 +91,7 @@
       "storage_auxiliaries": "StorageSystemCalculator.timeseries['W_H_sto_aux_kWh' / 'W_W_sto_aux_kWh']",
       "cooling_generation": "CoolingGenerationSystemCalculator.timeseries['E_C_total_kWh']",
       "ventilation_fans": "VentilationSystemCalculator.timeseries['E_vent_fan_kWh']",
-      "chp_or_boiler_auxiliaries": "CogenerationSystemCalculator / CombustionBoilerSystemCalculator timeseries (they read E_site_el_load_kWh themselves)"
+      "chp_or_boiler_auxiliaries": "CogenerationSystemCalculator / BoilerGeneratorCalculator timeseries (they read E_site_el_load_kWh themselves)"
     },
     "annual_only": {
       "heat_pump": "HeatPumpSystemCalculator.summary['E_total_electricity_kWh'] (bin method: no hourly series)."
