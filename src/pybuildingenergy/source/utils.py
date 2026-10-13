@@ -1767,6 +1767,19 @@ def _resolve_internal_convection_model(building_object, model_override=None) -> 
     return "table"
 
 
+def _surface_frame_area_fraction(surface, default: float = 0.25) -> float:
+    """Frame area fraction F_fr of a window; ``default`` (ISO 52016-1 Table B.21) when not given."""
+    if not isinstance(surface, dict):
+        return default
+    try:
+        ffr = float(surface.get("frame_area_fraction", default))
+    except (TypeError, ValueError):
+        return default
+    if not np.isfinite(ffr):
+        return default
+    return min(1.0, max(0.0, ffr))
+
+
 def _surface_tilt_for_internal_convection(surface: dict) -> float:
     ori = surface.get("orientation", {}) if isinstance(surface, dict) else {}
     if isinstance(ori, dict):
@@ -4106,6 +4119,8 @@ class ISO52016:
             "height_sum": 0.0,
             "parapet_sum": 0.0,
             "parapetA": 0.0,
+            "ffrA": 0.0,          # frame_area_fraction * A (windows only)
+            "has_ffr": False,
         })
 
         for s in building_object["building_surface"]:
@@ -4165,6 +4180,8 @@ class ISO52016:
             b["parapet_sum"] += parapet_
             if b["type"] == "transparent":
                 b["parapetA"] += parapet_ * A
+                b["ffrA"] += _surface_frame_area_fraction(s) * A
+                b["has_ffr"] = b["has_ffr"] or ("frame_area_fraction" in s)
 
         # Build new surfaces list
         new_surfaces = []
@@ -4213,6 +4230,8 @@ class ISO52016:
                 "height": height_equiv,
                 "parapet": parapet_equiv,
             }
+            if b["type"] == "transparent" and b["has_ffr"]:
+                agg["frame_area_fraction"] = b["ffrA"] / A
             if b["adjacent_zone"] is not None:
                 agg["adjacent_zone"] = b["adjacent_zone"]
             if b["name_adj_zone"] is not None:
@@ -7960,7 +7979,11 @@ class ISO52016:
                             '''
                             
                             # case with shading reduction factor
-                            Ffr_wi = 0.25 # <- to modify with shading calculation annex F. o.25 is a good approximation
+                            Ffr_wi = (
+                                _surface_frame_area_fraction(building_object["building_surface"][Eli])
+                                if isinstance(building_object, dict)
+                                else 0.25
+                            )
                             if isinstance(building_object, dict):
                                 _, g_step, _ = cls._window_movable_shading_properties(
                                     building_object["building_surface"][Eli], sim_df, Tstepi
@@ -9567,7 +9590,11 @@ class ISO52016:
                             '''
                             
                             # case with shading reduction factor
-                            Ffr_wi = 0.25 # <- to modify with shading calculation annex F. o.25 is a good approximation
+                            Ffr_wi = (
+                                _surface_frame_area_fraction(building_object["building_surface"][Eli])
+                                if isinstance(building_object, dict)
+                                else 0.25
+                            )
                             if isinstance(building_object, dict):
                                 _, g_step, _ = cls._window_movable_shading_properties(
                                     building_object["building_surface"][Eli], sim_df, Tstepi
