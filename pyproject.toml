@@ -9,7 +9,7 @@ py-modules = []
 
 [project]
 name = "pybuildingenergy"
-version = "2.0.3"
+version = "2.1.0"
 description = "Energy Simulation of building using EN ISO 52000, EN ISO 15316, EN ISO 16798, EN ISO 12831, and more"
 license = "BSD-3-Clause"
 license-files = ["LICENSE.md"]

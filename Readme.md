@@ -13,11 +13,11 @@
 >
 > **ANSI/ASHRAE Standard 140-2023, Section 7: both Thermal Fabric test groups pass the Annex A3 criteria (Table A3-14)** —
 > **Low Mass 20/21 ranges met (18 required), High Mass 17/19 (17 required), cases 600–695 and 900–995.**
-> Scripts: [`examples/ashrae140_bestest/`](examples/ashrae140_bestest/) · reports: [`examples/ashrae140_bestest/reports/index.html`](examples/ashrae140_bestest/reports/index.html)
+> Scripts: [`examples/ashrae140_bestest/`](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/tree/master/examples/ashrae140_bestest/) · reports: [`examples/ashrae140_bestest/reports/index.html`](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/examples/ashrae140_bestest/reports/index.html)
 >
 > **EN ISO 52016-1:2017, Section 7.2 verification cases (600, 640, 900, 940, 600FF, 900FF): 7 of 8 annual heating/cooling needs within ±10% of Tables 28–29, annual mean operative temperature within 0.4 K in all six cases**
 > (ISO 52016-1 defines no pass/fail tolerance; the one value above ±10% is Case 640 cooling, +10.3%).
-> Scripts: [`examples/iso52016_bestest/`](examples/iso52016_bestest/) · reports: [`examples/iso52016_bestest/reports/index.html`](examples/iso52016_bestest/reports/index.html)
+> Scripts: [`examples/iso52016_bestest/`](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/tree/master/examples/iso52016_bestest/) · reports: [`examples/iso52016_bestest/reports/index.html`](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/examples/iso52016_bestest/reports/index.html)
 >
 > **Some sources are omitted on purpose: we are not authorized to share parts, tables or limits of these standards.**
 > The ASHRAE 140 acceptance-range values (ANSI/ASHRAE Standard 140-2023, Annex A3, Tables A3-1 to A3-4) and the ISO 52016-1
@@ -72,7 +72,7 @@ while the UNI/TS 11300 parameters are used to describe how those needs are
 served and converted into system and energy-carrier quantities. The repository
 does not claim to implement a complete standalone UNI/TS 11300 certification
 calculation; the example archetypes and payload builder are available in
-[`examples/building_examples.py`](examples/building_examples.py).
+[`examples/building_examples.py`](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/examples/building_examples.py).
 
 -- 
 
@@ -131,8 +131,8 @@ PYTHONPATH=src python examples/iso52016_bestest/run_comparison.py
 PYTHONPATH=src python examples/iso52016_bestest/generate_reports.py    # reports/index.html
 ```
 
-Details, inputs and remaining gaps: [ASHRAE 140 README](examples/ashrae140_bestest/README.md)
-and [ISO 52016-1 README](examples/iso52016_bestest/README.md).
+Details, inputs and remaining gaps: [ASHRAE 140 README](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/examples/ashrae140_bestest/README.md)
+and [ISO 52016-1 README](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/examples/iso52016_bestest/README.md).
 
 ### Sources not distributed
 
@@ -152,8 +152,8 @@ Annex A3 was introduced by Addendum b to ANSI/ASHRAE Standard 140-2020 and is
 incorporated in the 2023 edition. **Anyone who owns ANSI/ASHRAE Standard 140
 (and EN ISO 52016-1 for the ISO cases) can reproduce every check:** copy the
 values into the local files following the templates
-[`annex_a3_ranges.template.json`](examples/ashrae140_bestest/annex_a3_ranges.template.json) and
-[`iso_reference_tables.template.json`](examples/iso52016_bestest/iso_reference_tables.template.json),
+[`annex_a3_ranges.template.json`](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/examples/ashrae140_bestest/annex_a3_ranges.template.json) and
+[`iso_reference_tables.template.json`](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/examples/iso52016_bestest/iso_reference_tables.template.json),
 which name the table each value comes from. Without them the cases still run,
 range and reference checks report "not available" and the related tests are
 skipped. Reports and console output never print the range or reference
@@ -199,7 +199,7 @@ More details in the example folder.
 - [x] Assessment of DHW system design heat load with EN 12831-3 storage switch points, time lag, effective reheating power and supply-curve sizing.
 
 For the audit trail between the standard, code and outputs, open
-[DHW EN 12831-3 Implementation Audit](docs/dhw_12831_3_audit.html).
+[DHW EN 12831-3 Implementation Audit](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/docs/dhw_12831_3_audit.html).
 
 ## Space Emission Systems - EN 15316-2 **(New)**
 
@@ -209,7 +209,7 @@ control effects, equivalent internal-temperature changes, embedded emitter
 losses, emission auxiliary electricity and annual emission expenditure factors.
 
 For an audit trail between the standard, code and output files, open
-[Emission EN 15316-2 Implementation Audit](docs/emission_15316_2_audit.html).
+[Emission EN 15316-2 Implementation Audit](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/docs/emission_15316_2_audit.html).
 
 **Auxiliary energy.** By default the emission auxiliary energy is the fans only
 (EN 15316-2 eq. 27-28). Control-device power (`control_power_W`, `control_count`) is
@@ -257,7 +257,7 @@ recoverable distribution losses, pump auxiliary electricity, recoverable pump
 heat and recovered pump heat in the fluid before the generator calculation.
 
 For the audit trail, open
-[Distribution EN 15316-3 Implementation Audit](docs/distribution_15316_3_audit.html).
+[Distribution EN 15316-3 Implementation Audit](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/docs/distribution_15316_3_audit.html).
 
 ## Heating And DHW Storage Systems - EN 15316-5 **(New)**
 
@@ -268,7 +268,7 @@ auxiliary electricity, recoverable storage losses and heat recovered in the
 medium before the generator calculation.
 
 For the audit trail, open
-[Storage EN 15316-5 Implementation Audit](docs/storage_15316_5_audit.html).
+[Storage EN 15316-5 Implementation Audit](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/docs/storage_15316_5_audit.html).
 
 ## Heat Pump Generation - EN 15316-4-2 **(New)**
 
@@ -280,7 +280,7 @@ For the audit trail, open
 
 The heating and DHW calculation follows EN 15316-4-2:2017's Method A (clause 6, hourly/bin) structure: outdoor/source temperature bins, product heating capacity and COP maps (EN 14511-series, Path A), part-load performance per Eq.(14)-(30), runtime/capacity checks, auxiliary energy, optional simplified storage losses, backup energy and SPF outputs. The runnable examples use the EN 16798 cooling modules by default; the older heat-pump EER cooling branch is still available with `--calculation-path heat-pump-cooling`.
 
-For a clause-by-clause audit trail between the standard, the implementation and the output files, open [Heat Pump EN 15316-4-2 Implementation Audit](docs/heat_pump_15316_4_2_audit.html).
+For a clause-by-clause audit trail between the standard, the implementation and the output files, open [Heat Pump EN 15316-4-2 Implementation Audit](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/docs/heat_pump_15316_4_2_audit.html).
 
 ## Additional Generation And Renewable Modules - EN 15316-4-1, EN 15316-4-4, EN 15316-4-5, EN 15316-4-3/4-6 **(New)**
 
@@ -293,8 +293,8 @@ away from the default heat pump:
 - `RenewableEnergySystemCalculator` implements the EN 15316-4-3/4-6 solar thermal and PV accounting branch used by the examples and STREPIN runner.
 
 Audit pages:
-[Generation EN 15316-4-1/4-4/4-5](docs/generation_15316_4_1_4_4_4_5_audit.html) and
-[Renewables EN 15316-4-3/4-6](docs/renewables_15316_4_3_4_6_audit.html).
+[Generation EN 15316-4-1/4-4/4-5](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/docs/generation_15316_4_1_4_4_4_5_audit.html) and
+[Renewables EN 15316-4-3/4-6](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/docs/renewables_15316_4_3_4_6_audit.html).
 
 ## Heat Pump Product Performance - EN 14511 And EN 14825 **(New)**
 
@@ -304,7 +304,7 @@ inspection values. The examples use this path by default and apply the EN 14825
 water-based part-load correction to heating/DHW COP and EN 16798-13 cooling EER.
 
 For the audit trail between the standards, code and outputs, open
-[EN 14511 / EN 14825 Product Performance Implementation Audit](docs/performance_14511_14825_audit.html).
+[EN 14511 / EN 14825 Product Performance Implementation Audit](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/docs/performance_14511_14825_audit.html).
 
 ## Cooling System Modules - EN 16798-9, EN 16798-15 And EN 16798-13 **(New)**
 
@@ -314,11 +314,11 @@ The heat-pump examples now treat space cooling with the cooling-side EN 16798 st
 - `CoolingStorageSystemCalculator` implements EN 16798-15 chilled-water storage heat gains and pump auxiliary energy.
 - `CoolingGenerationSystemCalculator` implements EN 16798-13 compression cooling generation using cooling capacity/EER product maps or nominal EER fallback data.
 
-For the audit trail between the standards, code and outputs, open [Cooling EN 16798 Implementation Audit](docs/cooling_16798_audit.html).
+For the audit trail between the standards, code and outputs, open [Cooling EN 16798 Implementation Audit](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/docs/cooling_16798_audit.html).
 
 For the whole end-to-end workflow that interconnects EN ISO 52016, EN 12831-3,
 EN 15316, EN 16798, EN 14511 and EN 14825 in the Athens and Bolzano examples,
-open [Heat-Pump Example Simulation Workflow Audit](docs/simulation_workflow_audit.html).
+open [Heat-Pump Example Simulation Workflow Audit](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/docs/simulation_workflow_audit.html).
 
 ```python
 import pandas as pd
@@ -563,7 +563,7 @@ EN 15316-4 options for biomass, CHP and district heat where selected.
 
 Climate zone B now defaults to `examples/Palermo_PVGIS_TMY.epw`, downloaded from
 PVGIS and normalized for `pvlib.read_epw`. Open
-[Italian STREPIN Archetype Engine Audit](docs/strepin_archetype_engine_audit.html)
+[Italian STREPIN Archetype Engine Audit](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/docs/strepin_archetype_engine_audit.html)
 for the data and workflow crosswalk.
 
 The script checks that the ISO52016 run produces both heating and cooling demand and that DHW demand is non-zero before running the heat-pump calculation.
@@ -693,7 +693,7 @@ the component is configured.
 
 For the implemented / simplified / not-included scope, all configuration keys
 and the hourly diagnostic columns, open
-[Ventilation AHU EN 16798-5-1 Implementation Audit](docs/ventilation_ahu_audit.html).
+[Ventilation AHU EN 16798-5-1 Implementation Audit](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/docs/ventilation_ahu_audit.html).
 
 ## Input Quality check  **(New)**
 

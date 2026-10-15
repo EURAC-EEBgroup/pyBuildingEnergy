@@ -7283,7 +7283,37 @@ class ISO52016:
         **kwargs,
     ):
         """
+        Hourly ISO 52016-1 single-zone calculation of the sensible and latent
+        energy needs for heating and cooling and of the internal temperatures.
         Wrapper that runs the core calculation and surfaces any simulation error.
+
+        :param building_object: building dictionary (see ``sanitize_and_validate_BUI``).
+        :param nrHCmodes: number of heating/cooling modes (3 columns of the system matrix).
+        :param c_int_per_A_us: areal heat capacity of the zone air and furniture [J/(m2 K)].
+        :param f_int_c: convective fraction of the internal gains.
+        :param f_sol_c: convective fraction of the solar gains.
+        :param f_H_c, f_C_c: convective fractions of the heating and cooling systems.
+        :param delta_Theta_er: average difference between air and apparent sky temperature [K].
+
+        Useful keyword arguments:
+
+        * ``weather_source`` ("pvgis" | "epw") and ``path_weather_file``.
+        * ``hvac_control_variable``: "operative" (default, ISO 52016-1) or "air"
+          (zone air temperature thermostat, as required by ASHRAE 140).
+        * ``internal_convection_model``: "table" (default) or "tarp".
+        * ``external_convection_model``: "table" (default), "doe2", "mowitt",
+          "blast" or "simplecombined"; ``external_convection_h_min`` [W/(m2 K)].
+        * ``external_radiation_model``: "table" (default) or "dynamic";
+          ``sky_temperature_model``; ``external_emissivity_default``.
+        * ``return_sankey_data``: also return the data of the energy-flow diagram.
+
+        Per-surface optional inputs of the building dictionary: ``construction_class``
+        (Table B.13), ``solar_transmittance_correction_factor`` and
+        ``frame_area_fraction`` of windows, ``side_fins`` and
+        ``overhang_properties`` of shaded windows.
+
+        :return: hourly results DataFrame (Q_H, Q_C [Wh], T_op, T_air, ...) and
+            the annual summary.
         """
         try:
             result = cls._Temperature_and_Energy_needs_calculation_core(

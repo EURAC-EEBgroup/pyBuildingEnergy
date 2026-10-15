@@ -95,3 +95,46 @@ clause 6.10, this implementation should be revisited against it.
 `priority_mode` field on `BoilerConfig` for how this is exposed; the default
 (`"proportional"`) is unaffected by this reinterpretation and keeps this
 library's pre-existing combined-load behaviour unchanged.
+
+## EN ISO 52016-1:2017, Tables 28 and 29 - Case 900 heating and cooling columns swapped
+
+**Location:** Clause 7.2.4 "Results of the verification test cases", Tables
+28 (sensible energy needs for heating) and 29 (sensible energy needs for
+cooling), column "900".
+
+**What the standard prints:** the Case 900 "heating" column has its largest
+values in July-September and its smallest in January-February, and the
+"cooling" column is close to zero all year. That is the profile of a cooling
+need in the first column and of nothing in the second, for a Denver building.
+
+**The inconsistency:** the printed "heating" column is the cooling need and the
+real Case 900 heating sequence is missing; the same column error is not
+present for Case 600, 640 and 940. The EPB Center's public "Collection of
+comments and suggestions on EN ISO 52016-1:2017" (comment no. 28,
+https://epb.center/support/documents/iso_52016-1_details/) gives the corrected
+heating sequence and confirms that the printed heating column is the cooling
+need.
+
+**What the implementation does:** the validation harness
+(`examples/iso52016_bestest/`) compares Case 900 with the corrected
+sequences (cooling = the column printed as heating; heating = the sequence
+of the EPB Center comment), loaded from a local file that is not
+distributed with the repository (ISO copyright). This is an external
+correction, not an ISO corrigendum.
+
+## ANSI/ASHRAE Standard 140-2023, Table 7-28 - Case 900 raised-floor resistance
+
+**Location:** Informative Table 7-28, "Total surface-to-surface" resistance of
+the "High-Mass Case: Raised Floor", compared with Tables 7-27 and 7-32.
+
+**What the standard prints:** 25.256 m2K/W in Table 7-28 (Case 900) and
+25.246 m2K/W in Table 7-32 (Case 980, whose floor "is the same as the Case
+900 floor").
+
+**The inconsistency:** the layers of Table 7-27 (80 mm concrete slab,
+k = 1.13 W/(m K); 1.007 m insulation, k = 0.04 W/(m K)) add up to 25.246
+m2K/W, the value of Table 7-32. Table 7-28 differs by 0.010 m2K/W.
+
+**What the implementation does:** the floor resistance is built from the
+layers of Table 7-27 (25.246 m2K/W), in `examples/ashrae140_bestest/`.
+
