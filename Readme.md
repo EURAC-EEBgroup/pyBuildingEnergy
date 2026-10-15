@@ -8,6 +8,22 @@
 *Please cite us if you use this library*: 
 [![DOI](https://zenodo.org/badge/761715706.svg)](https://zenodo.org/doi/10.5281/zenodo.10887919)
 
+> [!IMPORTANT]
+> **Validation of the ISO 52016-1 hourly engine (October 2026)**
+>
+> **ANSI/ASHRAE Standard 140-2023, Section 7: both Thermal Fabric test groups pass the Annex A3 criteria (Table A3-14)** —
+> **Low Mass 20/21 ranges met (18 required), High Mass 17/19 (17 required), cases 600–695 and 900–995.**
+> Scripts: [`examples/ashrae140_bestest/`](examples/ashrae140_bestest/) · reports: [`examples/ashrae140_bestest/reports/index.html`](examples/ashrae140_bestest/reports/index.html)
+>
+> **EN ISO 52016-1:2017, Section 7.2 verification cases (600, 640, 900, 940, 600FF, 900FF): 7 of 8 annual heating/cooling needs within ±10% of Tables 28–29, annual mean operative temperature within 0.4 K in all six cases**
+> (ISO 52016-1 defines no pass/fail tolerance; the one value above ±10% is Case 640 cooling, +10.3%).
+> Scripts: [`examples/iso52016_bestest/`](examples/iso52016_bestest/) · reports: [`examples/iso52016_bestest/reports/index.html`](examples/iso52016_bestest/reports/index.html)
+>
+> **Some sources are omitted on purpose: we are not authorized to share parts, tables or limits of these standards.**
+> The ASHRAE 140 acceptance-range values (ANSI/ASHRAE Standard 140-2023, Annex A3, Tables A3-1 to A3-4) and the ISO 52016-1
+> reference results (EN ISO 52016-1:2017, clause 7.2.4, Tables 28–34) are not in the repository. **Owning the standards is
+> enough to see and check everything locally** — see [Sources not distributed](#sources-not-distributed).
+
 ## Documentation **(New)**
 
 Check our **new documentation** in GitHub Pages: [pybuildingenergy docs](https://eurac-eebgroup.github.io/pybuildingenergy-docs/).
@@ -24,7 +40,7 @@ The new EPBD recast provides an update on building performance assessment throug
 
 The methodology should represent the actual operating conditions, allow for the use of measured energy for accuracy and comparability purposes, and be based on hourly or sub-hourly intervals that take into account the variable conditions significantly impacting the operation and performance of the system, as well as internal conditions.
 
-**pyBuildingEnergy** aims to provide an assessment of building performance both in terms of energy and comfort. In this initial release, it is possible to assess the energy performance of the building using ISO 52016-1:2018. Additional modules will be added for a more comprehensive evaluation of performance, assessing ventilation, renewable energies, systems, etc.
+**pyBuildingEnergy** aims to provide an assessment of building performance both in terms of energy and comfort. The building energy needs are calculated with ISO 52016-1 (hourly method, single zone and multizone), validated against ANSI/ASHRAE Standard 140-2023 and the ISO 52016-1 verification cases (see [Validation](#validation---ashrae-140-2023-and-iso-52016-1-new)). The EPB system chain (EN 15316, EN 16798, EN 12831-3, EN 14511/14825, EN ISO 52000-1 and related standards) is described in the sections below.
 
 The actual calculation methods for the assessment of building performance are the following:
 
@@ -40,7 +56,133 @@ The calculation methods can be used for residential or non-residential buildings
 
 ISO 52016-1:2018 also contains specifications for the assessment of thermal zones in the building or in the part of a building. The calculations are performed per thermal zone. In the calculations, the thermal zones can be assumed to be thermally coupled or not. ISO 52016-1:2018 is applicable to buildings at the design stage, to new buildings after construction and to existing buildings in the use phase.
 
+## Use of UNI/TS 11300 input data
+
+The project uses UNI/TS 11300 data to describe the technical systems connected to
+the building model. These data provide the system-side parameters needed after
+the ISO 52016-1 calculation, including heating and cooling emission,
+distribution, storage and generation efficiencies, generation COP, recovered
+losses, auxiliary energy and primary-energy factors. The same structure can also
+include domestic-hot-water and ventilation parameters and is used to assemble
+the combined ISO 52016-1 / systems / photovoltaic request.
+
+Therefore, UNI/TS 11300 is used here as an input and system-accounting
+framework: ISO 52016-1 calculates the hourly building heating and cooling needs,
+while the UNI/TS 11300 parameters are used to describe how those needs are
+served and converted into system and energy-carrier quantities. The repository
+does not claim to implement a complete standalone UNI/TS 11300 certification
+calculation; the example archetypes and payload builder are available in
+[`examples/building_examples.py`](examples/building_examples.py).
+
 -- 
+
+## Validation - ASHRAE 140-2023 And ISO 52016-1 **(New)**
+
+Two independent validation harnesses run the ISO 52016-1 engine on the
+BESTEST test cell (8 m x 6 m x 2.7 m, 12 m2 of glazing, Denver climate) and
+write one HTML report per case.
+
+**ANSI/ASHRAE Standard 140-2023, Section 7** — building thermal envelope and
+fabric load tests, with the inputs of the 2023 specification and its
+accompanying files (raised floor, 2023 glazing, altitude-corrected air flows,
+Table 7-7/7-9 surface coefficients, overhangs and side fins per Figures 7-3 to
+7-6, two-zone sunspace Case 960 on the multizone engine).
+
+| Annex A3 test group | Ranges met | Required (Table A3-14) | Result |
+|---|---:|---:|---|
+| Thermal Fabric Low Mass (cases 600–695) | 20 of 21 | 18 | **pass** |
+| Thermal Fabric High Mass (cases 900–995) | 17 of 19 | 17 | **pass** (no margin) |
+
+Ranges not met (outside the ASHRAE 140 acceptance range; 2020 edition,
+Addendum b): Case 900 annual cooling (2.944 MWh), and the 650−600 and 920−900
+cooling differences. The acceptance-range values are not reproduced here: they
+are in Tables A3-1 to A3-4 of Annex A3 (ANSI/ASHRAE Standard 140-2023,
+incorporating Addendum b to 140-2020). Documented deviations: the interior solar
+distribution fractions of Table 7-13 are not applied (the engine distributes
+transmitted solar by area) and ISO 52016-1 Annex F Method 1 shades direct
+radiation only.
+
+```bash
+PYTHONPATH=src python examples/ashrae140_bestest/run_comparison.py     # Annex A3 check of all cases
+PYTHONPATH=src python examples/ashrae140_bestest/generate_reports.py   # reports/index.html
+```
+
+**EN ISO 52016-1:2017, Section 7.2** — the six verification cases of Table 27
+with the standard's own adapted inputs (operative-temperature control, floor
+to outdoor air, 0.41 ach, F_w = 0.90) and its BESTEST climate file.
+
+| Case | Annual heating vs Table 28 | Annual cooling vs Table 29 | Annual mean T_op vs Table 30 |
+|---|---:|---:|---:|
+| 600 | +9.5% | +8.5% | −0.09 K |
+| 640 | +9.4% | +10.3% | −0.36 K |
+| 900 | +6.2% | +6.4% | +0.01 K |
+| 940 | −1.9% | +5.3% | −0.17 K |
+| 600FF | — | — | +0.11 K |
+| 900FF | — | — | +0.14 K |
+
+ISO 52016-1 defines no acceptance tolerance; the tests use ±10% on the annual
+needs. Case 900 is compared with the corrected Tables 28/29 values (the
+printed heating and cooling columns are swapped). The ISO climate
+spreadsheet is ISO copyright content and is not shipped: place it in
+`Standards/` to reproduce these numbers (otherwise a TMY3 approximation is used).
+
+```bash
+PYTHONPATH=src python examples/iso52016_bestest/run_comparison.py
+PYTHONPATH=src python examples/iso52016_bestest/generate_reports.py    # reports/index.html
+```
+
+Details, inputs and remaining gaps: [ASHRAE 140 README](examples/ashrae140_bestest/README.md)
+and [ISO 52016-1 README](examples/iso52016_bestest/README.md).
+
+### Sources not distributed
+
+The following content is copyright ASHRAE / ISO and is **not included** in
+this repository, because we are not authorized to share parts, tables or
+limits of the standards:
+
+| Content | Where to find it in the standard | Local file (git-ignored) |
+|---|---|---|
+| ASHRAE 140 acceptance ranges, low-mass heating / sensible cooling | ANSI/ASHRAE Standard 140-2023, Normative Annex A3, Tables A3-1 and A3-2 | `Standards/local_reference_data/ashrae140_2023_annex_a3.json` |
+| ASHRAE 140 acceptance ranges, high-mass heating / sensible cooling | Annex A3, Tables A3-3 and A3-4 | same file |
+| ASHRAE 140 group pass criteria | Annex A3, Table A3-14 (counts quoted above) | — |
+| ISO 52016-1 reference results (monthly/annual needs, operative temperatures, peaks, hourly January 4) | EN ISO 52016-1:2017, clause 7.2.4, Tables 28–34 | `Standards/local_reference_data/iso52016_1_2017_tables_28_34.json` |
+| ISO 52016-1 BESTEST climate data | EN ISO 52016-1:2017, clause 7.2.2.12 (accompanying spreadsheet) | `Standards/ISO_52016_1_BESTEST_ClimData_2016.08.24.xls` |
+
+Annex A3 was introduced by Addendum b to ANSI/ASHRAE Standard 140-2020 and is
+incorporated in the 2023 edition. **Anyone who owns ANSI/ASHRAE Standard 140
+(and EN ISO 52016-1 for the ISO cases) can reproduce every check:** copy the
+values into the local files following the templates
+[`annex_a3_ranges.template.json`](examples/ashrae140_bestest/annex_a3_ranges.template.json) and
+[`iso_reference_tables.template.json`](examples/iso52016_bestest/iso_reference_tables.template.json),
+which name the table each value comes from. Without them the cases still run,
+range and reference checks report "not available" and the related tests are
+skipped. Reports and console output never print the range or reference
+values; the published reports cite the table of the standard instead.
+
+## ISO 52016-1 Engine Options And Fixes **(New)**
+
+Changes to `ISO52016.Temperature_and_Energy_needs_calculation` and the
+multizone engine made during the validation work:
+
+- `hvac_control_variable="operative" | "air"`: the ideal heating/cooling
+  control acts on the operative temperature (ISO 52016-1 default) or on the
+  zone air temperature (EnergyPlus-style thermostat, as required by ASHRAE 140).
+- `construction_class` can be set per surface (ISO 52016-1 Table B.13); the
+  building-level value remains the fallback.
+- Windows: the transmitted solar gain applies the correction factor F_w of
+  Formula E.3 (`solar_transmittance_correction_factor`, default 0.90) and the
+  window's own `frame_area_fraction`; transparent elements have solar
+  absorptance 0 at the external node (clause 6.5.7.3).
+- `external_convection_model` (`"doe2"`, `"mowitt"`, `"blast"`,
+  `"simplecombined"`) is now applied in the single-zone engine too (it was
+  accepted but had no effect); `internal_convection_model="tarp"`,
+  `external_radiation_model="dynamic"` and `sky_temperature_model` remain
+  available. The default `"table"` models are unchanged.
+- Side fins (ISO 52016-1 Annex F, F.5/F.6 combined with F.19–F.22) per window:
+  `"side_fins": {"left": {"depth": 1.0, "distance": 0.0}, "right": {...}}`,
+  in addition to overhangs (F.4) and Annex F obstacles.
+- `simulate_envelope_multizone_free_floating(..., c_int_per_A_us=10000)`: the
+  zone air/furniture heat capacity is configurable, as in the single-zone engine.
 
 ## Weather Data
 
@@ -469,7 +611,8 @@ The EN 15316 series covers the calculation method for system energy requirements
 For space heating, applicable standards include EN 15316-1, EN 15316-2-1, EN 15316-2-3 and the appropriate parts of EN 15316-4 depending on the system type, including losses and control aspects.
 
 ## Single zone and Multiple Zones **(New)**
-# EN ISO 52016 - Multi-zone Calculation and Adjacent Zones
+
+### EN ISO 52016 - Multi-zone Calculation and Adjacent Zones
 
 **EN ISO 52016 defines that:**  
 The calculation now allows the definition of several **thermal** and **non-thermal** zones adjacent to the considered zone.
@@ -635,27 +778,65 @@ The DHW calculation was developed with data and methods from the EPB Center spre
 
 ## References
 
+### EPBD and context
+
 - [EPB Center - Energy Performance of Buildings Directive (EPBD)](https://epb.center/epb-standards/the-energy-performance-of-buildings-directive-epbd/)
 - [REHVA Journal - EN ISO 52000 family of standards](https://www.rehva.eu/rehva-journal/chapter/the-new-en-iso-52000-family-of-standards-to-assess-the-energy-performance-of-buildings-put-in-practice)
 - [European Commission - Energy Performance of Buildings Directive](https://energy.ec.europa.eu/topics/energy-efficiency/energy-performance-buildings/energy-performance-buildings-directive_en)
 - Directive (EU) 2024/1275 - Official Journal of the EU, May 8, 2024
-- EN ISO 52010-1:2018 - External climatic conditions  
-- EN ISO 52016-1:2018 - Energy needs for heating and cooling  
-- EN ISO 52016-2:2018 - Explanation and justification of ISO 52016-1 and ISO 52017-1
-- EN 12831-3:2017 - DHW systems heat load and characterization  
-- EN 14511-1:2022 - Air conditioners, liquid chilling packages and heat pumps: terms and definitions
-- EN 14511-2:2022 - Air conditioners, liquid chilling packages and heat pumps: test conditions
-- EN 14825:2022 - Seasonal performance and part-load conditions for air conditioners, chillers and heat pumps
-- EN 15316-1:2018 - System energy requirements and efficiencies  
-- EN 15316-2:2017 - Space emission systems
-- EN 15316-3:2017 - Distribution systems
-- EN 15316-4-1:2017 - Combustion generation systems
-- EN 15316-4-2:2017 - Heat-pump generation systems (Method A, clause 6)
+
+### Building energy needs, climate and validation
+
+- EN ISO 52000-1:2017 - Energy performance of buildings: overarching EPB assessment (delivered/exported and primary energy)
+- EN ISO 52010-1:2017 - External climatic conditions: conversion of climatic data for energy calculations
+- EN ISO 52016-1:2017 - Energy needs for heating and cooling, internal temperatures and sensible and latent heat loads (hourly method, Annex F shading, Annex G dynamic transparent elements, Section 7.2 verification cases)
+- CEN ISO/TR 52016-2:2017 - Explanation and justification of ISO 52016-1 and ISO 52017-1
+- ISO 13370:2017 - Heat transfer via the ground (ground model of the ISO 52016-1 engine)
+- ISO 13789:2017 - Transmission and ventilation heat transfer coefficients (surface heat-transfer coefficients)
+- ANSI/ASHRAE Standard 140-2023 - Method of Test for Evaluating Building Performance Simulation Software (Section 7 test cases; Annex A3 acceptance criteria, introduced by Addendum b to ANSI/ASHRAE Standard 140-2020)
+
+### Domestic hot water
+
+- EN 12831-3:2017 - Domestic hot water systems heat load and characterization of needs
+- EN 806-3, EN 12897 and EN 13203-2 - referenced as optional input-data sources for DHW design and product data
+- EN 89 - referenced for gas-fired storage water-heater standby losses in the EN 15316-4-1 generator
+
+### System energy requirements - EN 15316 series
+
+- EN 15316-1:2017 - System energy requirements and system efficiencies: general and expression of energy performance
+- EN 15316-2:2017 - Space emission systems (heating and cooling)
+- EN 15316-3:2017 - Space distribution systems (DHW, heating and cooling)
+- EN 15316-4-1:2017 - Space heating and DHW generation systems, combustion systems (boilers, biomass)
+- EN 15316-4-2:2017 - Space heating generation systems, heat-pump systems (Method A, clause 6)
 - EN 15316-4-3 / EN 15316-4-6 - Thermal solar systems and photovoltaic systems
 - EN 15316-4-4:2007/2008 - Cogeneration systems
 - EN 15316-4-5:2017 - District heating and cooling
-- EN 15316-5:2017 - Storage systems
-- EN 16798-9:2017 - Cooling systems
-- EN 16798-13:2017 - Cooling generation
-- EN 16798-15:2017 - Cooling storage
-- EN 16798-7 & 16798-1 - Ventilation standards
+- EN 15316-5:2017 - Space heating and DHW storage systems
+
+### Cooling, ventilation and indoor environment - EN 16798 series
+
+- EN 16798-1:2019 - Indoor environmental input parameters (occupancy, lighting, appliance and setpoint profiles, Annex A)
+- EN 16798-5-1:2017 - Calculation methods for energy requirements of ventilation and air-conditioning systems (air-handling unit model)
+- EN 16798-7:2017 - Calculation methods for the determination of air flow rates in buildings including infiltration (natural ventilation)
+- EN 16798-9:2017 - Calculation methods for energy requirements of cooling systems
+- EN 16798-13:2017 - Calculation of cooling systems: generation
+- EN 16798-15:2017 - Calculation of cooling systems: storage
+
+### Heat-pump and chiller product performance
+
+- EN 14511-1:2022 - Air conditioners, liquid chilling packages and heat pumps: terms and definitions
+- EN 14511-2:2022 - Air conditioners, liquid chilling packages and heat pumps: test conditions
+- EN 14825:2022 - Seasonal performance and part-load conditions for air conditioners, chillers and heat pumps
+
+### Lighting, building automation and economics
+
+- EN 15193-1:2017 - Energy requirements for lighting
+- EN 15232-1:2017 / EN ISO 52120-1 - Impact of building automation, controls and building management (BACS factors)
+- EN 15459-1:2017 - Economic evaluation procedure for energy systems in buildings (global cost)
+
+### Validation data sources
+
+- ANSI/ASHRAE Standard 140-2023 accompanying electronic files (weather file `725650TY.CSV`, output templates)
+- [NREL BESTEST-GSR repository](https://github.com/NatLabRockies/BESTEST-GSR) - Denver TMY3 EPW used by the ASHRAE 140 harness (BSD-style license)
+- [EPB Center - Collection of comments and suggestions on EN ISO 52016-1:2017](https://epb.center/support/documents/iso_52016-1_details/) - corrected Case 900 values of Tables 28/29 (comment no. 28)
+- EN ISO 52016-1:2017 BESTEST climate data spreadsheet (clause 7.2.2.12), not distributed with this repository

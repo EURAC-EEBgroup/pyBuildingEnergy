@@ -1,4 +1,9 @@
-"""Solar thermal and PV calculation for EN 15316-4-3/4-6 workflows."""
+"""Solar thermal and PV calculation for EN 15316-4-3:2017 workflows.
+
+The calculator keeps the project's annual-yield inputs for backwards
+compatibility, and also exposes the hourly component methods of EN 15316-4-3:
+solar thermal collector-loop output (Method 3) and PV output (Method 6).
+"""
 
 from __future__ import annotations
 
@@ -76,6 +81,19 @@ class RenewableEnergySystemCalculator:
             solar.get("usable_fraction", 1.0),
             "solar_thermal.usable_fraction",
         )
+        self.solar_thermal_method = str(solar.get("method", "annual_yield")).lower()
+        if self.solar_thermal_method not in {"annual_yield", "hourly", "method_3"}:
+            raise ValueError("solar_thermal.method must be annual_yield or hourly.")
+        self.solar_collector_eta_0 = _fraction(solar.get("eta_0", solar.get("peak_efficiency", 0.75)), "solar_thermal.eta_0")
+        self.solar_collector_a1 = max(float(solar.get("a1_W_m2K", 3.5)), 0.0)
+        self.solar_collector_a2 = max(float(solar.get("a2_W_m2K2", 0.015)), 0.0)
+        self.solar_collector_khem50 = max(float(solar.get("khem_50", 1.0)), 0.0)
+        self.solar_collector_area_m2 = max(float(solar.get("collector_area_m2", self.solar_thermal_area_m2)), 0.0)
+        self.solar_loop_heat_loss_W_K = max(float(solar.get("loop_heat_loss_W_K", 0.0)), 0.0)
+        self.solar_ambient_location = str(solar.get("location", "OUT")).upper()
+        self.solar_indoor_temperature_C = float(solar.get("indoor_temperature_C", 20.0))
+        self.solar_collector_mean_temperature_C = float(solar.get("mean_temperature_C", 50.0))
+        self.solar_aux_power_W = max(float(solar.get("pump_power_W", 0.0)), 0.0)
         self.solar_priority = str(solar.get("priority", "dhw_first")).lower()
         if self.solar_priority not in {"dhw_first", "heating_first", "proportional"}:
             raise ValueError("solar_thermal.priority must be dhw_first, heating_first or proportional.")
@@ -111,6 +129,12 @@ class RenewableEnergySystemCalculator:
         self.pv_self_consumption_mode = str(
             pv.get("self_consumption_mode", "fixed_fraction")
         ).lower()
+        self.pv_method = str(pv.get("method", "annual_yield")).lower()
+        if self.pv_method not in {"annual_yield", "hourly", "method_6"}:
+            raise ValueError("pv.method must be annual_yield or hourly.")
+        self.pv_area_m2 = max(float(pv.get("area_m2", 0.0)), 0.0)
+        self.pv_peak_power_coefficient_kW_m2 = max(float(pv.get("peak_power_coefficient_kW_m2", pv.get("Kpk_kW_m2", 0.0))), 0.0)
+        self.pv_tilt_orientation_factor = max(float(pv.get("tilt_orientation_factor", 1.0)), 0.0)
         if self.pv_self_consumption_mode not in {"fixed_fraction", "dispatch"}:
             raise ValueError("pv.self_consumption_mode must be fixed_fraction or dispatch.")
         battery = dict(pv.get("battery", cfg.get("battery", {})) or {})
@@ -182,6 +206,12 @@ class RenewableEnergySystemCalculator:
             default=np.nan,
         )
         out.loc[:, "GHI_W_m2"] = irradiance.astype(float)
+        for target, aliases in {
+            "E_sol_pv_kWh_m2": ["E_sol_pv_kWh_m2", "solar_irradiation_pv_kWh_m2", "G_pv_kWh_m2"],
+            "G_pv_W_m2": ["G_pv_W_m2", "solar_irradiance_pv_W_m2"],
+            "T_ext_C": ["T_ext_C", "T_ext", "outdoor_temperature_C"],
+        }.items():
+            out.loc[:, target] = _series_from_aliases(df, aliases, default=np.nan).astype(float)
         for col in ["Q_H_before_solar_kWh", "Q_W_before_solar_kWh"]:
             out.loc[:, col] = out[col].fillna(0.0).clip(lower=0.0)
         return out
@@ -223,7 +253,9 @@ class RenewableEnergySystemCalculator:
         out = prepared.copy()
         profile = self._solar_profile(out)
         q_solar_available = pd.Series(0.0, index=out.index)
-        if self.solar_thermal_enabled and self.solar_thermal_area_m2 > 0.0:
+        if self.solar_thermal_enabled and self.solar_thermal_area_m2 > 0.0 and self.solar_thermal_method in {"hourly", "method_3"}:
+            q_solar_available = self._simulate_solar_thermal_hourly(out)
+        elif self.solar_thermal_enabled and self.solar_thermal_area_m2 > 0.0:
             annual = (
                 self.solar_thermal_area_m2
                 * self.solar_thermal_yield_kWh_m2_a
@@ -260,21 +292,40 @@ class RenewableEnergySystemCalculator:
         out.loc[:, "Q_W_after_solar_kWh"] = (q_w - q_w_solar).clip(lower=0.0)
 
         pv_generation = pd.Series(0.0, index=out.index)
-        if self.pv_enabled and self.pv_capacity_kWp > 0.0:
-            expected = (
-                self.pv_capacity_kWp
-                * self.pv_yield_kWh_kWp_a
-                * (1.0 - self.pv_shading_loss_fraction)
-                * (1.0 - self.pv_orientation_loss_fraction)
-                * (1.0 - self.pv_degradation_loss_fraction)
-            )
-            if out["GHI_W_m2"].notna().any() and out["GHI_W_m2"].clip(lower=0.0).sum() > 0:
-                raw = out["GHI_W_m2"].fillna(0.0).clip(lower=0.0) / 1000.0
-                raw = raw * out["hours"] * self.pv_capacity_kWp * self.pv_performance_ratio
-                scale = expected / max(float(raw.sum()), _KWH_EPS)
-                pv_generation = raw * scale
+        if self.pv_enabled and (self.pv_capacity_kWp > 0.0 or self.pv_area_m2 > 0.0):
+            plane = out["E_sol_pv_kWh_m2"].copy()
+            if plane.isna().all() and out["G_pv_W_m2"].notna().any():
+                plane = out["G_pv_W_m2"].fillna(0.0).clip(lower=0.0) * out["hours"] / 1000.0
+            ppk = self.pv_capacity_kWp
+            if ppk <= _KWH_EPS and self.pv_area_m2 > 0 and self.pv_peak_power_coefficient_kW_m2 > 0:
+                ppk = self.pv_area_m2 * self.pv_peak_power_coefficient_kW_m2
+            if self.pv_method in {"hourly", "method_6"} and not plane.isna().all() and ppk > 0:
+                pv_generation = plane.fillna(0.0).clip(lower=0.0) * ppk * self.pv_performance_ratio
             else:
-                pv_generation = profile * expected
+                # EN 15316-4-3:2017, Formula (69): when the peak power is
+                # derived from module area, use that derived Ppk in the
+                # annual method as well (not only in Method 6).
+                annual_ppk = ppk
+                expected = (
+                    annual_ppk
+                    * self.pv_yield_kWh_kWp_a
+                    * self.pv_tilt_orientation_factor
+                    * (1.0 - self.pv_shading_loss_fraction)
+                    * (1.0 - self.pv_orientation_loss_fraction)
+                    * (1.0 - self.pv_degradation_loss_fraction)
+                )
+                if out["GHI_W_m2"].notna().any() and out["GHI_W_m2"].clip(lower=0.0).sum() > 0:
+                    raw = out["GHI_W_m2"].fillna(0.0).clip(lower=0.0) / 1000.0
+                    raw = (
+                        raw
+                        * out["hours"]
+                        * annual_ppk
+                        * self.pv_performance_ratio
+                    )
+                    scale = expected / max(float(raw.sum()), _KWH_EPS)
+                    pv_generation = raw * scale
+                else:
+                    pv_generation = profile * expected
         out.loc[:, "E_PV_gen_kWh"] = pv_generation
         if self.battery_capacity_kWh > _KWH_EPS or self.pv_self_consumption_mode == "dispatch":
             dispatch = self._dispatch_pv_with_battery(out)
@@ -297,6 +348,44 @@ class RenewableEnergySystemCalculator:
                 out["E_site_el_load_kWh"] - out["E_PV_self_consumed_kWh"]
             ).clip(lower=0.0)
         return out
+
+    def _simulate_solar_thermal_hourly(self, out: pd.DataFrame) -> pd.Series:
+        """EN 15316-4-3:2017 Method 3, formulas (49), (52), (55)-(60).
+
+        This is the collector-loop boundary; storage acceptance remains the
+        responsibility of the storage module. Inlet/mean collector temperature
+        can be supplied in the configuration for a standalone calculation.
+        """
+        irradiance = out["GHI_W_m2"].fillna(0.0).clip(lower=0.0)
+        ambient = out["T_ext_C"].fillna(0.0)
+        if self.solar_ambient_location == "HS":
+            ambient = pd.Series(self.solar_indoor_temperature_C, index=out.index)
+        elif self.solar_ambient_location == "NHS":
+            ambient = (ambient + self.solar_indoor_temperature_C) / 2.0
+        area = self.solar_collector_area_m2
+        delta = self.solar_collector_mean_temperature_C - ambient
+        reduced = delta / irradiance.replace(0.0, np.nan)
+        eta = (self.solar_collector_eta_0 * self.solar_collector_khem50
+               - self.solar_collector_a1 * reduced
+               - self.solar_collector_a2 * reduced.pow(2)).fillna(0.0).clip(lower=0.0)
+        q_col = eta * irradiance * area * out["hours"] / 1000.0
+        # Heat losses cannot become gains when the assumed collector
+        # temperature is below ambient.
+        q_loop_loss = (
+            self.solar_loop_heat_loss_W_K
+            * delta.clip(lower=0.0)
+            * out["hours"]
+            / 1000.0
+        )
+        q_loop = (q_col - q_loop_loss).clip(lower=0.0)
+        # EN 15316-4-3:2017 Method 3: below the minimum pump-energy
+        # threshold (Psol;pmp * tci * 3), collector-loop output is zero.
+        pump_threshold = self.solar_aux_power_W * out["hours"] * 3.0 / 1000.0
+        q_loop = q_loop.where(q_loop >= pump_threshold, 0.0)
+        out.loc[:, "Q_solar_thermal_collector_kWh"] = q_col
+        out.loc[:, "Q_solar_thermal_loop_losses_kWh"] = q_loop_loss.clip(lower=0.0)
+        out.loc[:, "E_solar_thermal_aux_kWh"] = self.solar_aux_power_W * out["hours"] / 1000.0
+        return q_loop
 
     def _dispatch_pv_with_battery(self, out: pd.DataFrame) -> pd.DataFrame:
         result = pd.DataFrame(index=out.index)

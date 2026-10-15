@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ISO 52016-1:2017 — hourly method verification cases</title>
+<script src="https://cdn.plot.ly/plotly-3.1.0.min.js"></script>
+<style>
+:root { --ink:#1d252c; --muted:#5b6670; --line:#d8dee4; --soft:#f6f8fa;
+        --blue:#0f609b; --green:#1f7a4d; --amber:#956000; --red:#b42318; --bg:#ffffff; }
+@media (prefers-color-scheme: dark) {
+  :root { --ink:#e6eaee; --muted:#9aa6b2; --line:#33404c; --soft:#1b232b;
+          --blue:#5aa9e6; --green:#4cc38a; --amber:#e0a33a; --red:#f07167; --bg:#11171d; }
+}
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--ink);
+       font:15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+main { max-width:1120px; margin:0 auto; padding:24px 16px 64px; }
+h1 { font-size:26px; margin:0 0 4px; }
+h2 { font-size:19px; margin:32px 0 10px; padding-bottom:6px; border-bottom:1px solid var(--line); }
+h3 { font-size:16px; margin:20px 0 8px; }
+p, li { color:var(--ink); }
+.muted { color:var(--muted); }
+a { color:var(--blue); }
+.subtitle { color:var(--muted); margin:0 0 16px; }
+.cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:12px; margin:16px 0; }
+.card { border:1px solid var(--line); border-radius:8px; padding:12px 14px; background:var(--soft); }
+.card .label { color:var(--muted); font-size:13px; }
+.card .value { font-size:22px; font-weight:600; margin-top:2px; }
+.card .note { color:var(--muted); font-size:12px; margin-top:2px; }
+.badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:600;
+         border:1px solid currentColor; }
+.pass { color:var(--green); } .fail { color:var(--red); } .info { color:var(--muted); }
+.table-wrap { overflow-x:auto; }
+table { border-collapse:collapse; width:100%; margin:8px 0 16px; font-size:14px; }
+th, td { border-bottom:1px solid var(--line); padding:6px 8px; text-align:right; white-space:nowrap; }
+th { color:var(--muted); font-weight:600; background:var(--soft); }
+th:first-child, td:first-child { text-align:left; }
+th:nth-child(2), td:nth-child(2) { text-align:left; white-space:normal; min-width:180px; }
+td .badge { margin-left:4px; }
+.verdict { white-space:normal; display:inline-block; min-width:240px; text-align:left; }
+.callout { border-left:4px solid var(--amber); background:var(--soft); padding:10px 14px; margin:12px 0; }
+.chart { width:100%; min-height:340px; }
+footer { color:var(--muted); font-size:13px; margin-top:40px; }
+</style></head>
+<body><main>
+<h1>ISO 52016-1:2017 — hourly method verification cases</h1>
+<p class="subtitle">Clause 7.2, Tests 1-6 (BESTEST 600, 640, 900, 940, 600FF, 900FF), pybuildingenergy</p>
+<div class="cards"><div class="card"><div class="label">Annual needs within +/-10%</div><div class="value">7/8</div><div class="note">Cases 600, 640, 900, 940 vs EN ISO 52016-1:2017 Tables 28-29</div></div><div class="card"><div class="label">Max |Delta| annual mean T_op</div><div class="value">0.36 K</div><div class="note">All six cases vs EN ISO 52016-1:2017 Table 30</div></div><div class="card"><div class="label">Weather</div><div class="value">ISO climate</div><div class="note">clause 7.2.2.12</div></div></div><div class='callout'>ISO 52016-1 clause 7.2 defines no pass/fail tolerance: the results and their deviations from the reference values are to be reported. The +/-10% flag is the tolerance used by <code>tests/test_iso52016_bestest.py</code>.</div><div class='callout'><b>Reference values are not reproduced.</b> They are ISO copyright and are printed in EN ISO 52016-1:2017, clause 7.2.4: Table 28 (heating needs), Table 29 (cooling needs), Table 30 (mean operative temperature), Table 31 (peak loads), Table 32 (free-floating extremes), Table 33 (hourly loads, January 4) and Table 34 (hourly operative temperature, January 4). Owning the standard is enough: enter them in <code>Standards/local_reference_data/iso52016_1_2017_tables_28_34.json</code> (format: <code>examples/iso52016_bestest/iso_reference_tables.template.json</code>) and run <code>generate_reports.py --include-reference-values</code> for the full comparison.</div><div class="table-wrap"><table><thead><tr><th>Case</th><th>Description</th><th>Annual heating kWh</th><th>Annual cooling kWh</th><th>Annual mean T_op degC</th></tr></thead><tbody><tr><td><a href='case_600.html'>600</a></td><td>Test 1 — lightweight, continuous thermostat 20/27 degC</td><td>5,621 (+9.5% vs Table 28) <span class="badge pass">within +/-10%</span></td><td>8,142 (+8.5% vs Table 29) <span class="badge pass">within +/-10%</span></td><td>23.21 (-0.09 K vs Table 30)</td></tr><tr><td><a href='case_640.html'>640</a></td><td>Test 2 — lightweight, intermittent heating (10 degC from 23:00 to 07:00)</td><td>3,404 (+9.4% vs Table 28) <span class="badge pass">within +/-10%</span></td><td>7,784 (+10.3% vs Table 29) <span class="badge fail">outside +/-10%</span></td><td>21.14 (-0.36 K vs Table 30)</td></tr><tr><td><a href='case_900.html'>900</a></td><td>Test 3 — heavyweight, continuous thermostat 20/27 degC</td><td>1,940 (+6.2% vs Table 28) <span class="badge pass">within +/-10%</span></td><td>3,576 (+6.4% vs Table 29) <span class="badge pass">within +/-10%</span></td><td>24.21 (+0.01 K vs Table 30)</td></tr><tr><td><a href='case_940.html'>940</a></td><td>Test 4 — heavyweight, intermittent heating (10 degC from 23:00 to 07:00)</td><td>1,278 (-1.9% vs Table 28) <span class="badge pass">within +/-10%</span></td><td>3,435 (+5.3% vs Table 29) <span class="badge pass">within +/-10%</span></td><td>23.63 (-0.17 K vs Table 30)</td></tr><tr><td><a href='case_600FF.html'>600FF</a></td><td>Test 5 — lightweight, free floating</td><td>—</td><td>—</td><td>26.01 (+0.11 K vs Table 30)</td></tr><tr><td><a href='case_900FF.html'>900FF</a></td><td>Test 6 — heavyweight, free floating</td><td>—</td><td>—</td><td>26.04 (+0.14 K vs Table 30)</td></tr></tbody></table></div>
+<footer>Generated by examples/iso52016_bestest/generate_reports.py.</footer>
+</main></body></html>

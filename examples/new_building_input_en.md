@@ -72,6 +72,29 @@ Transparent surfaces additionally use:
 | `shading_type` | — | Fixed-shading geometry type, such as `horizontal_overhang`. |
 | `width_or_distance_of_shading_elements` | m | Geometric input for the fixed shading object. |
 | `overhang_properties.width_of_horizontal_overhangs` | m | Projection width of a horizontal overhang. |
+| `annex_f_shading_objects` | list | Optional ISO 52016-1 Annex F skyline elements. Each element contains `azimuth_start_deg`, `azimuth_end_deg`, `distance_m`, and either `top_height_m` or `base_height_m` + `height_m`; angles use N=0, E=90, S=180, W=270. |
+
+Example Annex F obstacle input:
+
+```json
+{
+  "shading_type": "obstacles",
+  "annex_f_shading_objects": [
+    {
+      "kind": "obstacle",
+      "azimuth_start_deg": 165,
+      "azimuth_end_deg": 195,
+      "distance_m": 20,
+      "top_height_m": 15,
+      "window_sill_height_m": 1
+    }
+  ]
+}
+```
+
+The hourly Annex F calculation reduces the direct beam according to the
+projected shadow height and leaves diffuse irradiance unaffected. The caller
+then combines direct and diffuse irradiance using the ISO 52016-1 factor.
 
 ### Optional Movable Shading per Window
 

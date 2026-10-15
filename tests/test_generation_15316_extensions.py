@@ -1218,3 +1218,62 @@ def test_renewables_battery_dispatch_reduces_grid_import():
         with_battery.summary["E_grid_after_PV_kWh"]
         < without_battery.summary["E_grid_after_PV_kWh"]
     )
+
+
+def test_renewables_pv_area_kpk_is_used_by_annual_method():
+    data = pd.DataFrame({"E_site_el_load_kWh": [0.0]})
+    result = pybui.RenewableEnergySystemCalculator(
+        {
+            "pv": {
+                "enabled": True,
+                "area_m2": 10.0,
+                "peak_power_coefficient_kW_m2": 0.20,
+                "annual_yield_kWh_kWp": 1000.0,
+            }
+        }
+    ).run_timeseries(data)
+
+    assert result.summary["E_PV_gen_kWh"] == pytest.approx(2000.0)
+
+
+def test_renewables_pv_annual_orientation_factor_is_applied():
+    data = pd.DataFrame({"E_site_el_load_kWh": [0.0]})
+    result = pybui.RenewableEnergySystemCalculator(
+        {
+            "pv": {
+                "enabled": True,
+                "capacity_kWp": 2.0,
+                "annual_yield_kWh_kWp": 1000.0,
+                "tilt_orientation_factor": 0.8,
+            }
+        }
+    ).run_timeseries(data)
+
+    assert result.summary["E_PV_gen_kWh"] == pytest.approx(1600.0)
+
+
+def test_renewables_method_3_clips_negative_losses_and_applies_pump_threshold():
+    data = pd.DataFrame(
+        {
+            "G_pv_W_m2": [100.0, 1000.0],
+            "T_ext_C": [60.0, 20.0],
+            "E_site_el_load_kWh": [0.0, 0.0],
+        }
+    )
+    result = pybui.RenewableEnergySystemCalculator(
+        {
+            "solar_thermal": {
+                "enabled": True,
+                "area_m2": 1.0,
+                "collector_area_m2": 1.0,
+                "method": "method_3",
+                "mean_temperature_C": 50.0,
+                "loop_heat_loss_W_K": 10.0,
+                "pump_power_W": 100.0,
+            }
+        }
+    ).run_timeseries(data)
+
+    ts = result.timeseries
+    assert ts["Q_solar_thermal_loop_losses_kWh"].iloc[0] == pytest.approx(0.0)
+    assert ts["Q_solar_thermal_available_kWh"].iloc[0] == pytest.approx(0.0)

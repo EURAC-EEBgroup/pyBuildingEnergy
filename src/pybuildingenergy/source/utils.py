@@ -2601,6 +2601,11 @@ class ISO52010:
                     elements_shading_type=window.get("shading_type"),
                     H_k=window.get("height"),
                     W_k=window.get("width"),
+                    annex_f_shading_objects=window.get(
+                        "annex_f_shading_objects",
+                        window.get("shading_objects", window.get("skyline_segments")),
+                    ),
+                    side_fins=window.get("side_fins"),
                 )
 
                 # F_sh_dir_k_t = (direct-beam factor, sunlit height).
@@ -3356,6 +3361,23 @@ class ISO52016:
         irradiance = float(sim_df[col].iloc[tstep]) if col in sim_df.columns else 0.0
         return cls._movable_shading_properties(surface, sim_df.index[tstep], irradiance)
 
+    @staticmethod
+    def _corrected_window_g_value(surface, g_value_normal):
+        """Return effective glazing g-value according to ISO 52016-1 E.3.
+
+        Formula (E.3) is ``g_gl = F_w * g_gl,n``.  Table B.22 gives 0.90
+        as the informative default for non-scattering glazing.  Set
+        ``solar_transmittance_correction_factor`` to 1.0 only when the input
+        ``g_value`` is already an incidence-corrected effective value.
+        """
+        fw = float(surface.get("solar_transmittance_correction_factor", 0.90))
+        if not np.isfinite(fw) or not 0.0 <= fw <= 1.0:
+            raise ValueError(
+                f"Window '{surface.get('name', '')}': "
+                "solar_transmittance_correction_factor must be between 0 and 1"
+            )
+        return float(g_value_normal) * fw
+
     @classmethod
     def Number_of_nodes_element(cls, building_object) -> numb_nodes_facade_elements:
         """
@@ -3530,13 +3552,14 @@ class ISO52016:
         # Coefficient list of elements
         solar_abs_elements = [0.0] * el_list
         for i, surf in enumerate(building_object["building_surface"]):
-            if "solar_absorptance" in surf:  # Opaque element
-                if surf["ISO52016_type_string"] == "AD" or surf["ISO52016_type_string"] == "ADJ":
-                    solar_abs_elements[i] = 0.0
-                else:
-                    solar_abs_elements[i] = surf["solar_absorptance"]
-            else:  # Transparent element
-                solar_abs_elements[i] = surf["g_value"]
+            if surf.get("type") == "transparent" or surf.get("ISO52016_type_string") == "W":
+                # ISO 52016-1 6.5.7.3: a_sol = 0 for transparent elements; their solar
+                # gain enters only through g_gl (transmitted + inward-absorbed share).
+                solar_abs_elements[i] = 0.0
+            elif surf.get("ISO52016_type_string") in ("AD", "ADJ"):
+                solar_abs_elements[i] = 0.0
+            else:  # Opaque element (0.6 = check_input default)
+                solar_abs_elements[i] = float(surf.get("solar_absorptance", 0.6))
 
         # Initialization of solar_abs_coeff
         a_sol_pli_eli = np.zeros((5, el_list))
@@ -3556,8 +3579,12 @@ class ISO52016:
 
             * type: type of building element OPAQUE -'OP', TRANSPARENT - 'W', GROUND -'GR'
             * kappa_m: heat_capacity of the element in Table B.14
-            * construction_class: lass of construction with respect to the distribution of the mass in the construction
-                        Table B.13. Possible choice: class_i, class_e, class_ie, class_d, class_m
+            * construction_class: class of construction with respect to the distribution of the mass in the construction
+                        Table B.13. Possible choice: class_i, class_e, class_ie, class_d, class_m.
+                        May also be set per surface (``building_surface[i]["construction_class"]``,
+                        e.g. ISO 52016-1's own Case 600/900 worked example uses a different class for
+                        wall/roof than for the floor); a surface without its own value falls back to
+                        this building-level default, so existing single-class buildings are unaffected.
 
         :return: aeral_heat_capacity: areal heat capacity of each facade element (type: *np.array*)
         """
@@ -3568,61 +3595,68 @@ class ISO52016:
             if "thermal_capacity" in surf:
                 list_kappa_el[i] = surf["thermal_capacity"]
 
+        default_class = building_object['building']['construction_class']
+        surf_class = [
+            str(surf.get("construction_class", default_class))
+            for surf in building_object["building_surface"]
+        ]
+
         # Initialization of heat capacity of nodes
         kappa_pli_eli_ = np.zeros((5, len(el_type)))
 
-        if building_object['building']['construction_class'] == "class_i":
+        idx_class_i = [i for i in range(len(el_type)) if surf_class[i] == "class_i"]
+        if idx_class_i:
             # Mass concentrated at internal side
             # OPAQUE: kpl5 = km_eli ; kpl1=kpl2=kpl3=kpl4=0
             # GROUND: kpl5 = km_eli ; kpl3=kpl4=0
             node = 1
-            for i in range(len(el_type)):
+            for i in idx_class_i:
                 if el_type[i] == "GR":
                     kappa_pli_eli_[node, i] = 1e6  # heat capacity of the ground
             node = 4
-            for i in range(len(el_type)):
+            for i in idx_class_i:
                 if el_type[i] != "W":
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
 
-        elif (
-            building_object['building']['construction_class'] == "class_e"
-        ):  # mass concentrated at external side
+        idx_class_e = [i for i in range(len(el_type)) if surf_class[i] == "class_e"]
+        if idx_class_e:
+            # mass concentrated at external side
             # OPAQUE: kpl1 = km_eli ; kpl2=kpl3=kpl4=kpl5=0
             # GROUND: kpl3 = km_eli ; kpl4=kpl5=0
             node = 0
-            for i in range(len(el_type)):
+            for i in idx_class_e:
                 if el_type[i] == "OP" or el_type[i] == "ADJ":
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
                 elif el_type[i] == "GR":
                     node = 2
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
 
-        elif (
-            building_object['building']['construction_class'] == "class_ie"
-        ):  # mass divided over internal and external side)
+        idx_class_ie = [i for i in range(len(el_type)) if surf_class[i] == "class_ie"]
+        if idx_class_ie:
+            # mass divided over internal and external side)
             # OPAQUE: kpl1 = kpl5 = km_eli/2 ; kpl2=kpl3=kpl4=0
             # GROUND: kpl1 = kp5 =km_eli/2; kpl4=0
             node = 0
-            for i in range(len(el_type)):
+            for i in idx_class_ie:
                 if el_type[i] == "OP" or el_type[i] == "ADJ":
                     kappa_pli_eli_[node, i] = list_kappa_el[i] / 2
                 elif el_type[i] == "GR":
                     kappa_pli_eli_[node, i] = list_kappa_el[i] / 2
             node = 4
-            for i in range(len(el_type)):
+            for i in idx_class_ie:
                 if el_type[i] == "OP" or el_type[i] == "ADJ":
                     kappa_pli_eli_[node, i] = list_kappa_el[i] / 2
                 elif el_type[i] == "GR":
                     kappa_pli_eli_[node, i] = list_kappa_el[i] / 2
 
-        elif (
-            building_object['building']["construction_class"] == "class_d"
-        ):  # (mass equally distributed)
+        idx_class_d = [i for i in range(len(el_type)) if surf_class[i] == "class_d"]
+        if idx_class_d:
+            # (mass equally distributed)
             # OPAQUE: kpl2=kpl3=kpl4=km_eli/4
             # GROUND: kpl3=km_eli/4; kpl4=km_eli/2
             node_list_1 = [1, 2, 3]
             for node in node_list_1:
-                for i in range(len(el_type)):
+                for i in idx_class_d:
                     if el_type[i] == "OP" or el_type[i] == "ADJ":
                         kappa_pli_eli_[node, i] = list_kappa_el[i] / 4
                     if el_type[i] == "GR":
@@ -3635,20 +3669,20 @@ class ISO52016:
             # GROUND:kpl5=km_eli/4
             node_list_2 = [0, 4]
             for node in node_list_2:
-                for i in range(len(el_type)):
+                for i in idx_class_d:
                     if el_type[i] == "OP" or el_type[i] == "ADJ":
                         kappa_pli_eli_[node, i] = list_kappa_el[i] / 8
                     if el_type[i] == "GR":
                         if node == 4:
                             kappa_pli_eli_[node, i] = list_kappa_el[i] / 4
 
-        elif (
-            building_object['building']["construction_class"] == "class_m"
-        ):  # mass concentrated inside
+        idx_class_m = [i for i in range(len(el_type)) if surf_class[i] == "class_m"]
+        if idx_class_m:
+            # mass concentrated inside
             # OPAQUE: kpl1=kpl2=kpl4=kpl5=0; kpl3= km_eli
             # GROUND: kpl4=km_eli; kpl3=kpl5=0
             node = 2
-            for i in range(len(el_type)):
+            for i in idx_class_m:
                 if el_type[i] == "OP" or el_type[i] == "ADJ":
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
                 if el_type[i] == "GR":
@@ -4134,7 +4168,16 @@ class ISO52016:
             # south-facing blind and shutter with different controls would be
             # incorrectly represented by one averaged control.
             movable_key = s.get("name", "surface") if s.get("movable_shading") is not None else None
-            key = (tstr, ostr, s["type"], bnd, zone, adjacent_zone, movable_key)
+            fw_key = (
+                float(s.get("solar_transmittance_correction_factor", 0.90))
+                if s.get("type") == "transparent"
+                else None
+            )
+            construction_class_key = s.get("construction_class", None)
+            key = (
+                tstr, ostr, s["type"], bnd, zone, adjacent_zone, movable_key, fw_key,
+                construction_class_key,
+            )
 
             A = float(s.get("area", 0.0))
             U = float(s.get("u_value", 0.0))
@@ -4164,6 +4207,10 @@ class ISO52016:
                 b["orientation"] = copy.deepcopy(s["orientation"])
             if b.get("movable_shading") is None and s.get("movable_shading") is not None:
                 b["movable_shading"] = copy.deepcopy(s["movable_shading"])
+            if b.get("solar_transmittance_correction_factor") is None and s.get("type") == "transparent":
+                b["solar_transmittance_correction_factor"] = fw_key
+            if b.get("construction_class") is None and construction_class_key is not None:
+                b["construction_class"] = construction_class_key
 
             b["area"] += A
             b["uA"]   += U * A
@@ -4232,6 +4279,12 @@ class ISO52016:
             }
             if b["type"] == "transparent" and b["has_ffr"]:
                 agg["frame_area_fraction"] = b["ffrA"] / A
+            if b["type"] == "transparent":
+                agg["solar_transmittance_correction_factor"] = b.get(
+                    "solar_transmittance_correction_factor", 0.90
+                )
+            if b.get("construction_class") is not None:
+                agg["construction_class"] = b["construction_class"]
             if b["adjacent_zone"] is not None:
                 agg["adjacent_zone"] = b["adjacent_zone"]
             if b["name_adj_zone"] is not None:
@@ -4457,10 +4510,15 @@ class ISO52016:
         external_emissivity_default=None,
         progress_log_every_steps=None,
         progress_logger=None,
+        c_int_per_A_us=10000.0,
     ):
         """
         Multizone envelope simulation with coupled internal partitions and ideal HVAC.
         Supports profile-driven setpoints, internal gains and ventilation terms.
+
+        ``c_int_per_A_us`` [J/(m2 K)] is the areal heat capacity of the zone air
+        and furniture lumped in each zone air node (ISO 52016-1 default 10000),
+        as in the single-zone core.
 
         Output columns per zone:
           - T_air_<zone>
@@ -5086,7 +5144,7 @@ class ISO52016:
         zone_area_tot = float(np.sum(zone_area_vec)) if float(np.sum(zone_area_vec)) > 0 else 1.0
         H_tb_tot = float(t_Th.thermal_bridge_heat) if (t_Th is not None and include_thermal_bridges) else 0.0
         H_tb_zone = H_tb_tot * (zone_area_vec / zone_area_tot)
-        C_air_zone = 10000.0 * zone_area_vec
+        C_air_zone = float(c_int_per_A_us) * zone_area_vec
         # Align with core behavior: adiabatic element capacity is lumped in zone air node once.
         C_ad_zone = np.zeros(Z, dtype=float)
         for surf in surfaces:
@@ -5589,6 +5647,7 @@ class ISO52016:
                 if col not in sim_df.columns:
                     continue
                 _, g_val, _ = cls._window_movable_shading_properties(surf, sim_df, tstep)
+                g_val = cls._corrected_window_g_value(surf, g_val)
                 area = float(surf.get("area", 0.0))
                 i_tot = float(sim_df[col].iloc[tstep])
                 try:
@@ -7301,6 +7360,7 @@ class ISO52016:
         f_C_c=1,
         delta_Theta_er=11,
         sankey_graph=False,
+        hvac_control_variable="operative",
         **kwargs,
     ):
         from .generate_profile import HourlyProfileGenerator, get_country_code_from_latlon  # lazy
@@ -7315,6 +7375,17 @@ class ISO52016:
 
         :param building_object: Building object created according to the method ``Building`` or ``Buildings_from_dictionary``.
         :param nrHCmodes: initialization of system mode: 0 for Heating, 1 for Cooling, 2 for Heating and Cooling. Default: 2
+        :param hvac_control_variable: which temperature the ideal heating/cooling
+            system controls to the heating/cooling setpoint: ``"operative"``
+            (default, ISO 52016-1's own Eq.(25)-(28) convention) or ``"air"``
+            (zone air temperature, matching EnergyPlus's default
+            ``ZoneHVAC:IdealLoadsAirSystem`` thermostat behaviour -- e.g. the
+            ASHRAE 140/BESTEST reference cases). The reported ``T_op``/``T_air``
+            outputs always reflect the true resulting operative/air
+            temperature regardless of which one was controlled; only the
+            control decision (whether/how much heating or cooling runs)
+            changes. Mirrors the same option on
+            ``simulate_envelope_multizone_free_floating``.
         :param k_m_int_a_zt: areal thermal capacity of air and furniture per thermally conditioned zone. Default: 10000 J/m2K
         :param f_int_c: convective fraction of the internal gains into the zone. Default: 0.4
         :param f_sol_c: convective fraction of the solar radiation into the zone. Default: 0.1
@@ -7388,6 +7459,14 @@ class ISO52016:
             building_object,
             kwargs.get("external_radiation_model", None),
         )
+        h_ce_model = _resolve_external_convection_model(
+            building_object,
+            kwargs.get("external_convection_model", None),
+        )
+        h_ce_min = _resolve_external_convection_h_min(
+            building_object,
+            kwargs.get("external_convection_h_min", None),
+        )
         sky_t_model = _resolve_sky_temperature_model(
             building_object,
             kwargs.get("sky_temperature_model", None),
@@ -7396,6 +7475,9 @@ class ISO52016:
             building_object,
             kwargs.get("external_emissivity_default", None),
         )
+        hvac_control_mode = str(hvac_control_variable).strip().lower()
+        if hvac_control_mode not in ("operative", "air"):
+            raise ValueError("hvac_control_variable must be 'operative' or 'air'")
         i = 1
         with tqdm(total=12) as pbar:
 
@@ -7634,6 +7716,41 @@ class ISO52016:
                     h_re_t[Eli] = h_re_dyn
                     t_ref_t[Eli] = t_ref_dyn
                 return h_re_t, t_ref_t
+
+            heat_convective_elements_external_tab = np.asarray(
+                heat_convective_elements_external,
+                dtype=float,
+            )
+            ws10m_for_hce = _series_to_float_array(sim_df, "WS10m", default=0.0)
+
+            def _compute_h_ce_external_t(theta_state_prev: np.ndarray, tstep: int) -> np.ndarray:
+                # Outdoor-facing opaque/window faces only; ADJ/GR keep their own coefficients.
+                h_ce_t = heat_convective_elements_external_tab.copy()
+                if h_ce_model == "table" or not isinstance(building_object, dict):
+                    return h_ce_t
+                T_out_t = float(T2m_arr[tstep])
+                u_wind_t = float(ws10m_for_hce[tstep])
+                if not np.isfinite(u_wind_t):
+                    u_wind_t = 0.0
+                for Eli in range(bui_eln):
+                    if Type_eli[Eli] != "EXT" or not surf_has_node[Eli]:
+                        continue
+                    r_ext = surf_ext_row[Eli]
+                    if r_ext < 0 or r_ext >= len(theta_state_prev):
+                        continue
+                    surf_obj = building_object["building_surface"][Eli]
+                    if surf_obj.get("ISO52016_type_string") not in ("OP", "W"):
+                        continue
+                    h_ce_t[Eli] = _dynamic_external_convection_h(
+                        surface=surf_obj,
+                        T_surf_C=float(theta_state_prev[r_ext]),
+                        T_air_C=T_out_t,
+                        u_wind_ms=u_wind_t,
+                        model=h_ce_model,
+                        h_min=h_ce_min,
+                        fallback_h_ce=float(heat_convective_elements_external_tab[Eli]),
+                    )
+                return h_ce_t
 
             pbar.update(1)
 
@@ -7988,8 +8105,11 @@ class ISO52016:
                                 _, g_step, _ = cls._window_movable_shading_properties(
                                     building_object["building_surface"][Eli], sim_df, Tstepi
                                 )
+                                g_step = cls._corrected_window_g_value(
+                                    building_object["building_surface"][Eli], g_step
+                                )
                             else:
-                                g_step = g_gl_wi_t[Eli]
+                                g_step = 0.90 * g_gl_wi_t[Eli]
                             F_sh_obst_wi_t = F_sh_el[Tstepi, Eli] if g_step != 0 else 1.0
 
                             Phi_sol_dir_zt_t += (
@@ -8159,6 +8279,10 @@ class ISO52016:
                         theta_state_prev=Theta_old,
                         tstep=Tstepi,
                     )
+                    heat_convective_elements_external_t = _compute_h_ce_external_t(
+                        theta_state_prev=Theta_old,
+                        tstep=Tstepi,
+                    )
                     Ah_ci_t = float(
                         (
                             area_elements[surf_has_node]
@@ -8241,7 +8365,7 @@ class ISO52016:
                                     '''
                                     if h_re_model == "dynamic":
                                         XTemp = (
-                                            heat_convective_elements_external[Eli] * T2m_arr[Tstepi]
+                                            heat_convective_elements_external_t[Eli] * T2m_arr[Tstepi]
                                             + heat_radiative_elements_external_t[Eli] * ext_rad_ref_temp_t[Eli]
                                             + a_sol_pli_eli[Pli, Eli] * I_sol_tot_el[Tstepi, Eli]
                                         )
@@ -8252,7 +8376,7 @@ class ISO52016:
                                             * delta_Theta_er
                                         )
                                         XTemp = (
-                                            (heat_convective_elements_external[Eli] + heat_radiative_elements_external_t[Eli])
+                                            (heat_convective_elements_external_t[Eli] + heat_radiative_elements_external_t[Eli])
                                             * T2m_arr[Tstepi]
                                             - phi_sky_eli_t
                                             + a_sol_pli_eli[Pli, Eli] * I_sol_tot_el[Tstepi, Eli]
@@ -8323,7 +8447,7 @@ class ISO52016:
                                 
                                 if Type_eli[Eli] == "EXT":
                                     MatA[ri, ci] += (
-                                        heat_convective_elements_external[Eli]+ 
+                                        heat_convective_elements_external_t[Eli]+
                                         heat_radiative_elements_external_t[Eli]
                                     )
                                 
@@ -8417,25 +8541,31 @@ class ISO52016:
 
                     # Operative Temperature
                     Theta_int_op[Tstepi, :] = 0.5 * (Theta_int_air[Tstepi, :] + Theta_int_r_mn[Tstepi, :])
-                                        
+
+                    # Temperature metric the ideal HVAC control decision is
+                    # based on (see hvac_control_variable above). Reported
+                    # Theta_op_act below is always the true resulting
+                    # operative temperature regardless of this choice.
+                    Theta_ctrl = Theta_int_air if hvac_control_mode == "air" else Theta_int_op
+
                     '''
-                    STEP 2: ISO 
-                    Case heating: Determinates if the heating or the cooling temperature set-point applies and calcualte the heating or cooling load: 
+                    STEP 2: ISO
+                    Case heating: Determinates if the heating or the cooling temperature set-point applies and calcualte the heating or cooling load:
                     Use formaula (27):
                     Phi_HC_ld_zd = Phi_HC_upper*((theta_int_op_set - thet_int_op_0)/(theta_int_op_upper - theta_int_op_0))
                     where:
                     Phi_HC_ld_zd: unrestricted heating or cooling load to reach the required setpoint in W
-                    Phi_HC_upper: is the upper value of the heating or cooling load in W  
+                    Phi_HC_upper: is the upper value of the heating or cooling load in W
                     theta_int_op_set: required internal operative setpoint temperature in degC
                     thet_int_op_0: operating temperature in free floating condition in degC
                     theta_int_op_upper: is the internal operational temperature, obtained for the upper heating or cooling load degC
                     '''
                     if nrHCmodes > 1:
                         # HEATING
-                        if Theta_int_op[Tstepi, 0] < Theta_H_set:
+                        if Theta_ctrl[Tstepi, 0] < Theta_H_set:
                             Theta_op_set = Theta_H_set
                             Phi_HC_nd_act[Tstepi] = _safe_load(power_heating_max_act, Theta_op_set,
-                                                            Theta_int_op[Tstepi, 0], Theta_int_op[Tstepi, colB_H])
+                                                            Theta_ctrl[Tstepi, 0], Theta_ctrl[Tstepi, colB_H])
                             if Phi_HC_nd_act[Tstepi] > power_heating_max_act:
                                 Phi_HC_nd_act[Tstepi] = power_heating_max_act
                                 Theta_op_act[Tstepi] = Theta_int_op[Tstepi, colB_H]
@@ -8448,10 +8578,10 @@ class ISO52016:
                                 iterate = True
 
                         # COOLING
-                        elif Theta_int_op[Tstepi, 0] > Theta_C_set:
+                        elif Theta_ctrl[Tstepi, 0] > Theta_C_set:
                             Theta_op_set = Theta_C_set
                             Phi_HC_nd_act[Tstepi] = _safe_load(power_cooling_max_act, Theta_op_set,
-                                                            Theta_int_op[Tstepi, 0], Theta_int_op[Tstepi, colB_C])
+                                                            Theta_ctrl[Tstepi, 0], Theta_ctrl[Tstepi, colB_C])
                             if Phi_HC_nd_act[Tstepi] < power_cooling_max_act:
                                 Phi_HC_nd_act[Tstepi] = power_cooling_max_act
                                 Theta_op_act[Tstepi] = Theta_int_op[Tstepi, colB_C]
@@ -8945,6 +9075,14 @@ class ISO52016:
             building_object,
             kwargs.get("external_radiation_model", None),
         )
+        h_ce_model = _resolve_external_convection_model(
+            building_object,
+            kwargs.get("external_convection_model", None),
+        )
+        h_ce_min = _resolve_external_convection_h_min(
+            building_object,
+            kwargs.get("external_convection_h_min", None),
+        )
         sky_t_model = _resolve_sky_temperature_model(
             building_object,
             kwargs.get("sky_temperature_model", None),
@@ -9202,6 +9340,41 @@ class ISO52016:
                     h_re_t[Eli] = h_re_dyn
                     t_ref_t[Eli] = t_ref_dyn
                 return h_re_t, t_ref_t
+
+            heat_convective_elements_external_tab = np.asarray(
+                heat_convective_elements_external,
+                dtype=float,
+            )
+            ws10m_for_hce = _series_to_float_array(sim_df, "WS10m", default=0.0)
+
+            def _compute_h_ce_external_t(theta_state_prev: np.ndarray, tstep: int) -> np.ndarray:
+                # Outdoor-facing opaque/window faces only; ADJ/GR keep their own coefficients.
+                h_ce_t = heat_convective_elements_external_tab.copy()
+                if h_ce_model == "table" or not isinstance(building_object, dict):
+                    return h_ce_t
+                T_out_t = float(T2m_arr[tstep])
+                u_wind_t = float(ws10m_for_hce[tstep])
+                if not np.isfinite(u_wind_t):
+                    u_wind_t = 0.0
+                for Eli in range(bui_eln):
+                    if Type_eli[Eli] != "EXT" or not surf_has_node[Eli]:
+                        continue
+                    r_ext = surf_ext_row[Eli]
+                    if r_ext < 0 or r_ext >= len(theta_state_prev):
+                        continue
+                    surf_obj = building_object["building_surface"][Eli]
+                    if surf_obj.get("ISO52016_type_string") not in ("OP", "W"):
+                        continue
+                    h_ce_t[Eli] = _dynamic_external_convection_h(
+                        surface=surf_obj,
+                        T_surf_C=float(theta_state_prev[r_ext]),
+                        T_air_C=T_out_t,
+                        u_wind_ms=u_wind_t,
+                        model=h_ce_model,
+                        h_min=h_ce_min,
+                        fallback_h_ce=float(heat_convective_elements_external_tab[Eli]),
+                    )
+                return h_ce_t
 
             pbar.update(1)
 
@@ -9599,8 +9772,11 @@ class ISO52016:
                                 _, g_step, _ = cls._window_movable_shading_properties(
                                     building_object["building_surface"][Eli], sim_df, Tstepi
                                 )
+                                g_step = cls._corrected_window_g_value(
+                                    building_object["building_surface"][Eli], g_step
+                                )
                             else:
-                                g_step = g_gl_wi_t[Eli]
+                                g_step = 0.90 * g_gl_wi_t[Eli]
                             F_sh_obst_wi_t = F_sh_el[Tstepi, Eli] if g_step != 0 else 1.0
 
                             Phi_sol_dir_zt_t += (
@@ -9770,6 +9946,10 @@ class ISO52016:
                         theta_state_prev=Theta_old,
                         tstep=Tstepi,
                     )
+                    heat_convective_elements_external_t = _compute_h_ce_external_t(
+                        theta_state_prev=Theta_old,
+                        tstep=Tstepi,
+                    )
                     Ah_ci_t = float(
                         (
                             area_elements[surf_has_node]
@@ -9852,7 +10032,7 @@ class ISO52016:
                                     '''
                                     if h_re_model == "dynamic":
                                         XTemp = (
-                                            heat_convective_elements_external[Eli] * T2m_arr[Tstepi]
+                                            heat_convective_elements_external_t[Eli] * T2m_arr[Tstepi]
                                             + heat_radiative_elements_external_t[Eli] * ext_rad_ref_temp_t[Eli]
                                             + a_sol_pli_eli[Pli, Eli] * I_sol_tot_el[Tstepi, Eli]
                                         )
@@ -9863,7 +10043,7 @@ class ISO52016:
                                             * delta_Theta_er
                                         )
                                         XTemp = (
-                                            (heat_convective_elements_external[Eli] + heat_radiative_elements_external_t[Eli])
+                                            (heat_convective_elements_external_t[Eli] + heat_radiative_elements_external_t[Eli])
                                             * T2m_arr[Tstepi]
                                             - phi_sky_eli_t
                                             + a_sol_pli_eli[Pli, Eli] * I_sol_tot_el[Tstepi, Eli]
@@ -9934,7 +10114,7 @@ class ISO52016:
                                 
                                 if Type_eli[Eli] == "EXT":
                                     MatA[ri, ci] += (
-                                        heat_convective_elements_external[Eli]+ 
+                                        heat_convective_elements_external_t[Eli]+
                                         heat_radiative_elements_external_t[Eli]
                                     )
                                 

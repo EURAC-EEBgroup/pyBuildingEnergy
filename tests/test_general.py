@@ -1739,6 +1739,60 @@ def test_iso52016_method1_combined_shading_factor_multiplies_total_irradiance():
     ) == pytest.approx(600.0)
 
 
+def test_annex_f_obstacle_blocks_lower_window_height():
+    """Annex F skyline geometry must reduce only the blocked window height."""
+    from pybuildingenergy.source.functions import shading_reduction_factor
+
+    factor, sunlit_height = shading_reduction_factor(
+        alpha_sol_t=10.0,
+        phi_sol_t=180.0,
+        beta_k_t=90.0,
+        gamma_k_t=180.0,
+        D_k_ovh_q=0.0,
+        L_k_ovh_q=0.0,
+        elements_shading_type="obstacles",
+        H_k=2.0,
+        W_k=1.0,
+        annex_f_shading_objects=[{
+            "kind": "obstacle",
+            "azimuth_start_deg": 170.0,
+            "azimuth_end_deg": 190.0,
+            "distance_m": 10.0,
+            "top_height_m": 2.0,
+        }],
+    )
+
+    expected_shadow = 2.0 - 10.0 * np.tan(np.radians(10.0))
+    assert sunlit_height == pytest.approx(2.0 - expected_shadow)
+    assert factor == pytest.approx(sunlit_height / 2.0)
+
+
+def test_annex_f_obstacle_outside_skyline_segment_does_not_shade():
+    from pybuildingenergy.source.functions import shading_reduction_factor
+
+    factor, sunlit_height = shading_reduction_factor(
+        alpha_sol_t=10.0,
+        phi_sol_t=180.0,
+        beta_k_t=90.0,
+        gamma_k_t=180.0,
+        D_k_ovh_q=0.0,
+        L_k_ovh_q=0.0,
+        elements_shading_type="obstacles",
+        H_k=2.0,
+        W_k=1.0,
+        annex_f_shading_objects=[{
+            "kind": "obstacle",
+            "azimuth_start_deg": 0.0,
+            "azimuth_end_deg": 90.0,
+            "distance_m": 10.0,
+            "top_height_m": 20.0,
+        }],
+    )
+
+    assert factor == pytest.approx(1.0)
+    assert sunlit_height == pytest.approx(2.0)
+
+
 def test_shading_reduction_factor_handles_wrapped_azimuth():
     """L'azimuth 270 e -90 devono essere trattati come la stessa direzione."""
     from pybuildingenergy.source.functions import shading_reduction_factor

@@ -116,3 +116,114 @@ def test_aggregation_without_frame_area_fraction_keeps_default():
     }
     window = ISO52016._aggregate_surfaces_by_direction(building_object)["building_surface"][0]
     assert "frame_area_fraction" not in window
+
+
+def test_iso52016_default_window_g_correction_factor_is_applied():
+    surface = _south_window(g_value=0.786)
+    assert ISO52016._corrected_window_g_value(surface, surface["g_value"]) == pytest.approx(
+        0.90 * 0.786
+    )
+
+
+def test_window_g_correction_factor_can_mark_an_already_corrected_input():
+    surface = _south_window(
+        g_value=0.70,
+        solar_transmittance_correction_factor=1.0,
+    )
+    assert ISO52016._corrected_window_g_value(surface, surface["g_value"]) == pytest.approx(0.70)
+
+
+def _multizone_free_floating_peak_air_temp(fw):
+    """Minimal single-zone 'multizone' building with a south window, run
+    through the free-floating solver with include_solar=True, to check that
+    engine's own window solar-gain path (``_zone_solar_transmitted_w``)
+    honours ``solar_transmittance_correction_factor`` just like the
+    single-zone engine does (see the Fw tests above)."""
+    building_object = {
+        "building": {
+            "net_floor_area": 10.0,
+            "building_type_class": "Residential_apartment",
+            "construction_class": "class_i",
+        },
+        "building_parameters": {
+            "temperature_setpoints": {
+                "heating_setpoint": -100.0,
+                "cooling_setpoint": 100.0,
+                "heating_setback": -100.0,
+                "cooling_setback": 100.0,
+            },
+            "system_capacities": {},
+            "ventilation": {},
+        },
+        "zones": [
+            {
+                "name": "Z1",
+                "net_floor_area": 10.0,
+                "building_type_class": "Residential_apartment",
+                "heating_setpoint": -100.0,
+                "cooling_setpoint": 100.0,
+                "heating_setback": -100.0,
+                "cooling_setback": 100.0,
+            }
+        ],
+        "building_surface": [
+            {
+                "name": "Internal partition",
+                "type": "opaque",
+                "boundary": "ADIABATIC",
+                "zone": "Z1",
+                "area": 10.0,
+                "u_value": 1.0,
+                "thermal_capacity": 0.0,
+                "solar_absorptance": 0.0,
+                "orientation": {"azimuth": 0.0, "tilt": 180.0},
+                "sky_view_factor": 0.0,
+                "convective_heat_transfer_coefficient_internal": 2.5,
+                "radiative_heat_transfer_coefficient_internal": 0.0,
+            },
+            {
+                "name": "South window",
+                "type": "transparent",
+                "boundary": "OUTDOORS",
+                "zone": "Z1",
+                "area": 4.0,
+                "u_value": 1.2,
+                "g_value": 0.6,
+                "thermal_capacity": 0.0,
+                "solar_absorptance": 0.0,
+                "frame_area_fraction": 0.0,
+                "solar_transmittance_correction_factor": fw,
+                "orientation": {"azimuth": 180.0, "tilt": 90.0},
+                "sky_view_factor": 0.5,
+                "convective_heat_transfer_coefficient_internal": 2.5,
+                "radiative_heat_transfer_coefficient_internal": 0.0,
+            },
+        ],
+    }
+
+    with _weather_with_sun_on_south(n=4, t_out=10.0):
+        out = ISO52016.simulate_envelope_multizone_free_floating(
+            building_object=building_object,
+            path_weather_file="unused.epw",
+            weather_source="epw",
+            include_solar=True,
+            warmup_hours=0,
+            use_profiles=False,
+            include_internal_gains=False,
+            include_ventilation=False,
+            include_thermal_bridges=False,
+        )
+    return pd.to_numeric(out["T_air_Z1"], errors="coerce").max()
+
+
+def test_multizone_free_floating_applies_window_g_correction_factor():
+    """Before this fix, ``simulate_envelope_multizone_free_floating``'s own
+    solar path (``_zone_solar_transmitted_w``) ignored
+    ``solar_transmittance_correction_factor`` entirely, unlike the
+    single-zone engine -- the same nominal g_value produced 1/0.9 = 11%
+    more transmitted solar, and a correspondingly warmer free-floating
+    zone, than the single-zone path for an identical building_object."""
+    t_air_uncorrected = _multizone_free_floating_peak_air_temp(fw=1.0)
+    t_air_corrected = _multizone_free_floating_peak_air_temp(fw=0.90)
+
+    assert t_air_corrected < t_air_uncorrected

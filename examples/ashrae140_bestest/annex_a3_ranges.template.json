@@ -1,0 +1,211 @@
+{
+ "_comment": "Template for the ASHRAE 140-2023 Annex A3 acceptance ranges, which are not distributed with pybuildingenergy (copyright ASHRAE). Copy to Standards/local_reference_data/ashrae140_2023_annex_a3.json and fill each [lower, upper] pair, in MWh/year, from ANSI/ASHRAE Standard 140-2023, Normative Annex A3: Table A3-1 (low-mass heating), Table A3-2 (low-mass sensible cooling), Table A3-3 (high-mass heating), Table A3-4 (high-mass sensible cooling). Differential cases are 'Case N - parent' as listed in those tables (910 is 'Case 900 - Case 910'); use null where the standard gives no range.",
+ "source": "ANSI/ASHRAE Standard 140-2023, Normative Annex A3, Tables A3-1 to A3-4",
+ "units": "MWh/year",
+ "ranges": {
+  "600": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "610": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "620": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "630": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "640": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "650": {
+   "heating": null,
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "660": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "670": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "680": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "685": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "695": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "900": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "910": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "920": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "930": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "940": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "950": {
+   "heating": null,
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "960": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "980": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "985": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  },
+  "995": {
+   "heating": [
+    null,
+    null
+   ],
+   "cooling": [
+    null,
+    null
+   ]
+  }
+ }
+}

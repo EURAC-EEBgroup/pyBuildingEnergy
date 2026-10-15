@@ -241,6 +241,24 @@ def sanitize_and_validate_BUI(bui: dict,
                 else:
                     add_issue("ERROR", f"{path}.g_value", f"g_value should be > 0; value={g}", fixed=False)
 
+            fw = s.get("solar_transmittance_correction_factor", 0.90)
+            if not (isinstance(fw, (int, float)) and 0.0 <= fw <= 1.0):
+                if fix:
+                    s["solar_transmittance_correction_factor"] = 0.90
+                    add_issue(
+                        "WARN",
+                        f"{path}.solar_transmittance_correction_factor",
+                        f"invalid Fw ({fw}); set to ISO 52016-1 Table B.22 default 0.90",
+                        fixed=True,
+                    )
+                else:
+                    add_issue(
+                        "ERROR",
+                        f"{path}.solar_transmittance_correction_factor",
+                        f"Fw should be between 0 and 1; value={fw}",
+                        fixed=False,
+                    )
+
             # window dimensions
             h = s.get("height", None)
             w = s.get("width", None)
