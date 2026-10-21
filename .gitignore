@@ -133,3 +133,6 @@ examples/outputs/
 
 # Polish case (FH_Poland_DC): working notes and input JSON
 examples/FH_Poland_DC_*
+
+# local tutorial material (not tracked for now)
+tutorial/
