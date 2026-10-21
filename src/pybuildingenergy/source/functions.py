@@ -633,6 +633,79 @@ def shading_reduction_factor(
     return F_sh_dir_k_ts, h_k_sun_t
 
 
+def diffuse_shading_reduction_factors(
+    beta_k_t,              # [deg] window tilt (90 = vertical)
+    H_k,                   # [m] window height
+    W_k,                   # [m] window width
+    D_k_ovh_q=None,        # [m] overhang depth
+    L_k_ovh_q=None,        # [m] vertical distance window top - overhang
+    side_fins=None,        # dict as in shading_reduction_factor
+    obstruction_angle_deg=0.0,  # [deg] elevation of the remote skyline (alpha in F.18)
+    has_overhang=False,
+):
+    """
+    Diffuse and reflected shading reduction factors, ISO 52016-1 Annex F
+    Method 2 as detailed in ISO/TR 52016-2:2017, F.6.3 (eq. F.8-F.18).
+
+    The same factor is used for sky-diffuse and horizon-diffuse radiation
+    (F.6.3).  Of the shading devices present (overhang, side fins) and the
+    remote skyline, the smallest factor is kept.  Geometry: overhang
+    ``P1 = D/H``, ``P2 = L/H``; side fins ``P1 = D_fin/W``, ``P2 = L_fin/W``
+    (the two sides are averaged, a missing side counting as no fin).  Window
+    setbacks are not modelled.
+
+    :return: ``(F_sh_dif, F_sh_ref)`` in [0..1] for the sky/horizon-diffuse and
+        the ground-reflected irradiance.
+    """
+
+    def num(x, default=0.0):
+        try:
+            v = float(x)
+        except (TypeError, ValueError):
+            return default
+        return v if np.isfinite(v) else default
+
+    beta = np.radians(num(beta_k_t, 90.0))
+    alpha = num(obstruction_angle_deg)
+    H = num(H_k)
+    W = num(W_k)
+
+    # F.18 (alpha = skyline elevation seen by the window)
+    f_w_sky = (1.0 - np.sin(np.radians(alpha) + beta - np.pi / 2)) / 2.0
+    k_dif = (1.0 + np.cos(beta)) / 2.0
+    k_ref = (1.0 - np.cos(beta)) / 2.0
+
+    def ratio(numer, denom):
+        return numer / denom if denom > 1e-9 else 1.0
+
+    def f_w_s(p1, p2, coeff):  # F.16 / F.17
+        r = np.hypot(p1, p2)
+        return coeff * (1.0 - p2 / r) if r > 0.0 else 0.0
+
+    # remote skyline alone: no setback, fins or overhang
+    f_dif = [ratio(f_w_sky, k_dif)]
+    f_ref = [ratio(1.0 - f_w_sky, k_ref)]
+
+    if has_overhang and H > 0.0:
+        p1 = num(D_k_ovh_q) / H
+        p2 = num(L_k_ovh_q) / H
+        f_w_o = f_w_s(p1, p2, 0.3282)
+        f_dif.append(ratio(f_w_sky - f_w_o, k_dif))  # F.13
+        f_ref.append(ratio(1.0 - f_w_sky, k_ref))    # F.14
+
+    if isinstance(side_fins, dict) and W > 0.0:
+        sides = [side_fins.get("left"), side_fins.get("right")]
+        f_w_fin = 0.0
+        for fin in sides:
+            if isinstance(fin, dict):
+                f_w_fin += f_w_s(num(fin.get("depth")) / W, num(fin.get("distance")) / W, 0.6514) / 2.0
+        f_dif.append(ratio((1.0 - f_w_fin) * f_w_sky, k_dif))          # F.11
+        f_ref.append(ratio((1.0 - f_w_fin) * (1.0 - f_w_sky), k_ref))  # F.12
+
+    clip = lambda v: float(np.clip(v, 0.0, 1.0))
+    return clip(min(f_dif)), clip(min(f_ref))
+
+
 # ====================================================================================================
 #                                       DHW tables from EN 12831-3
 # ====================================================================================================

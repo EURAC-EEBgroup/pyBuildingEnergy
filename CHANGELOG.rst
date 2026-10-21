@@ -1,3 +1,17 @@
+Unreleased
+----------
+
+Shading (ISO/TR 52016-2)
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Add ISO 52016-1 Annex F Method 2: ``building_parameters["annex_f_shading_method"] = 2``
+  also reduces the diffuse and ground-reflected radiation of a window
+  (ISO/TR 52016-2:2017, F.6.3, eq. F.8-F.18) for overhangs, side fins and a
+  remote skyline (``skyline_elevation_deg``), through the new
+  ``diffuse_shading_reduction_factors``.  Method 1 stays the default and is
+  unchanged.  The skyline-segment factors of F.6.2 (eq. F.4-F.5) and window
+  setbacks are not implemented.
+
 2.1.0 (2026-10-15)
 ------------------
 

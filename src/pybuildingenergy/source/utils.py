@@ -2507,10 +2507,16 @@ class ISO52010:
         calendar,
         n_timesteps,
         orientation,
-        building_object
+        building_object,
+        I_ref_tot=None,
     ):
         """
         Calculates the shading reduction factor for each window.
+
+        Annex F Method 1 (default) shades the direct radiation only.  Method 2
+        (``building_parameters["annex_f_shading_method"] = 2``, needs
+        ``I_ref_tot``, the ground-reflected part of ``I_dif_tot``) also reduces the
+        diffuse and reflected radiation (ISO/TR 52016-2:2017, F.6.3).
         Returns a Shading_Reduction_factor_window object, or None if not applicable.
         """
 
@@ -2572,6 +2578,12 @@ class ISO52010:
         if not filtered_windows:
             return None
 
+        method = int(((building_object.get("building_parameters") or {}).get("annex_f_shading_method", 1)) or 1)
+        if method not in (1, 2):
+            raise ValueError("annex_f_shading_method must be 1 or 2")
+        if method == 2 and I_ref_tot is None:
+            raise ValueError("Annex F Method 2 needs the ground-reflected irradiance I_ref_tot")
+
         # 4) Calculate factors for each window
         F_sh_dir_df = pd.DataFrame(index=calendar.index)
 
@@ -2622,9 +2634,27 @@ class ISO52010:
                 if denom <= 0.0:
                     F_sh_obst_k_t = 1.0
                 else:
-                    F_sh_obst_k_t = float(
-                        np.clip((direct_shading_factor * I_dir + I_dif) / denom, 0.0, 1.0)
-                    )
+                    if method == 2:
+                        # ISO/TR 52016-2 F.6.3: sky/horizon-diffuse and reflected
+                        # radiation have their own reduction factors; the
+                        # circumsolar part follows the direct one (already in I_dir).
+                        I_ref = min(I_dif, max(0.0, float(I_ref_tot.iloc[i]) if pd.notna(I_ref_tot.iloc[i]) else 0.0))
+                        types = window.get("shading_type") or []
+                        types = {str(t).lower() for t in ([types] if isinstance(types, str) else types)}
+                        F_dif, F_ref = diffuse_shading_reduction_factors(
+                            beta_k_t=90,
+                            H_k=window.get("height"),
+                            W_k=window.get("width"),
+                            D_k_ovh_q=overhang_properties.get("width_of_horizontal_overhangs"),
+                            L_k_ovh_q=window.get("width_or_distance_of_shading_elements"),
+                            side_fins=window.get("side_fins"),
+                            obstruction_angle_deg=window.get("skyline_elevation_deg", 0.0),
+                            has_overhang=bool(types & {"horizontal_overhang", "vertical_overhang"}),
+                        )
+                        shaded = direct_shading_factor * I_dir + F_dif * (I_dif - I_ref) + F_ref * I_ref
+                    else:
+                        shaded = direct_shading_factor * I_dir + I_dif
+                    F_sh_obst_k_t = float(np.clip(shaded / denom, 0.0, 1.0))
 
                     try:
                         solar_shading_transmittance = float(
@@ -2758,7 +2788,8 @@ class ISO52010:
         calendar,
         n_timesteps,
         n_days,
-        building_object
+        building_object,
+        return_ground_reflected=False,
     ):
         """
         ISO 52010-1:2017 specifies a calculation procedure for the conversion of climatic data for energy calculations.
@@ -2932,6 +2963,10 @@ class ISO52010:
         I_tot['I_sol_dif'] = I_dif_tot
         I_tot['I_sol_dir'] = I_dir_tot
         
+        if return_ground_reflected:
+            # the ground-reflected part of I_dif_tot, needed by Annex F Method 2
+            return (Solar_irradiance(solar_irradiance=I_tot), solar_altitude_angle,
+                    solar_azimuth_angle, I_dir_tot, I_dif_tot, I_dif_ground)
         return Solar_irradiance(solar_irradiance=I_tot), solar_altitude_angle, solar_azimuth_angle, I_dir_tot, I_dif_tot
 
 
@@ -3023,7 +3058,7 @@ def Calculation_ISO_52010(building_object, path_weather_file, weather_source="pv
 
     for orientation in set(orientation_elements):
 
-        Solar_irradiance, alt, az, I_dir_tot, I_dif_tot = ISO52010.Solar_irradiance_calculation(
+        Solar_irradiance, alt, az, I_dir_tot, I_dif_tot, I_ref_tot = ISO52010.Solar_irradiance_calculation(
             n_timesteps=n_tsteps,
             n_days=n_days_year,
             latitude_deg=weatherData.latitude,
@@ -3035,7 +3070,8 @@ def Calculation_ISO_52010(building_object, path_weather_file, weather_source="pv
             DNI=sim_df["Gb(n)"],
             ground_solar_reflectivity=0.2,
             calendar=sim_df[["day of year", "hour of day"]],
-            building_object=building_object
+            building_object=building_object,
+            return_ground_reflected=True,
         )
         Solar_irradiance.solar_irradiance.columns = [f'I_sol_tot_{orientation}',f'I_sol_dif_{orientation}',f'I_sol_dir_w_{orientation}']
         sim_df = pd.concat([sim_df, Solar_irradiance.solar_irradiance], axis=1)
@@ -3048,7 +3084,8 @@ def Calculation_ISO_52010(building_object, path_weather_file, weather_source="pv
             calendar=sim_df[["day of year", "hour of day"]],
             n_timesteps=n_tsteps,
             building_object=building_object,
-            orientation=orientation
+            orientation=orientation,
+            I_ref_tot=I_ref_tot,
         )
         if Shading_factor != None:
             sim_df = pd.concat([sim_df, Shading_factor.shading_reduction_factor_window], axis=1)
