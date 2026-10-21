@@ -782,6 +782,76 @@ def _ground_conductance_w_per_k(area_m2: float, ground_data: temp_ground | None)
     return area / r_gr
 
 
+_SOLAR_DISTRIBUTION_CATEGORIES = ("floor", "ceiling", "east", "west", "north", "south")
+
+
+def _solar_distribution_category(surface) -> str:
+    """Interior-surface category of a surface for ``interior_solar_distribution``:
+    floor, ceiling, or the cardinal direction its (vertical) normal faces."""
+    tilt = _surface_tilt_for_internal_convection(surface)
+    if tilt < 45.0 or tilt > 135.0:
+        try:
+            svf = float(surface.get("sky_view_factor", 1.0))
+        except (TypeError, ValueError):
+            svf = 1.0
+        if tilt > 135.0 or _surface_is_ground_contact(surface) or svf < 0.5:
+            return "floor"
+        return "ceiling"
+    ori = surface.get("orientation", {}) if isinstance(surface, dict) else {}
+    try:
+        azimuth = float(ori.get("azimuth")) % 360.0
+    except (TypeError, ValueError):
+        azimuth = {"NV": 0.0, "NEV": 45.0, "EV": 90.0, "SEV": 135.0, "SV": 180.0, "SWV": 225.0,
+                   "WV": 270.0, "NWV": 315.0}.get(str(surface.get("ISO52016_orientation_string", "")).upper(), 0.0)
+    return ("north", "east", "south", "west")[int(((azimuth + 45.0) % 360.0) // 90.0)]
+
+
+def _interior_solar_distribution_factors(building_object, area_elements, surf_has_node):
+    """Per-element weights for the transmitted solar radiation absorbed on the
+    interior surfaces, from ``building_parameters["interior_solar_distribution"]``.
+
+    The input gives, as fractions of the transmitted solar radiation, the share
+    absorbed by the floor, the ceiling, the four walls (a wall's share includes
+    its windows) and the share lost back through the windows
+    (``{"floor": .., "ceiling": .., "east": .., "west": .., "north": ..,
+    "south": .., "lost": ..}``; ASHRAE 140 Tables 7-13, 7-43 ... 7-45 are of this
+    form).  Returns ``(factors, lost)``: ``factors[i]`` is the share of the
+    absorbed radiation per unit area of element ``i`` (sums, times area, to 1),
+    or ``None`` when no distribution is given (the ISO 52016-1 area-weighted
+    distribution), and ``lost`` the fraction leaving the zone.
+    """
+    if not isinstance(building_object, dict):
+        return None, 0.0
+    cfg = (building_object.get("building_parameters") or {}).get("interior_solar_distribution")
+    if not cfg:
+        return None, 0.0
+    unknown = set(cfg) - set(_SOLAR_DISTRIBUTION_CATEGORIES) - {"lost"}
+    if unknown:
+        raise ValueError(f"interior_solar_distribution: unknown keys {sorted(unknown)}")
+    fractions = {k: float(cfg.get(k, 0.0)) for k in _SOLAR_DISTRIBUTION_CATEGORIES}
+    lost = float(cfg.get("lost", 0.0))
+    if any(v < 0.0 for v in fractions.values()) or not 0.0 <= lost < 1.0:
+        raise ValueError("interior_solar_distribution: fractions must be >= 0 and lost in [0, 1)")
+    if abs(sum(fractions.values()) + lost - 1.0) > 0.01:
+        raise ValueError(
+            "interior_solar_distribution: the fractions and 'lost' must add up to 1 "
+            f"(got {sum(fractions.values()) + lost:.3f})"
+        )
+    surfaces = building_object["building_surface"]
+    category = [_solar_distribution_category(sf) if surf_has_node[i] else None for i, sf in enumerate(surfaces)]
+    cat_area = {c: float(sum(area_elements[i] for i, ci in enumerate(category) if ci == c))
+                for c in _SOLAR_DISTRIBUTION_CATEGORIES}
+    present = [c for c in _SOLAR_DISTRIBUTION_CATEGORIES if cat_area[c] > 0.0]
+    share_present = sum(fractions[c] for c in present)
+    if share_present <= 0.0:
+        raise ValueError("interior_solar_distribution: no fraction falls on any interior surface")
+    factors = np.zeros(len(surfaces), dtype=float)
+    for i, c in enumerate(category):
+        if c is not None:
+            factors[i] = fractions[c] / share_present / cat_area[c]
+    return factors, lost
+
+
 def _single_zone_ground_flux_w(
     bui_eln,
     nodes,
@@ -794,6 +864,7 @@ def _single_zone_ground_flux_w(
     T_air,
     T_rad,
     q_rad_per_area,
+    q_rad_solar_per_area=None,
 ):
     """Sum the instantaneous heat flux [W] from the zone into every
     ground-contact ("GR") element, at the current solved state ``VecB``.
@@ -805,7 +876,9 @@ def _single_zone_ground_flux_w(
     ``q_rad_per_area`` is the area-weighted radiative share of internal,
     solar and heating/cooling gains (see the ground-flux call site for how
     it is derived) landing on each surface's internal node, same as for the
-    OP/W transmission terms computed right after this one.
+    OP/W transmission terms computed right after this one.  When an
+    ``interior_solar_distribution`` is given, the solar share is excluded from
+    it and passed per element in ``q_rad_solar_per_area`` instead.
 
     Sign convention: positive = heat leaving the zone towards the ground.
     """
@@ -817,8 +890,9 @@ def _single_zone_ground_flux_w(
         A = float(area_elements[Eli])
         hci = float(heat_convective_elements_internal[Eli])
         hri = float(heat_radiative_elements_internal[Eli])
+        q_sol = 0.0 if q_rad_solar_per_area is None else float(q_rad_solar_per_area[Eli])
         q_ground += A * (
-            hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int) + q_rad_per_area
+            hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int) + q_rad_per_area + q_sol
         )
     return q_ground
 
@@ -7723,6 +7797,9 @@ class ISO52016:
 
             # Total area of internal surfaces
             area_int_surfaces_tot = float(area_elements[surf_has_node].sum()) or 1.0
+            _sol_flux_factor, _sol_lost = _interior_solar_distribution_factors(
+                building_object, area_elements, surf_has_node
+            )
 
             heat_convective_elements_internal_tab = np.asarray(
                 heat_convective_elements_internal,
@@ -8212,6 +8289,10 @@ class ISO52016:
                             '''
                             # Phi_sol_dir_zt_t_tot_new.append(Phi_sol_dir_zt_t)
 
+                    # Share of the transmitted solar radiation reflected back out through
+                    # the windows (interior_solar_distribution["lost"]); 0 by default.
+                    Phi_sol_dir_zt_t *= (1.0 - _sol_lost)
+
                     ri = 0
                     '''
                     Energy balacne on zone level. Eq. (38) UNI 52016
@@ -8414,13 +8495,18 @@ class ISO52016:
                                 formula (39) from pli=pln (surface node facing calculation zone ztc)
                                 '''
                                 # XTemp = (1 - f_int_c) * int_gains_vent.Phi_int.iloc[
-                                XTemp = (1 - f_int_c) * int_gains + (1 - f_sol_c) * Phi_sol_dir_zt_t
+                                XTemp = (1 - f_int_c) * int_gains
+                                if _sol_flux_factor is None:  # ISO 52016-1: area-weighted
+                                    XTemp += (1 - f_sol_c) * Phi_sol_dir_zt_t
+                                    _sol_inject = 0.0
+                                else:  # interior_solar_distribution
+                                    _sol_inject = (1 - f_sol_c) * Phi_sol_dir_zt_t * _sol_flux_factor[Eli]
                                 for cBi in range(nrHCmodes):
                                     if Phi_HC_nd_calc[cBi] > 0:
                                         f_HC_c = f_H_c
                                     else:
                                         f_HC_c = f_C_c
-                                    VecB[ri, cBi] += (XTemp + (1 - f_HC_c) * Phi_HC_nd_calc[cBi]) / area_int_surfaces_tot
+                                    VecB[ri, cBi] += (XTemp + (1 - f_HC_c) * Phi_HC_nd_calc[cBi]) / area_int_surfaces_tot + _sol_inject
                                     # VecB[ri, cBi] += (XTemp + (1 - f_HC_c) * Phi_HC_nd_calc[cBi]) / area_elements_tot
 
                             elif Pli == 0:
@@ -8737,14 +8823,18 @@ class ISO52016:
                     f_hc_c = f_H_c if phi_hc > 0 else f_C_c
                     phi_rad_surf = (
                         (1.0 - f_int_c) * phi_int
-                        + (1.0 - f_sol_c) * phi_solar
                         + (1.0 - f_hc_c) * phi_hc
                     )
+                    if _sol_flux_factor is None:
+                        phi_rad_surf += (1.0 - f_sol_c) * phi_solar
+                        q_rad_solar_per_area = None
+                    else:  # solar radiation is not area-weighted (interior_solar_distribution)
+                        q_rad_solar_per_area = (1.0 - f_sol_c) * phi_solar * _sol_flux_factor
                     q_rad_per_area = phi_rad_surf / area_int_surfaces_tot
                     q_ground = _single_zone_ground_flux_w(
                         bui_eln, nodes, surface_types, VecB, colB_act, area_elements,
                         heat_convective_elements_internal, heat_radiative_elements_internal,
-                        T_air, T_rad, q_rad_per_area,
+                        T_air, T_rad, q_rad_per_area, q_rad_solar_per_area,
                     )
                     if q_ground > 0:  E_ground_loss_Wh += q_ground * dt_h
                     else:             E_solar_Wh       += (-q_ground) * dt_h
@@ -8763,7 +8853,10 @@ class ISO52016:
                         A   = float(area_elements[Eli])
                         hci = float(heat_convective_elements_internal[Eli])
                         hri = float(heat_radiative_elements_internal[Eli])
-                        q_cond = A * (hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int) + q_rad_per_area)
+                        q_cond = A * (
+                            hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int) + q_rad_per_area
+                            + (0.0 if q_rad_solar_per_area is None else float(q_rad_solar_per_area[Eli]))
+                        )
                         if   q_cond > 0: E_trans_loss_by_surface_Wh[surface_names[Eli]] += q_cond * dt_h
                         elif q_cond < 0: E_solar_Wh += (-q_cond) * dt_h
                         q_tr_total += q_cond
@@ -8780,7 +8873,10 @@ class ISO52016:
                         A   = float(area_elements[Eli])
                         hci = float(heat_convective_elements_internal[Eli])
                         hri = float(heat_radiative_elements_internal[Eli])
-                        q_cond = A * (hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int) + q_rad_per_area)
+                        q_cond = A * (
+                            hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int) + q_rad_per_area
+                            + (0.0 if q_rad_solar_per_area is None else float(q_rad_solar_per_area[Eli]))
+                        )
                         if   q_cond > 0: E_trans_loss_by_surface_Wh[surface_names[Eli]] += q_cond * dt_h
                         elif q_cond < 0: E_solar_Wh += (-q_cond) * dt_h
                         q_adj_total += q_cond
@@ -9347,6 +9443,9 @@ class ISO52016:
 
             # Total area of internal surfaces
             area_int_surfaces_tot = float(area_elements[surf_has_node].sum()) or 1.0
+            _sol_flux_factor, _sol_lost = _interior_solar_distribution_factors(
+                building_object, area_elements, surf_has_node
+            )
 
             heat_convective_elements_internal_tab = np.asarray(
                 heat_convective_elements_internal,
@@ -9879,6 +9978,10 @@ class ISO52016:
                             '''
                             # Phi_sol_dir_zt_t_tot_new.append(Phi_sol_dir_zt_t)
 
+                    # Share of the transmitted solar radiation reflected back out through
+                    # the windows (interior_solar_distribution["lost"]); 0 by default.
+                    Phi_sol_dir_zt_t *= (1.0 - _sol_lost)
+
                     ri = 0
                     '''
                     Energy balacne on zone level. Eq. (38) UNI 52016
@@ -10081,13 +10184,18 @@ class ISO52016:
                                 formula (39) from pli=pln (surface node facing calculation zone ztc)
                                 '''
                                 # XTemp = (1 - f_int_c) * int_gains_vent.Phi_int.iloc[
-                                XTemp = (1 - f_int_c) * int_gains + (1 - f_sol_c) * Phi_sol_dir_zt_t
+                                XTemp = (1 - f_int_c) * int_gains
+                                if _sol_flux_factor is None:  # ISO 52016-1: area-weighted
+                                    XTemp += (1 - f_sol_c) * Phi_sol_dir_zt_t
+                                    _sol_inject = 0.0
+                                else:  # interior_solar_distribution
+                                    _sol_inject = (1 - f_sol_c) * Phi_sol_dir_zt_t * _sol_flux_factor[Eli]
                                 for cBi in range(nrHCmodes):
                                     if Phi_HC_nd_calc[cBi] > 0:
                                         f_HC_c = f_H_c
                                     else:
                                         f_HC_c = f_C_c
-                                    VecB[ri, cBi] += (XTemp + (1 - f_HC_c) * Phi_HC_nd_calc[cBi]) / area_int_surfaces_tot
+                                    VecB[ri, cBi] += (XTemp + (1 - f_HC_c) * Phi_HC_nd_calc[cBi]) / area_int_surfaces_tot + _sol_inject
                                     # VecB[ri, cBi] += (XTemp + (1 - f_HC_c) * Phi_HC_nd_calc[cBi]) / area_elements_tot
 
                             elif Pli == 0:
@@ -10423,14 +10531,18 @@ class ISO52016:
                     f_hc_c = f_H_c if phi_hc > 0 else f_C_c
                     phi_rad_surf = (
                         (1.0 - f_int_c) * phi_int
-                        + (1.0 - f_sol_c) * phi_solar
                         + (1.0 - f_hc_c) * phi_hc
                     )
+                    if _sol_flux_factor is None:
+                        phi_rad_surf += (1.0 - f_sol_c) * phi_solar
+                        q_rad_solar_per_area = None
+                    else:  # solar radiation is not area-weighted (interior_solar_distribution)
+                        q_rad_solar_per_area = (1.0 - f_sol_c) * phi_solar * _sol_flux_factor
                     q_rad_per_area = phi_rad_surf / area_int_surfaces_tot
                     q_ground = _single_zone_ground_flux_w(
                         bui_eln, nodes, surface_types, VecB, colB_act, area_elements,
                         heat_convective_elements_internal, heat_radiative_elements_internal,
-                        T_air, T_rad, q_rad_per_area,
+                        T_air, T_rad, q_rad_per_area, q_rad_solar_per_area,
                     )
                     if q_ground > 0:  E_ground_loss_Wh += q_ground * dt_h
                     else:             E_solar_Wh       += (-q_ground) * dt_h
@@ -10449,7 +10561,10 @@ class ISO52016:
                         A   = float(area_elements[Eli])
                         hci = float(heat_convective_elements_internal[Eli])
                         hri = float(heat_radiative_elements_internal[Eli])
-                        q_cond = A * (hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int) + q_rad_per_area)
+                        q_cond = A * (
+                            hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int) + q_rad_per_area
+                            + (0.0 if q_rad_solar_per_area is None else float(q_rad_solar_per_area[Eli]))
+                        )
                         if   q_cond > 0: E_trans_loss_by_surface_Wh[surface_names[Eli]] += q_cond * dt_h
                         elif q_cond < 0: E_solar_Wh += (-q_cond) * dt_h
                         q_tr_total += q_cond
@@ -10466,7 +10581,10 @@ class ISO52016:
                         A   = float(area_elements[Eli])
                         hci = float(heat_convective_elements_internal[Eli])
                         hri = float(heat_radiative_elements_internal[Eli])
-                        q_cond = A * (hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int) + q_rad_per_area)
+                        q_cond = A * (
+                            hci * (T_air - T_surf_int) + hri * (T_rad - T_surf_int) + q_rad_per_area
+                            + (0.0 if q_rad_solar_per_area is None else float(q_rad_solar_per_area[Eli]))
+                        )
                         if   q_cond > 0: E_trans_loss_by_surface_Wh[surface_names[Eli]] += q_cond * dt_h
                         elif q_cond < 0: E_solar_Wh += (-q_cond) * dt_h
                         q_adj_total += q_cond

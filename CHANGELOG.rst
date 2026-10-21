@@ -1,6 +1,28 @@
 Unreleased
 ----------
 
+Engine
+~~~~~~
+
+* Add the optional ``building_parameters["interior_solar_distribution"]``
+  input to the single-zone engine: fractions of the transmitted solar
+  radiation absorbed by the floor, ceiling and the four walls (a wall's share
+  includes its windows) and a ``lost`` fraction reflected back out through the
+  windows.  The fractions must be non-negative and sum to 1 (+/- 0.01).  When
+  absent, the area-weighted ISO 52016-1 distribution is unchanged.
+
+Validation
+~~~~~~~~~~
+
+* Add the 25 in-depth cases of ASHRAE 140-2023 Section 7.2.3 (195, 200, 210,
+  215, 220, 230, 240, 250, 270, 280, 290, 300, 310, 320, 395, 400, 410, 420,
+  430, 440, 450, 460, 470, 800, 810): ``in_depth_cases.py``,
+  ``run_in_depth.py`` and an HTML report ``reports/in_depth.html``.  The
+  standard gives no acceptance ranges for them; the report shows the
+  difference of each case from its base case.
+* ``build_bestest_case(..., solar_distribution="table")`` applies the interior
+  solar distribution fractions of Tables 7-13, 7-15, 7-20 and 7-24.
+
 Shading (ISO/TR 52016-2)
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
