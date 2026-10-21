@@ -1277,3 +1277,254 @@ def test_renewables_method_3_clips_negative_losses_and_applies_pump_threshold():
     ts = result.timeseries
     assert ts["Q_solar_thermal_loop_losses_kWh"].iloc[0] == pytest.approx(0.0)
     assert ts["Q_solar_thermal_available_kWh"].iloc[0] == pytest.approx(0.0)
+
+
+def test_renewables_method_3_second_order_term_uses_irradiance_and_controller_aux():
+    """EN 15316-4-3:2017 eq. (52): eta = eta0*Khem - a1*T* - a2*T*^2*I; eq. (59)-(60) aux."""
+    I, t_amb, t_col = 500.0, 10.0, 50.0
+    data = pd.DataFrame({"GHI": [I, 0.0], "T_ext_C": [t_amb, t_amb],
+                         "E_site_el_load_kWh": [0.0, 0.0]})
+    result = pybui.RenewableEnergySystemCalculator(
+        {"solar_thermal": {"enabled": True, "area_m2": 2.0, "collector_area_m2": 2.0,
+                           "method": "method_3", "mean_temperature_C": t_col,
+                           "eta_0": 0.8, "a1_W_m2K": 3.5, "a2_W_m2K2": 0.015,
+                           "pump_power_W": 50.0, "controller_power_W": 5.0}}
+    ).run_timeseries(data)
+    t_star = (t_col - t_amb) / I
+    eta = 0.8 - 3.5 * t_star - 0.015 * t_star**2 * I
+    ts = result.timeseries
+    assert ts["Q_solar_thermal_collector_kWh"].iloc[0] == pytest.approx(eta * I * 2.0 / 1000.0)
+    assert ts["E_solar_thermal_aux_kWh"].iloc[0] == pytest.approx(0.055)  # controller + pump
+    assert ts["E_solar_thermal_aux_kWh"].iloc[1] == pytest.approx(0.005)  # controller only
+
+
+@pytest.mark.parametrize("clip, expected", [(True, 0.0), (False, -0.1)])
+def test_renewables_method_3_loop_loss_clip_option(clip, expected):
+    """Eq. (56): H * (theta_col - theta_amb) * t; negative when the collector is colder."""
+    data = pd.DataFrame({"GHI": [500.0], "T_ext_C": [60.0], "E_site_el_load_kWh": [0.0]})
+    result = pybui.RenewableEnergySystemCalculator(
+        {"solar_thermal": {"enabled": True, "area_m2": 1.0, "collector_area_m2": 1.0,
+                           "method": "method_3", "mean_temperature_C": 50.0,
+                           "loop_heat_loss_W_K": 10.0, "loop_loss_clip": clip}}
+    ).run_timeseries(data)
+    assert result.timeseries["Q_solar_thermal_loop_losses_kWh"].iloc[0] == pytest.approx(expected)
+
+
+def test_renewables_method_3_uses_collector_plane_irradiance_over_ghi():
+    """Method 3 (eq. 52-55) takes I_sol,h on the collector plane; GHI is only a warned fallback."""
+    cfg = {"solar_thermal": {"enabled": True, "area_m2": 1.0, "collector_area_m2": 1.0,
+                             "method": "method_3", "mean_temperature_C": 40.0}}
+    base = {"T_ext_C": [10.0], "E_site_el_load_kWh": [0.0]}
+
+    def collector(df):
+        r = pybui.RenewableEnergySystemCalculator(cfg).run_timeseries(df)
+        return r.timeseries["Q_solar_thermal_collector_kWh"].iloc[0]
+
+    with_plane = collector(pd.DataFrame({**base, "GHI": [200.0],
+                                         "I_sol_collector_plane_W_m2": [800.0]}))
+    plane_only = collector(pd.DataFrame({**base, "I_sol_collector_plane_W_m2": [800.0]}))
+    assert with_plane == pytest.approx(plane_only) and with_plane > 0.0
+    with pytest.warns(UserWarning, match="collector-plane irradiance"):
+        collector(pd.DataFrame({**base, "GHI": [800.0]}))
+
+
+def test_renewables_method_3_derives_collector_plane_irradiance_from_dni_dhi():
+    """Collector-plane irradiance from DNI/DHI (EN ISO 52010-1): a south 40 deg collector
+    at 45N collects more at noon than the same input read as horizontal."""
+    idx = pd.date_range("2021-03-21 00:00", periods=24, freq="h")
+    dni = pd.Series([0.0] * 8 + [300.0, 500.0, 650.0, 750.0, 800.0, 750.0, 650.0, 500.0, 300.0] + [0.0] * 7, index=idx)
+    dhi = pd.Series(120.0, index=idx).where(dni > 0, 0.0)
+    data = pd.DataFrame({"DNI": dni, "DHI": dhi, "T_ext_C": 10.0, "E_site_el_load_kWh": 0.0})
+
+    def run(**extra):
+        cfg = {"solar_thermal": {"enabled": True, "area_m2": 1.0, "collector_area_m2": 1.0,
+                                 "method": "method_3", "mean_temperature_C": 40.0,
+                                 "latitude_deg": 45.0, "longitude_deg": 10.0, "timezone_h": 1,
+                                 "tilt_deg": 40.0, **extra}}
+        return pybui.RenewableEnergySystemCalculator(cfg).run_timeseries(data).timeseries["Q_solar_thermal_collector_kWh"]
+
+    south, north = run(azimuth_deg=180.0), run(azimuth_deg=0.0)
+    assert south.sum() > 0.0
+    assert south.sum() > north.sum()  # orientation now matters
+    assert south.iloc[:6].sum() == pytest.approx(0.0)  # night
+
+
+def _method3_iterative(tank, iterations=4, hours=24, **solar):
+    I = [0.0] * 8 + [300.0, 500.0, 700.0, 850.0, 900.0, 850.0, 700.0, 500.0, 300.0] + [0.0] * 7
+    data = pd.DataFrame({"I_sol_collector_plane_W_m2": I[:hours], "T_ext_C": 10.0,
+                         "E_site_el_load_kWh": 0.0})
+    cfg = {"solar_thermal": {"enabled": True, "area_m2": 4.0, "collector_area_m2": 4.0,
+                             "method": "method_3", "mass_flow_kg_s": 0.05,
+                             "iterations": iterations, "initial_loop_inlet_temperature_C": 20.0,
+                             **solar}}
+    return pybui.RenewableEnergySystemCalculator(cfg, storage_response=tank).run_timeseries(data)
+
+
+def test_renewables_method_3_iteration_with_storage_closes_energy_balance():
+    """EN 15316-4-3 6.1.3.4.2: the collector inlet follows the storage temperature."""
+    tank = pybui.MixedSolarTank(volume_l=300.0, initial_temperature_C=20.0, step_hours=1.0)
+    ts = _method3_iterative(tank).timeseries
+    accepted = ts["Q_solar_thermal_available_kWh"].sum()
+    assert accepted > 0.0
+    # tank energy gain == heat accepted (no draw, no tank losses)
+    assert tank.capacity_kWh_K * (tank.temperature_C - 20.0) == pytest.approx(accepted, rel=1e-6)
+    # the inlet temperature rises with the stored energy and the efficiency falls with it
+    assert ts["T_solar_loop_in_C"].iloc[16] > ts["T_solar_loop_in_C"].iloc[8]
+    assert (ts["Q_solar_thermal_collector_kWh"] > 0).sum() == 9  # only the sunny hours
+
+
+def test_renewables_method_3_hot_storage_collects_less_than_cold_storage():
+    cold = _method3_iterative(pybui.MixedSolarTank(300.0, initial_temperature_C=20.0)).timeseries
+    hot = _method3_iterative(pybui.MixedSolarTank(300.0, initial_temperature_C=70.0)).timeseries
+    assert hot["Q_solar_thermal_collector_kWh"].sum() < cold["Q_solar_thermal_collector_kWh"].sum()
+
+
+def test_renewables_method_3_full_storage_limits_accepted_heat():
+    tank = pybui.MixedSolarTank(volume_l=100.0, initial_temperature_C=60.0, max_temperature_C=61.0)
+    ts = _method3_iterative(tank).timeseries
+    assert ts["Q_solar_thermal_available_kWh"].sum() == pytest.approx(tank.capacity_kWh_K * 1.0, rel=1e-6)
+    assert ts["Q_sol_loop_out_kWh"].sum() > ts["Q_solar_thermal_available_kWh"].sum()
+
+
+def test_renewables_method_3_iteration_needs_mass_flow():
+    data = pd.DataFrame({"I_sol_collector_plane_W_m2": [500.0], "T_ext_C": 10.0, "E_site_el_load_kWh": 0.0})
+    calc = pybui.RenewableEnergySystemCalculator(
+        {"solar_thermal": {"enabled": True, "area_m2": 1.0, "method": "method_3"}},
+        storage_response=pybui.MixedSolarTank(100.0))
+    with pytest.raises(ValueError, match="mass_flow"):
+        calc.run_timeseries(data)
+
+
+# ---- EN 15316-4-3:2017 Table 14 / eq. (59)-(61) / Methods 4-6, Table 25 -------------------
+
+def _m3(extra=None, **frame):
+    n = 3
+    data = pd.DataFrame({"I_sol_collector_plane_W_m2": [0.0, 600.0, 600.0], "T_ext_C": 10.0,
+                         "E_site_el_load_kWh": 0.0, **frame})
+    cfg = {"enabled": True, "area_m2": 2.0, "collector_area_m2": 2.0, "method": "method_3",
+           "mean_temperature_C": 40.0, "eta_0": 0.8, "loop_heat_loss_W_K": 5.0,
+           "pump_power_W": 40.0, "controller_power_W": 4.0, **(extra or {})}
+    return pybui.RenewableEnergySystemCalculator({"solar_thermal": cfg}).run_timeseries(data).timeseries
+
+
+def test_method_3_exposes_the_table_14_outputs():
+    ts = _m3(Q_H_kWh=[1.0, 1.0, 1.0])
+    for col in ("Q_sol_gen_kWh", "Q_sol_col_out_kWh", "Q_sol_loop_out_kWh", "Q_sol_loop_out_req_kWh",
+                "Q_sto_sol_in_kWh", "Q_sol_loop_ls_kWh", "Q_sol_loop_ls_rbl_kWh", "E_sol_aux_kWh",
+                "N_sol_it", "SOL_FINAL"):
+        assert col in ts.columns, col
+    sunny = ts.iloc[1]
+    assert sunny["Q_sol_gen_kWh"] == pytest.approx(0.8 * 600.0 * 2.0 / 1000.0)  # eq. (54)
+    assert sunny["Q_sol_gen_kWh"] > sunny["Q_sol_col_out_kWh"]  # absorber heat > collector output
+    assert sunny["Q_sol_loop_out_kWh"] == pytest.approx(sunny["Q_sol_col_out_kWh"] - sunny["Q_sol_loop_ls_kWh"])
+    assert ts["Q_sol_col_out_kWh"].equals(ts["Q_solar_thermal_collector_kWh"])  # legacy name kept
+    assert bool(ts["SOL_FINAL"].all()) and (ts["N_sol_it"] == 0).all()  # no storage: no iteration
+
+
+def test_method_3_recoverable_loop_losses_need_a_heating_demand_eq_61():
+    with_demand = _m3(Q_H_kWh=[1.0, 1.0, 1.0])
+    without = _m3(Q_H_kWh=[0.0, 0.0, 0.0])
+    assert with_demand["Q_sol_loop_ls_rbl_kWh"].iloc[1] == pytest.approx(with_demand["Q_sol_loop_ls_kWh"].iloc[1])
+    assert with_demand["Q_sol_loop_ls_rbl_kWh"].iloc[1] > 0.0
+    assert (without["Q_sol_loop_ls_rbl_kWh"] == 0.0).all()
+
+
+def test_method_3_aux_follows_the_documented_reading_or_the_literal_eq_60():
+    default = _m3()
+    assert default["E_sol_aux_kWh"].iloc[0] == pytest.approx(0.004)  # night: controller only
+    assert default["E_sol_aux_kWh"].iloc[1] == pytest.approx(0.044)  # loop output: controller + pump
+    literal = _m3({"aux_literal_eq60": True})
+    assert literal["E_sol_aux_kWh"].iloc[0] == pytest.approx(0.044)  # eq. (60) as printed
+    assert literal["E_sol_aux_kWh"].iloc[1] == pytest.approx(0.004)
+
+
+def test_method_3_with_storage_separates_request_from_accepted_heat():
+    tank = pybui.MixedSolarTank(volume_l=100.0, initial_temperature_C=60.0, max_temperature_C=60.5)
+    data = pd.DataFrame({"I_sol_collector_plane_W_m2": [800.0, 800.0], "T_ext_C": 10.0,
+                         "E_site_el_load_kWh": 0.0})
+    cfg = {"solar_thermal": {"enabled": True, "area_m2": 4.0, "collector_area_m2": 4.0, "method": "method_3",
+                             "mass_flow_kg_s": 0.05, "initial_loop_inlet_temperature_C": 60.0}}
+    ts = pybui.RenewableEnergySystemCalculator(cfg, storage_response=tank).run_timeseries(data).timeseries
+    assert (ts["N_sol_it"] == 4).all()
+    # proposed loop output > what the storage takes; the final request is capped by the
+    # previous pass's acceptance, so it can no longer exceed it by more than the last pass adds
+    assert ts["Q_sol_loop_out_kWh"].sum() > ts["Q_sto_sol_in_kWh"].sum() > 0.0
+    assert (ts["Q_sol_loop_out_req_kWh"] <= ts["Q_sol_loop_out_kWh"] + 1e-12).all()
+    assert (ts["Q_sol_loop_out_req_kWh"] >= ts["Q_sto_sol_in_kWh"] - 1e-9).all()
+    assert (ts["Q_sol_loop_out_req_kWh"] < ts["Q_sol_loop_out_kWh"]).any()  # the cap was applied
+    assert ts["Q_sto_sol_in_kWh"].equals(ts["Q_solar_thermal_available_kWh"])
+
+
+def _pv(method, frame, **extra):
+    cfg = {"enabled": True, "capacity_kWp": 5.0, "performance_factor": 0.8, "method": method, **extra}
+    return pybui.RenewableEnergySystemCalculator({"pv": cfg}).run_timeseries(frame).timeseries
+
+
+def test_pv_method_4_eq_62_and_table_25_outputs():
+    idx = pd.date_range("2021-01-01", periods=8760, freq="h")
+    frame = pd.DataFrame({"E_site_el_load_kWh": 0.0, "GHI": 300.0}, index=idx)
+    ts = _pv("method_4", frame, annual_irradiation_horizontal_kWh_m2=1200.0, tilt_orientation_factor=1.1)
+    assert ts["E_el_pv_out_kWh"].sum() == pytest.approx(1200.0 * 1.1 * 5.0 * 0.8)
+    assert ts["E_el_pv_out_kWh"].equals(ts["E_PV_gen_kWh"])
+    for col in ("Q_pv_gen_out_kWh", "Q_pv_gen_ls_kWh", "Q_pv_gen_ls_rbl_kWh", "W_pv_gen_aux_kWh", "E_pv_gen_in_kWh"):
+        assert (ts[col] == 0.0).all()
+    with pytest.raises(ValueError, match="annual_irradiation_horizontal"):
+        _pv("method_4", frame)
+
+
+def test_pv_method_4_derives_peak_power_from_kpk_times_area_eq_64():
+    idx = pd.date_range("2021-01-01", periods=8760, freq="h")
+    frame = pd.DataFrame({"E_site_el_load_kWh": 0.0, "GHI": 300.0}, index=idx)
+    cfg = {"enabled": True, "area_m2": 30.0, "Kpk_kW_m2": 0.15, "performance_factor": 0.9,
+           "method": "method_4", "annual_irradiation_horizontal_kWh_m2": 1000.0}
+    ts = pybui.RenewableEnergySystemCalculator({"pv": cfg}).run_timeseries(frame).timeseries
+    assert ts["E_el_pv_out_kWh"].sum() == pytest.approx(1000.0 * 30.0 * 0.15 * 0.9)
+
+
+def test_pv_method_5_monthly_eq_65():
+    idx = pd.date_range("2021-01-01", periods=8760, freq="h")
+    frame = pd.DataFrame({"E_site_el_load_kWh": 0.0, "GHI": 200.0}, index=idx)
+    monthly = [30, 50, 90, 120, 150, 170, 180, 150, 110, 70, 35, 25]
+    f_tlt = [1.5, 1.4, 1.2, 1.1, 1.0, 0.95, 1.0, 1.1, 1.2, 1.4, 1.6, 1.7]
+    ts = _pv("method_5", frame, monthly_irradiation_horizontal_kWh_m2=monthly,
+             tilt_orientation_factor_monthly=f_tlt)
+    by_month = ts["E_el_pv_out_kWh"].groupby(ts.index.month).sum()
+    for m in range(12):
+        assert by_month.iloc[m] == pytest.approx(monthly[m] * f_tlt[m] * 5.0 * 0.8)
+    with pytest.raises(ValueError, match="12 values"):
+        _pv("method_5", frame, monthly_irradiation_horizontal_kWh_m2=[1.0])
+
+
+def test_pv_method_6_derives_plane_irradiation_from_dni_dhi_or_warns():
+    idx = pd.date_range("2021-03-21 00:00", periods=24, freq="h")
+    dni = pd.Series([0.0] * 6 + [200, 400, 600, 700, 800, 850, 850, 800, 700, 600, 400, 200, 0, 0, 0, 0, 0, 0], index=idx)
+    frame = pd.DataFrame({"DNI": dni, "DHI": 100.0, "E_site_el_load_kWh": 0.0}, index=idx)
+    site = {"latitude_deg": 45.0, "longitude_deg": 10.0, "timezone_h": 1, "tilt_deg": 30.0}
+    south = _pv("method_6", frame, **site, azimuth_deg=180.0)["E_el_pv_out_kWh"]
+    north = _pv("method_6", frame, **site, azimuth_deg=0.0)["E_el_pv_out_kWh"]
+    assert south.sum() > north.sum() > 0.0
+    with pytest.warns(UserWarning, match="PV-plane irradiation"):
+        _pv("method_6", frame.assign(GHI=300.0))
+
+
+def test_method_3_warns_without_storage_model_and_can_refuse_the_ghi_fallback():
+    data = pd.DataFrame({"I_sol_collector_plane_W_m2": [500.0], "T_ext_C": 10.0, "E_site_el_load_kWh": 0.0})
+    base = {"enabled": True, "area_m2": 1.0, "method": "method_3"}
+    with pytest.warns(UserWarning, match="without a storage model"):
+        pybui.RenewableEnergySystemCalculator({"solar_thermal": base}).run_timeseries(data)
+    import warnings as _w
+    with _w.catch_warnings():
+        _w.simplefilter("error")  # an explicit mean temperature is a deliberate choice: no warning
+        pybui.RenewableEnergySystemCalculator(
+            {"solar_thermal": {**base, "mean_temperature_C": 45.0}}).run_timeseries(data)
+    ghi_only = pd.DataFrame({"GHI": [500.0], "T_ext_C": 10.0, "E_site_el_load_kWh": 0.0})
+    with pytest.raises(ValueError, match="require_plane_irradiance"):
+        pybui.RenewableEnergySystemCalculator(
+            {"solar_thermal": {**base, "mean_temperature_C": 45.0, "require_plane_irradiance": True}}
+        ).run_timeseries(ghi_only)
+
+
+def test_pv_method_6_can_refuse_the_horizontal_fallback():
+    frame = pd.DataFrame({"GHI": [300.0], "E_site_el_load_kWh": 0.0})
+    with pytest.raises(ValueError, match="require_plane_irradiation"):
+        _pv("method_6", frame, require_plane_irradiation=True)

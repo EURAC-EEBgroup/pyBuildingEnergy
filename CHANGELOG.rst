@@ -12,6 +12,25 @@ Shading (ISO/TR 52016-2)
   unchanged.  The skyline-segment factors of F.6.2 (eq. F.4-F.5) and window
   setbacks are not implemented.
 
+Generation (EN 15316-4-3, EN 15316-5)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Fix the second-order term of the solar collector efficiency (EN 15316-4-3
+  eq. 52): ``a2 * T*^2 * I`` was missing the irradiance factor, so the
+  efficiency was overestimated.  Solar thermal Method 3 results change.
+* Solar thermal Method 3: add the Table 14 outputs (``Q_sol_gen_kWh``,
+  ``Q_sol_col_out_kWh``, ``Q_sol_loop_out_kWh``, ``Q_sol_loop_out_req_kWh``,
+  ``Q_sto_sol_in_kWh``, ``Q_sol_loop_ls_kWh``, ``Q_sol_loop_ls_rbl_kWh``,
+  ``E_sol_aux_kWh``, ``N_sol_it``, ``SOL_FINAL``), the controller power
+  (``controller_power_W``), recoverable loop losses (eq. 61), the
+  collector/storage iteration (pass ``storage_response=`` to
+  ``RenewableEnergySystemCalculator``; ``MixedSolarTank`` is a simple model) and
+  the collector-plane irradiance from DNI/DHI with site and orientation.
+  ``loop_loss_clip`` (default True) and ``aux_literal_eq60`` select between the
+  documented reading and the literal text of eq. 56 and eq. 60;
+  ``require_plane_irradiance`` refuses the horizontal-irradiance fallback.
+* PV: add Method 4 (``"method_4"``, eq. 62-64), Method 5 (``"method_5"``,
+  monthly, eq. 65-67), Method 6 from DNI/DHI, and the Table 25 outputs.
 2.1.0 (2026-10-15)
 ------------------
 

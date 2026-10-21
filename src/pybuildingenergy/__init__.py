@@ -70,6 +70,8 @@ _PUBLIC_IMPORTS = {
     "DistrictSystemSimulationResult": (".source.district_15316_4_5", "DistrictSystemSimulationResult"),
     "RenewableEnergySimulationResult": (".source.renewables_15316_4_3_4_6", "RenewableEnergySimulationResult"),
     "RenewableEnergySystemCalculator": (".source.renewables_15316_4_3_4_6", "RenewableEnergySystemCalculator"),
+    "LayeredStorage": (".source.storage_15316_5", "LayeredStorage"),
+    "MixedSolarTank": (".source.renewables_15316_4_3_4_6", "MixedSolarTank"),
     "PrimaryEnergyAccountingCalculator": (".source.primary_energy_52000_1", "PrimaryEnergyAccountingCalculator"),
     "PrimaryEnergyAccountingResult": (".source.primary_energy_52000_1", "PrimaryEnergyAccountingResult"),
     "LightingSimulationResult": (".source.lighting_15193_1", "LightingSimulationResult"),
