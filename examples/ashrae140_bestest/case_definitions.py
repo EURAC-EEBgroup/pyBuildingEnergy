@@ -177,6 +177,28 @@ OVERHANG_AT_ROOF = {
     "width_or_distance_of_shading_elements": 0.5,
 }
 
+# Interior solar distribution (fractions of the transmitted solar radiation absorbed
+# by each interior surface after all reflections, and lost back through the windows).
+# Alternative constant inputs permitted by Sections 7.2.1.12.2, 7.2.2.1.2.2.2,
+# 7.2.3.9.3.2, 7.2.3.10.2.2 and 7.2.3.12.2.2 for programs that do not compute the
+# distribution themselves; a wall's share includes its windows. Used with
+# ``solar_distribution="table"`` through ``interior_solar_distribution``.
+SOLAR_DISTRIBUTION_TABLES = {
+    "600": dict(floor=0.642, ceiling=0.167, east=0.038, west=0.038, north=0.053, south=0.027, lost=0.035),   # Table 7-13
+    "620": dict(floor=0.642, ceiling=0.167, east=0.025, west=0.025, north=0.053, south=0.053, lost=0.035),   # Table 7-15
+    "660": dict(floor=0.645, ceiling=0.170, east=0.039, west=0.039, north=0.054, south=0.026, lost=0.027),   # Table 7-20
+    "670": dict(floor=0.641, ceiling=0.166, east=0.038, west=0.038, north=0.052, south=0.025, lost=0.040),   # Table 7-24
+    "270": dict(floor=0.903, ceiling=0.050, east=0.010, west=0.010, north=0.014, south=0.007, lost=0.006),   # Table 7-43
+    "280": dict(floor=0.243, ceiling=0.191, east=0.057, west=0.057, north=0.077, south=0.063, lost=0.312),   # Table 7-44
+    "300": dict(floor=0.903, ceiling=0.050, east=0.0065, west=0.0065, north=0.014, south=0.014, lost=0.006), # Table 7-45
+}
+SOLAR_DISTRIBUTION_MODES = ("area", "table")
+
+
+def interior_solar_distribution(table_key: str) -> dict:
+    return dict(SOLAR_DISTRIBUTION_TABLES[table_key])
+
+
 SOLAR_ABSORPTANCE_OPAQUE = 0.6  # Table 7-5
 INTERNAL_GAIN_W = 200.0  # Section 7.2.1.7: 60% radiative / 40% convective
 HEATING_SETPOINT_C = 20.0
@@ -501,7 +523,8 @@ def annex_a3_table(case_number: int, metric: str) -> str:
 HIGH_MASS_SINGLE_ZONE = (900, 910, 920, 930, 940, 950, 980, 985, 995)
 
 
-def build_bestest_case(case_number: int, surface_coefficients: str = "ashrae_convective") -> dict:
+def build_bestest_case(case_number: int, surface_coefficients: str = "ashrae_convective",
+                       solar_distribution: str = "area") -> dict:
     """Build ASHRAE 140 low-mass 600- or high-mass 900-series cases.
 
     The high-mass cases 900-950 reuse the corresponding 600-series
@@ -510,7 +533,13 @@ def build_bestest_case(case_number: int, surface_coefficients: str = "ashrae_con
     Case 980 is Case 900 with the Table 7-31 wall/roof insulation, 985 is
     Case 900 with the "20,20" thermostat and 995 is 980 with it. Case 960 is
     two-zone: use ``build_case_960``.
+
+    ``solar_distribution``: "area" (default) uses the engine's ISO 52016-1 area-weighted
+    distribution of the transmitted solar radiation; "table" applies the constant
+    distribution fractions the standard gives for the case (Tables 7-13, 7-15, 7-20 and 7-24).
     """
+    if solar_distribution not in SOLAR_DISTRIBUTION_MODES:
+        raise ValueError(f"solar_distribution must be one of {SOLAR_DISTRIBUTION_MODES}")
     if case_number == 960:
         raise ValueError("Case 960 has two zones: use build_case_960()")
     is_high_mass = case_number in HIGH_MASS_ACCEPTANCE
@@ -608,6 +637,10 @@ def build_bestest_case(case_number: int, surface_coefficients: str = "ashrae_con
         sp["heating_setback"] = 20.0
         sp["cooling_setpoint"] = 20.0
         sp["cooling_setback"] = 20.0
+
+    if solar_distribution == "table":
+        key = {620: "620", 630: "620", 660: "660", 670: "670"}.get(source_case, "600")
+        bui["building_parameters"]["interior_solar_distribution"] = interior_solar_distribution(key)
 
     bui["building"]["name"] = f"ASHRAE140_Case{case_number}"
     return bui

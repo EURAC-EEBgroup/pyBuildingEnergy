@@ -26,7 +26,7 @@ COLORS = {
     "light_wall": "#d9c7a7", "heavy_wall": "#a9a39a", "roof": "#8c6d5a", "floor": "#b9b2a6",
     "window": "#5aa9e6", "shading": "#5b6670", "common_wall": "#7d7468", "sun_wall": "#a9a39a",
     "edge": "#2b2f33", "ground": "#e7ece4", "insulation": "#f2d16b", "airflow": "#1f7a4d",
-    "window_lowe": "#3fbfa8", "window_single": "#b9dff7",
+    "window_lowe": "#3fbfa8", "window_single": "#b9dff7", "hc": "#c0392b",
 }
 
 WINDOW_STYLE = {   # glazing type -> (legend label, colour, opacity)
@@ -124,7 +124,10 @@ def _insulation_layer(m, plane, fixed, span, openings, t, outward, z_lo, z_hi):
                 m.box("insulation", n0, n1, a, b, c, d)
 
 
-def building_figure(case_number: int, heavy: bool, free_float: bool = False) -> go.Figure:
+def building_figure(case_number: int, heavy: bool, free_float: bool = False,
+                    variant: str | None = None) -> go.Figure:
+    """``variant``: None (windows as the case defines them), "hc" (the south openings are
+    high-conductance wall elements, Section 7.2.3) or "solid" (no south openings)."""
     src = 600 if case_number == 960 else _source_case(case_number)
     glazing = "lowe" if src == 660 else "single" if src == 670 else "double"
     more_insulation = src in (680, 695)   # also 980/995: Tables 7-25 and 7-31
@@ -161,12 +164,17 @@ def building_figure(case_number: int, heavy: bool, free_float: bool = False) -> 
             east, west = [win], [win]
         else:
             south = [(0.5, 3.5, z0 + SILL, z0 + SILL + WIN_H), (4.5, 7.5, z0 + SILL, z0 + SILL + WIN_H)]
+        if variant == "solid":
+            south = []
         _wall_with_openings(m, wall, "y", 0.0, (0, L), south)
         _wall_with_openings(m, wall, "y", W, (0, L), [])
         _wall_with_openings(m, wall, "x", L, (0, W), east)
         _wall_with_openings(m, wall, "x", 0.0, (0, W), west)
         for a, b, c, d in south:
-            _window(m, "y", 0.0, a, b, c, d, -1)
+            if variant == "hc":
+                m.quad("hc", (a, -EPS, c), (b, -EPS, c), (b, -EPS, d), (a, -EPS, d))
+            else:
+                _window(m, "y", 0.0, a, b, c, d, -1)
         for a, b, c, d in east:
             _window(m, "x", L, a, b, c, d, +1)
         for a, b, c, d in west:
@@ -208,6 +216,7 @@ def building_figure(case_number: int, heavy: bool, free_float: bool = False) -> 
         "roof": ("Roof", COLORS["roof"], 1.0),
         "floor": ("Raised floor", COLORS["floor"], 1.0),
         "window": WINDOW_STYLE[glazing],
+        "hc": ("High-conductance wall elements (Table 7-35)", COLORS["hc"], 0.85),
         "insulation": ("Increased insulation (Tables 7-25 / 7-31)", COLORS["insulation"], 1.0),
         "shading": ("Overhang / fins", COLORS["shading"], 0.55),
         "ground": ("Ground", COLORS["ground"], 1.0),
@@ -302,3 +311,32 @@ def _geometry_caption(case_number: int, src: int) -> str:
         parts.append("1.0 m overhang and 1.0 m side fins on each window (Figures 7-5, 7-6)")
     parts.append("raised floor drawn above the ground (Section 7.2.1.5)")
     return "; ".join(parts) + "."
+
+
+# Section 7.2.3 case -> (600-series cell the geometry is drawn from, south-opening variant, heavy)
+_IN_DEPTH_GEOMETRY = {
+    195: (600, "solid"), 200: (600, "hc"), 210: (600, "hc"), 215: (600, "hc"), 220: (600, "hc"),
+    230: (600, "hc"), 240: (600, "hc"), 250: (600, "hc"), 270: (600, None), 280: (600, None),
+    290: (610, None), 300: (620, None), 310: (630, None), 320: (600, None),
+    395: (600, "solid"), 400: (600, "hc"), 410: (600, "hc"), 420: (600, "hc"), 430: (600, "hc"),
+    440: (600, None), 450: (600, None), 460: (600, None), 470: (600, None),
+    800: (600, "hc"), 810: (600, None),
+}
+
+
+def in_depth_figure(case_number: int) -> go.Figure:
+    """3D view of a Section 7.2.3 in-depth case."""
+    src, variant = _IN_DEPTH_GEOMETRY[case_number]
+    return building_figure(src, heavy=case_number in (800, 810), variant=variant)
+
+
+def in_depth_caption(case_number: int) -> str:
+    _, variant = _IN_DEPTH_GEOMETRY[case_number]
+    src = _IN_DEPTH_GEOMETRY[case_number][0]
+    if variant == "hc":
+        opening = "12 m2 of high-conductance wall elements (two 3 m x 2 m units, Table 7-35) in the south wall, opaque with zero shortwave transmittance"
+    elif variant == "solid":
+        opening = "no south openings: the 12 m2 are lightweight exterior wall (Table 7-2)"
+    else:
+        return _geometry_caption(case_number, src)
+    return f"8 m x 6 m x 2.7 m single zone; {opening}; raised floor drawn above the ground (Section 7.2.1.5)."

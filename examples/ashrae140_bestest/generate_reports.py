@@ -401,10 +401,13 @@ def index_page(results: dict, ff: dict, rows: list[dict]) -> str:
              + "<h2>Free-float cases (no Annex A3 range)</h2>"
              + vr.table(["Case", "Description", "Mean T_air degC", "Min degC", "Max degC"], ff_rows,
                         raw_columns=(0, 1))
+             + "<h2>In-depth cases (Section 7.2.3)</h2>"
+               "<p>25 single-feature diagnostic cases without acceptance ranges: "
+               "<a href='in_depth.html'>inputs, results, differences from the base cases and 3D views</a>.</p>"
              + "<div class='callout'>Inputs follow ANSI/ASHRAE Standard 140-2023 Section 7 and its "
                "accompanying files; see <code>examples/ashrae140_bestest/README.md</code> for the "
                "mapping onto the ISO 52016-1 engine and the documented deviations (interior solar "
-               "distribution of Table 7-13 not applied; ISO 52016-1 Annex F Method 1 shading, diffuse "
+               "distribution of Table 7-13 not applied by default (optional, <code>solar_distribution=\"table\"</code>); ISO 52016-1 Annex F Method 1 shading, diffuse "
                "radiation not shaded).</div>")
     return vr.page("ASHRAE Standard 140-2023 — Section 7 validation",
                    "Building thermal envelope and fabric load tests, pybuildingenergy", body,

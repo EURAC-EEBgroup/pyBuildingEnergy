@@ -23,8 +23,11 @@ PYTHONPATH=src python examples/ashrae140_bestest/run_comparison.py
 PYTHONPATH=src python examples/ashrae140_bestest/run_comparison.py ashrae_combined
 # HTML report of every case (600–695, 900–995, 600FF–980FF) + index
 PYTHONPATH=src python examples/ashrae140_bestest/generate_reports.py
+# in-depth cases of Section 7.2.3 (25 diagnostic cases) and their report
+PYTHONPATH=src python examples/ashrae140_bestest/run_in_depth.py
+PYTHONPATH=src python examples/ashrae140_bestest/generate_in_depth_report.py
 # tests
-python -m pytest -q tests/test_ashrae140_2023_inputs.py tests/test_ashrae140_bestest.py \
+python -m pytest -q tests/test_ashrae140_in_depth.py tests/test_ashrae140_2023_inputs.py tests/test_ashrae140_bestest.py \
     tests/test_ashrae140_low_mass.py tests/test_ashrae140_case600_raised_floor.py \
     tests/test_iso52016_side_fins.py
 ```
@@ -38,6 +41,8 @@ python -m pytest -q tests/test_ashrae140_2023_inputs.py tests/test_ashrae140_bes
 - `run_comparison.py`: simulation, check against Tables A3-1 to A3-4 and
   Table A3-14 count; `run_free_float_case` for the six free-float cases;
 - `generate_reports.py`: one HTML report per case in `reports/`;
+- `in_depth_cases.py`, `run_in_depth.py`, `generate_in_depth_report.py`: the 25 in-depth
+  cases of Section 7.2.3 (see below), their runner and `reports/in_depth.html`;
 - `../geometry_3d.py`: 3D view of the test cell used by the reports (shared with the ISO 52016-1 harness);
 - `weather/USA_CO_Denver.Intl.AP.725650_TMY3.epw`: weather, identical hour by
   hour to the normative `725650TY.CSV`;
@@ -306,12 +311,42 @@ Annual peaks: heating 2.638 kW (February 9, 05:00), cooling 2.945 kW
 (September 11, 14:00). The hourly values of February 1 and July 14 (Section
 7.3.8) are in [`reports/case_900.html`](reports/case_900.html).
 
+## In-depth cases (Section 7.2.3)
+
+The 25 cases 195, 200, 210, 215, 220, 230, 240, 250, 270, 280, 290, 300, 310, 320, 395,
+400, 410, 420, 430, 440, 450, 460, 470, 800 and 810 change one input at a time from a base
+case (Informative Table 7-33). The standard gives **no acceptance range** for them: the
+harness prints the annual and peak loads and the difference of each case from its base
+(`DIFFERENCES` in `in_depth_cases.py`). Example results of other programs are not reproduced.
+
+Mapping onto the engine:
+
+- **High-conductance (HC) wall elements** (Tables 7-35 to 7-37) replace the south
+  windows in the 200- and 400-series: opaque surfaces with the layers of Table 7-36,
+  no solar transmission, and their own construction class so that they are not aggregated
+  with the walls.
+- **Infrared emittance** (210, 215, 200, 195): the engine derives the radiative coefficients
+  from the emittance (h_ri = 5.13 eps/0.9, h_re = 4.14 eps/0.9); the convective coefficients
+  are those of Tables 7-40 and 7-41.
+- **Interior solar absorptance** (270, 280, 440, 810): the engine has no such input, so the
+  interior solar distribution fractions of Tables 7-43 to 7-45 are applied, as
+  Sections 7.2.3.9.3.2, 7.2.3.10.2.2 and 7.2.3.12.2.2 permit
+  (`--solar-distribution area` runs the default distribution, in which 280 = 270).
+- **Combined coefficients** (450, 460, 470): Table 7-46 values as convective coefficients with a
+  null radiative coefficient.
+- Thermostat "20,20" in the 200-series and "20,27" in the 400-series and Case 320; infiltration
+  corrected for altitude, zero in the base cases.
+
+Tests: `tests/test_ashrae140_in_depth.py` (inputs as built and the sign of the differences).
+
 ## Limitations and documented deviations
 
-- **Interior solar distribution (Table 7-13, Section 7.2.1.12.2).** The engine
-  has no input for the per-surface fractions of Table 7-13 and distributes
-  transmitted solar by area, with a fraction going directly to the air. This
-  is a deviation to be declared.
+- **Interior solar distribution (Table 7-13, Section 7.2.1.12.2).** By default the
+  engine distributes transmitted solar by area, with a fraction going directly to
+  the air: a deviation to be declared. The optional engine input
+  `building_parameters["interior_solar_distribution"]` applies the fractions of
+  Tables 7-13, 7-15, 7-20 and 7-24 instead (`build_bestest_case(...,
+  solar_distribution="table")`); the Annex A3 results above use the default.
 - **Shading of diffuse radiation.** ISO 52016-1 Annex F Method 1 shades direct
   radiation only; Method 2 refers to ISO/TR 52016-2 and is not implemented.
 - **Sky temperature (Section 7.3.2.3).** The engine does not expose a `T_sky`
