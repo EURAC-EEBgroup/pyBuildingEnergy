@@ -72,14 +72,14 @@ class StorageSystemCalculator:
                 ]
             )
         results = prepared.drop(columns=output_columns, errors="ignore")
-        results = pd.concat(
-            [
-                results,
+        if self.method_a is not None:
+            service_results = [self._simulate_method_a(prepared, data)]
+        else:
+            service_results = [
                 self._simulate_service(prepared, "H"),
                 self._simulate_service(prepared, "W"),
-            ],
-            axis=1,
-        )
+            ]
+        results = pd.concat([results, *service_results], axis=1)
         summary = self._summarize(results)
         return StorageSimulationResult(
             timeseries=results,
@@ -90,6 +90,14 @@ class StorageSystemCalculator:
     def _load_options(self) -> None:
         cfg = self.input_data
         self.dynamic_calculation = bool(cfg.get("dynamic_calculation", False))
+        # Method A (prEN 15316-5:2024, 6.4.3): one multi-layer tank serving both
+        # services; see LayeredStorage for the accepted keys.
+        method_a = cfg.get("method_a")
+        if method_a is not None and not isinstance(method_a, dict):
+            raise TypeError("method_a must be a dict of LayeredStorage options.")
+        if method_a is not None and "layer_volumes_l" not in method_a:
+            raise ValueError("method_a needs layer_volumes_l (bottom to top).")
+        self.method_a = None if method_a is None else dict(method_a)
         self.default_time_step_h = _positive_float(
             cfg.get("time_step_hours", 1.0), "time_step_hours"
         )
@@ -253,6 +261,69 @@ class StorageSystemCalculator:
         if isinstance(fallback, pd.Series):
             return fallback.reindex(df.index).astype(float).clip(lower=0.0)
         return pd.Series(fallback, index=df.index, dtype=float).clip(lower=0.0)
+
+    def _simulate_method_a(self, prepared: pd.DataFrame, data: pd.DataFrame) -> pd.DataFrame:
+        """Both services through one :class:`LayeredStorage` (Method A).
+
+        Optional input columns: ``Q_sol_to_sto_kWh`` (heat offered by the solar loop,
+        accepted up to the tank's capacity) and ``Q_W_dis_ncons_kWh`` (circulation
+        loss drawn from the top layer). ``Q_{H,W}_sto_in_kWh`` is the back-up heater
+        input, split between the services in proportion to the energy each
+        delivered; solar heat is reported separately in ``Q_sto_solar_in_kWh``.
+        Pump auxiliary energy is not modelled on this path.
+        """
+        cfg = dict(self.method_a)
+        w = self.services["W"]
+        hours = prepared["hours"].astype(float)
+        if not np.allclose(hours, hours.iloc[0]):
+            raise ValueError("Method A needs a constant calculation time step.")
+        cfg.setdefault("set_point_C", w["set_temperature_C"])
+        cfg.setdefault("cold_water_C", w["cold_inlet_temperature_C"])
+        cfg.setdefault("ambient_C", w["ambient_temperature_C"])
+        cfg.setdefault("loss_W_K", w["standby_loss_coefficient_W_K"])
+        cfg["step_hours"] = float(hours.iloc[0])
+        circ = _series_from_aliases(data, ["Q_W_dis_ncons_kWh"], default=0.0).astype(float).fillna(0.0)
+        solar = _series_from_aliases(data, ["Q_sol_to_sto_kWh", "Q_sto_sol_in_req_kWh"], default=0.0).astype(float).fillna(0.0)
+        cfg["dhw_demand_kWh"] = prepared["Q_W_sto_out_kWh"].to_numpy()
+        cfg["space_heating_kWh"] = prepared["Q_H_sto_out_kWh"].to_numpy()
+        cfg["circulation_kWh"] = circ.to_numpy()
+        tank = LayeredStorage(**cfg)
+        accepted = np.zeros(len(prepared))
+        for i, q_sol in enumerate(solar.to_numpy()):
+            _, accepted[i] = tank(i, float(q_sol), True)
+        hist = pd.DataFrame(tank.history, index=prepared.index)
+        out = pd.DataFrame(index=prepared.index)
+        q_w, q_h = hist["Q_W_sto_out_kWh"], hist["Q_H_sto_out_kWh"]
+        delivered = (q_w + q_h).replace(0.0, np.nan)
+        share_w = (q_w / delivered).fillna(0.5 if (q_w.sum() + q_h.sum()) == 0 else 0.0)
+        for service, share in (("W", share_w), ("H", 1.0 - share_w)):
+            opts = self.services[service]
+            loss = hist["Q_sto_ls_kWh"] * share
+            out[f"theta_{service}_sto_set_C"] = tank.set_point_C
+            out[f"theta_{service}_sto_out_C"] = opts["output_temperature_C"]
+            out[f"theta_{service}_sto_amb_C"] = tank.ambient_C
+            out[f"V_{service}_sto_l"] = float(tank.volumes.sum())
+            out[f"H_{service}_sto_ls_W_K"] = float(tank.h_ls.sum()) * float(share.mean())
+            out[f"Q_{service}_sto_ls_kWh"] = loss
+            out[f"Q_{service}_sto_ls_rbl_kWh"] = loss * opts["thermal_loss_room_fraction"]
+            out[f"Q_{service}_sto_ls_nrbl_kWh"] = loss * (1.0 - opts["thermal_loss_room_fraction"])
+            out[f"W_{service}_sto_aux_kWh"] = 0.0
+            out[f"Q_{service}_sto_aux_rvd_kWh"] = 0.0
+            out[f"Q_{service}_sto_aux_rbl_kWh"] = 0.0
+            out[f"Q_{service}_sto_rbl_kWh"] = out[f"Q_{service}_sto_ls_rbl_kWh"]
+            out[f"Q_{service}_sto_in_kWh"] = hist["Q_backup_in_kWh"] * share
+            out[f"t_{service}_sto_pmp_in_h"] = 0.0
+            out[f"t_{service}_sto_pmp_out_h"] = 0.0
+        out["Q_W_sto_delivered_kWh"] = q_w
+        out["Q_H_sto_delivered_kWh"] = q_h
+        out["Q_W_sto_nreq_kWh"] = hist["Q_W_sto_nreq_kWh"]
+        out["Q_H_sto_nreq_kWh"] = hist["Q_H_sto_nreq_kWh"]
+        out["Q_sto_solar_in_kWh"] = hist["Q_solar_in_kWh"]
+        out["Q_sto_solar_offered_kWh"] = solar.to_numpy()
+        for col in hist.columns:
+            if col.startswith("T_layer_"):
+                out[col] = hist[col]
+        return out
 
     def _simulate_service(self, prepared: pd.DataFrame, service: str) -> pd.DataFrame:
         opts = self.services[service]
@@ -658,3 +729,244 @@ def _weighted_mean(values: pd.Series, weights: pd.Series) -> float:
     if not bool(valid.any()):
         return float("nan")
     return float(np.average(values[valid], weights=weights[valid]))
+
+
+# ----------------------------------------------------------------------------
+# Method A: storage modelled with multiple volumes (layers)
+# prEN 15316-5:2024, 6.4.3 (draft; EN 15316-5:2017 has Method B only)
+# ----------------------------------------------------------------------------
+
+_RHO_W = 1000.0  # kg/m3
+_CP_W_WH = 4186.0 / 3600.0  # Wh/(kg K)
+
+
+def _rearrange_layers(temps: np.ndarray, volumes: np.ndarray) -> np.ndarray:
+    """Step 7 (6.4.3.8, eq. 38 / Annex C): mix a layer with the one above while
+    it is hotter, until temperatures do not decrease upwards.
+
+    Solved as the fixed point of the mixing rule (volume-weighted pooling of
+    adjacent violating layers). Annex C reaches the same stratified profile in a
+    fixed number of passes; this routine does not reproduce its intermediate
+    matrix, only the final profile.
+    """
+    blocks: list[list[float]] = []  # [energy (V*T), volume, n_layers]
+    for t, v in zip(temps, volumes):
+        blocks.append([t * v, v, 1])
+        while len(blocks) > 1 and blocks[-2][0] / blocks[-2][1] > blocks[-1][0] / blocks[-1][1] + 1e-12:
+            top = blocks.pop()
+            blocks[-1][0] += top[0]
+            blocks[-1][1] += top[1]
+            blocks[-1][2] += top[2]
+    return np.concatenate([np.full(n, e / v) for e, v, n in blocks])
+
+
+class LayeredStorage:
+    """Hot-water storage with N layers of arbitrary volume, EN 15316-5 Method A.
+
+    Layers are numbered from the bottom (1) to the top (N). Per calculation step
+    (hour) it applies the 8 steps of 6.4.3: draw-off for domestic hot water
+    (eq. 9-22), circulation (23-24), space heating (25-31), solar input on layer 1
+    (32), back-up heater on layer ``heater_layer`` (33-37), re-arranging of the
+    temperatures (38) and thermal losses (39-42).
+
+    The instance is callable as ``storage(i, q_req_kWh, commit)`` and so can be
+    passed as ``storage_response`` to
+    :class:`~pybuildingenergy.source.renewables_15316_4_3_4_6.RenewableEnergySystemCalculator`
+    (EN 15316-4-3 Method 3). The solar loop heat ``q_req_kWh`` enters on layer 1;
+    the loop inlet temperature follows eq. 44. A trial call (``commit=False``) never
+    changes the state; the committing call runs the whole step and stores its
+    results in ``history``. Call ``storage(i, 0.0, True)`` for steps without solar.
+
+    Assumptions where the draft gives no number: ``heater_layer`` defaults to
+    N-1 (the heater sits just below the top layer), ``space_heating_layer`` to N-1
+    (note 1 of 6.4.3.6: 3 of 4), the minimum draw-off temperatures to 40 / 30 degC,
+    and the maximum temperature that bounds the accepted solar heat to 95 degC.
+    Pump auxiliary energy and heat-exchanger limits on the load side are not
+    modelled; the solar-loop heat exchanger is (``solar_exchanger_W_K``).
+    """
+
+    def __init__(
+        self,
+        layer_volumes_l,
+        set_point_C: float = 60.0,
+        cold_water_C: float = 10.0,
+        ambient_C: float = 20.0,
+        loss_W_K: float = 0.0,
+        connection_loss_factor: float = 1.0,
+        additional_loss_W_K=0.0,
+        heater_power_kW: float = 0.0,
+        heater_layer: int | None = None,
+        heater_set_point_C: float | None = None,
+        space_heating_layer: int | None = None,
+        dhw_min_out_C: float = 40.0,
+        heating_min_out_C: float = 30.0,
+        max_temperature_C: float = 95.0,
+        solar_exchanger_W_K: float | None = None,
+        solar_mass_flow_kg_s: float | None = None,
+        initial_temperatures_C=None,
+        step_hours: float = 1.0,
+        dhw_demand_kWh=None,
+        circulation_kWh=None,
+        space_heating_kWh=None,
+        ambient_series_C=None,
+        rearrange_after_losses: bool = False,
+    ):
+        self.volumes = np.asarray(layer_volumes_l, dtype=float)
+        if self.volumes.ndim != 1 or self.volumes.size < 1 or np.any(self.volumes <= 0.0):
+            raise ValueError("layer_volumes_l must be a list of positive volumes (bottom to top).")
+        n = self.volumes.size
+        self.n = n
+        self.set_point_C = float(set_point_C)
+        self.cold_C = float(cold_water_C)
+        self.ambient_C = float(ambient_C)
+        total_v = float(self.volumes.sum())
+        # eq. 39: (f_conn * H_ls,i + H_add,i); the standing loss is split by volume
+        self.h_ls = (
+            float(connection_loss_factor) * float(loss_W_K) * self.volumes / total_v
+            + np.broadcast_to(np.asarray(additional_loss_W_K, dtype=float), (n,))
+        )
+        self.heater_kW = max(float(heater_power_kW), 0.0)
+        self.heater_layer = n - 1 if heater_layer is None else int(heater_layer)
+        self.sh_layer = max(n - 1, 1) if space_heating_layer is None else int(space_heating_layer)
+        for name, val in (("heater_layer", self.heater_layer), ("space_heating_layer", self.sh_layer)):
+            if not 1 <= val <= n:
+                raise ValueError(f"{name} must be between 1 and {n}.")
+        self.heater_set_C = self.set_point_C if heater_set_point_C is None else float(heater_set_point_C)
+        self.dhw_min_C = float(dhw_min_out_C)
+        self.heating_min_C = float(heating_min_out_C)
+        self.max_C = float(max_temperature_C)
+        self.h_exh_sol = None if solar_exchanger_W_K is None else float(solar_exchanger_W_K)
+        if self.h_exh_sol is not None and self.h_exh_sol <= 0.0:
+            raise ValueError("solar_exchanger_W_K must be > 0 (omit it for a direct connection).")
+        self.m_sol = None if solar_mass_flow_kg_s is None else float(solar_mass_flow_kg_s)
+        self.step_hours = float(step_hours)
+        self.dhw = None if dhw_demand_kWh is None else np.asarray(dhw_demand_kWh, dtype=float)
+        self.circ = None if circulation_kWh is None else np.asarray(circulation_kWh, dtype=float)
+        self.sh = None if space_heating_kWh is None else np.asarray(space_heating_kWh, dtype=float)
+        self.ambient_series = None if ambient_series_C is None else np.asarray(ambient_series_C, dtype=float)
+        self.rearrange_after_losses = bool(rearrange_after_losses)
+        if initial_temperatures_C is not None:
+            temps = np.asarray(initial_temperatures_C, dtype=float)
+            if temps.shape != (n,):
+                raise ValueError("initial_temperatures_C must have one value per layer.")
+        else:  # 6.4.3.2: layers affected by the heater at set point, the rest at cold water
+            temps = np.where(np.arange(1, n + 1) >= self.heater_layer, self.set_point_C, self.cold_C)
+        self.temps = np.asarray(temps, dtype=float).copy()
+        self.history: list[dict[str, float]] = []
+        self._work: tuple[int, dict] | None = None
+
+    # heat capacity of a layer, kWh/K (eq. 32: rho * cp * V / 1e6 with V in l)
+    def _cap(self, volume_l):
+        return _RHO_W * _CP_W_WH * volume_l / 1e6
+
+    def stored_energy_kWh(self, reference_C: float | None = None) -> float:
+        ref = self.cold_C if reference_C is None else reference_C
+        return float(np.sum(self._cap(self.volumes) * (self.temps - ref)))
+
+    # -- steps 2-5: withdrawals, on a working copy -------------------------
+    def _withdraw(self, i: int) -> dict:
+        t = self.temps.copy()
+        n, v, cap = self.n, self.volumes, self._cap(self.volumes)
+        ambient = self.ambient_C if self.ambient_series is None else float(self.ambient_series[i])
+        q_req_w = 0.0 if self.dhw is None else max(float(self.dhw[i]), 0.0)
+        q_circ = 0.0 if self.circ is None else max(float(self.circ[i]), 0.0)
+        q_req_h = 0.0 if self.sh is None else max(float(self.sh[i]), 0.0)
+        res = {"ambient": ambient, "q_w_req": q_req_w, "q_w_out": 0.0, "v_w": 0.0, "q_h_req": q_req_h}
+        # Step 2 (eq. 9-17): usable energy per layer, drawn from the top down
+        if q_req_w > 0.0:
+            q_use = np.where(t >= self.dhw_min_C, cap * np.maximum(t - self.cold_C, 0.0), 0.0)  # (9)-(10)
+            q_out = min(q_req_w, float(q_use.sum()))  # (11)-(12)
+            q_i = np.zeros(n)
+            q_max = q_out
+            for k in range(n - 1, -1, -1):  # (13)-(14), from layer N downwards
+                q_i[k] = min(q_max, q_use[k])
+                q_max -= q_i[k]
+            vol_i = np.where(t > self.cold_C, q_i / (_RHO_W * _CP_W_WH / 1e6 * np.maximum(t - self.cold_C, 1e-12)), 0.0)  # (15)
+            v_w = min(float(vol_i.sum()), float(v.sum()))  # (16)
+            # Step 3 (eq. 18-22): cold water enters at the bottom and pushes every
+            # layer up; what overflows the top is the water drawn off
+            sources = [(v_w, self.cold_C)] + [(float(v[k]), float(t[k])) for k in range(n)]
+            new_t = np.zeros(n)
+            si, left = 0, sources[0][0]
+            for k in range(n):
+                need, acc = float(v[k]), 0.0
+                while need > 1e-12:
+                    if left <= 1e-12:
+                        si += 1
+                        left = sources[si][0]
+                        continue
+                    take = min(need, left)
+                    acc += take * sources[si][1]
+                    need -= take
+                    left -= take
+                new_t[k] = acc / v[k]  # (22)
+            t = new_t
+            res.update(q_w_out=q_out, v_w=v_w)
+        res["q_w_nreq"] = q_req_w - res["q_w_out"]  # (17)
+        # Step 4 (eq. 23-24): circulation losses cool the top layer
+        if q_circ > 0.0 and res["q_w_out"] <= 0.0:
+            t[-1] = max(t[-1] - q_circ / cap[-1], self.cold_C)
+        # Step 5 (eq. 25-31): space heating drawn at layer N_vol,sh
+        q_out_h = 0.0
+        if q_req_h > 0.0:
+            usable = float(np.sum(np.maximum(cap[: self.sh_layer] * (t[: self.sh_layer] - self.heating_min_C), 0.0)))  # (25)-(27)
+            q_out_h = min(q_req_h, usable + self.heater_kW * self.step_hours)  # (28)
+            k = self.sh_layer - 1
+            t[k] = max(t[k] - q_out_h / cap[k], self.cold_C)  # (29)-(30)
+        res.update(q_h_out=q_out_h, q_h_nreq=q_req_h - q_out_h, temps=t)
+        return res
+
+    def _solar_inlet(self, work: dict, q_kWh: float) -> float:
+        """Eq. 44: loop inlet temperature from the temperature of layer 1."""
+        t1 = float(work["temps"][0])
+        if q_kWh <= 0.0 or self.h_exh_sol is None:
+            return t1
+        d_exh = q_kWh * 1000.0 / (self.h_exh_sol * self.step_hours)
+        t_mean = t1 + d_exh
+        if self.m_sol is None or self.m_sol <= 0.0:
+            return t_mean
+        return max(t_mean - q_kWh / (3.6 * self.m_sol * _CP_W_WH * self.step_hours), t1)
+
+    def __call__(self, i: int, q_req_kWh: float, commit: bool) -> tuple[float, float]:
+        if self._work is None or self._work[0] != i:
+            self._work = (i, self._withdraw(i))
+        work = self._work[1]
+        cap = self._cap(self.volumes)
+        headroom = float(np.sum(cap * np.maximum(self.max_C - work["temps"], 0.0)))
+        q_acc = min(max(float(q_req_kWh), 0.0), headroom)
+        theta_in = self._solar_inlet(work, q_acc)
+        if commit:
+            self._finish_step(i, work, q_acc)
+            self._work = None
+        return theta_in, q_acc
+
+    # -- steps 6-8: inputs, re-arranging, losses; then commit ---------------
+    def _finish_step(self, i: int, work: dict, q_solar: float) -> None:
+        t, v, cap = work["temps"].copy(), self.volumes, self._cap(self.volumes)
+        if q_solar > 0.0:  # (32), then re-arrange after the input (note 2)
+            t[0] += q_solar / cap[0]
+            t = _rearrange_layers(t, v)
+        q_bu = 0.0
+        k = self.heater_layer - 1
+        if self.heater_kW > 0.0 and t[k] <= self.heater_set_C:  # note 4: ON only below set point
+            need = float(np.sum(cap[k:] * np.maximum(self.heater_set_C - t[k:], 0.0)))  # (33)-(34)
+            q_bu = min(need, self.heater_kW * self.step_hours)  # (35)
+            t[k] += q_bu / cap[k]  # (36)-(37)
+            t = _rearrange_layers(t, v)  # (38)
+        loss = self.h_ls * (t - work["ambient"]) * self.step_hours / 1000.0  # (39)
+        t = t - loss / cap  # (41)-(42)
+        if self.rearrange_after_losses:
+            t = _rearrange_layers(t, v)
+        self.history.append({
+            "step": i,
+            "Q_W_sto_out_kWh": work["q_w_out"],
+            "Q_W_sto_nreq_kWh": work["q_w_nreq"],
+            "V_W_withdrawn_l": work["v_w"],
+            "Q_H_sto_out_kWh": work["q_h_out"],
+            "Q_H_sto_nreq_kWh": work["q_h_nreq"],
+            "Q_solar_in_kWh": q_solar,
+            "Q_backup_in_kWh": q_bu,
+            "Q_sto_ls_kWh": float(loss.sum()),
+            **{f"T_layer_{j + 1}_C": float(t[j]) for j in range(self.n)},
+        })
+        self.temps = t

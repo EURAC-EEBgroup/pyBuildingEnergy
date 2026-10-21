@@ -31,6 +31,10 @@ Generation (EN 15316-4-3, EN 15316-5)
   ``require_plane_irradiance`` refuses the horizontal-irradiance fallback.
 * PV: add Method 4 (``"method_4"``, eq. 62-64), Method 5 (``"method_5"``,
   monthly, eq. 65-67), Method 6 from DNI/DHI, and the Table 25 outputs.
+* Add ``LayeredStorage``, the multi-volume Method A of prEN 15316-5:2024
+  (a draft), and ``StorageSystemCalculator`` option ``method_a``.  Pump
+  auxiliary energy is not modelled on this path.
+
 2.1.0 (2026-10-15)
 ------------------
 
