@@ -36,57 +36,125 @@ from . import table_iso_16798_1 as iso16798_profiles
 
 
 P_ATM = 101325.0
-CP_DA = 1005.0
-L_V = 2_501_000.0
-EPS_W = 0.62198
+# EN ISO 52016-1:2017 Table 20 (6.3.6): constants of the moisture/latent calculation
+ISO52016_CA_J_KG_K = 1006.0      # specific heat of air
+ISO52016_RHO_A_KG_M3 = 1.204     # air density at 20 degC
+ISO52016_HWE_J_KG = 2.466e6      # latent heat of vaporisation of water (Table 20 prints "2 466 x 10^3")
+ISO52016_P_ATM_PA = 101325.0
+# default humidity set-points: the EN 16798-1 category limits already tabulated in
+# table_iso_16798_1.py (min/max relative humidity 25 / 60 %); ISO 52016-1 takes them
+# from module M1-6 and gives no default of its own
+DEFAULT_RH_SET_HUMIDIFICATION_PCT = 25.0
+DEFAULT_RH_SET_DEHUMIDIFICATION_PCT = 60.0
 
 
-def _sat_vapor_pressure_pa(T_c):
-    T_c = np.asarray(T_c, dtype=float)
-    return 610.94 * np.exp((17.625 * T_c) / (T_c + 243.04))
+def _x_set_point(theta_c, rh_pct, p_atm: float = ISO52016_P_ATM_PA):
+    """Moisture content [kg/kg dry air] at a temperature and relative humidity,
+    EN ISO 52016-1 eq. (75)-(77)."""
+    theta_c = np.asarray(theta_c, dtype=float)
+    p_sat = 611.2 * np.exp(17.62 * theta_c / (243.12 + theta_c))  # (77)
+    p_v = np.asarray(rh_pct, dtype=float) / 100.0 * p_sat
+    return 0.622 * p_v / (p_atm - p_v)  # (75)/(76)
 
 
-def _humidity_ratio_from_t_rh(T_c, RH_pct, p_pa: float = P_ATM):
-    T_c = np.asarray(T_c, dtype=float)
-    RH = np.clip(np.asarray(RH_pct, dtype=float) / 100.0, 0.0, 1.0)
-    p_ws = _sat_vapor_pressure_pa(T_c)
-    p_w = RH * p_ws
-    return EPS_W * p_w / np.maximum(1.0, (p_pa - p_w))
-
-
-def _latent_heat_load_from_air_exchange(
-    h_ve_w_k: float,
-    theta_int_c: float,
-    theta_ext_c: float,
-    rh_ext_pct: float | None,
-    rh_int_pct: float = 50.0,
-    p_pa: float = P_ATM,
+def _zone_moisture_balance(
+    h_ve_w_k,
+    theta_int_c,
+    theta_ext_c,
+    rh_ext_pct,
+    zone_volume_m3: float,
+    dt_s,
+    rh_set_hu_pct,
+    rh_set_dhu_pct,
+    g_int_kg_s=0.0,
+    g_abs_kg_s=0.0,
+    x_sup_ss_kg_kg=None,
+    q_mech_rho_kg_s=None,
 ):
+    """Moisture content and (de)humidification load of a thermal zone with ideal
+    humidity control, EN ISO 52016-1:2017 6.5.14 (per time step).
+
+    ``h_ve_w_k / ca`` is the mass flow of the air entering the zone (the sum of
+    ``rho_a * q_V,k``); all of it is taken from outdoors (6.5.14.1.3: mechanical supply
+    is untreated for the load determination).
+
+    * eq. (71)-(72): humidification / dehumidification moisture load, including the
+      storage term ``rho_a * V / dt * (x_set - x_{t-1})``. The zone moisture content is
+      carried from step to step: the set-point when a load acts, the free evolution
+      (eq. 84 with no system) otherwise.
+    * eq. (73)-(74): latent heat load ``hwe * G``.
+    * eq. (78)-(79): moisture content the mechanical supply would need to cover the
+      load, with ``q_mech_rho_kg_s`` (default: the whole air flow).
+    * optional ``x_sup_ss_kg_kg`` (system-specific supply moisture content from the
+      system standards M6-5/M7-5): zone moisture content eq. (80) and system-specific
+      loads eq. (81)-(83).
+
+    Returns a dict of arrays; loads in kg/s and W, contents in kg/kg dry air.
     """
-    Derive moisture content and latent ventilation load from the sensible air exchange term.
+    h_ve = np.nan_to_num(np.asarray(h_ve_w_k, dtype=float), nan=0.0).clip(min=0.0)
+    n = h_ve.size
+    th_e = np.asarray(theta_ext_c, dtype=float)
+    th_i = np.asarray(theta_int_c, dtype=float)
+    th_i = np.where(np.isfinite(th_i), th_i, th_e)
+    rh_e = np.asarray(rh_ext_pct, dtype=float)
+    rh_e = np.where(np.isfinite(rh_e), np.clip(rh_e, 0.0, 100.0), 50.0)
+    dt = np.broadcast_to(np.asarray(dt_s, dtype=float), (n,))
+    rho_q = h_ve / ISO52016_CA_J_KG_K  # sum(rho_a * q_V,k), kg/s
+    cap = ISO52016_RHO_A_KG_M3 * max(float(zone_volume_m3), 0.0) / np.maximum(dt, 1e-9)  # rho*V/dt
+    x_ext = _x_set_point(th_e, rh_e)
+    x_min = _x_set_point(th_i, np.broadcast_to(np.asarray(rh_set_hu_pct, dtype=float), (n,)))
+    x_max = _x_set_point(th_i, np.broadcast_to(np.asarray(rh_set_dhu_pct, dtype=float), (n,)))
+    if np.any(x_min > x_max + 1e-12):
+        raise ValueError("The humidification set-point must not exceed the dehumidification set-point.")
+    g_int = np.broadcast_to(np.asarray(g_int_kg_s, dtype=float), (n,))
+    g_abs = np.broadcast_to(np.asarray(g_abs_kg_s, dtype=float), (n,))
+    mech = rho_q if q_mech_rho_kg_s is None else np.broadcast_to(np.asarray(q_mech_rho_kg_s, dtype=float), (n,))
 
-    Returns
-    -------
-    tuple[float, float, float, float, float]
-        (x_ext_kgkg, x_int_kgkg, mass_flow_kg_s, latent_power_w, latent_energy_wh)
-    """
-    if not np.isfinite(h_ve_w_k) or h_ve_w_k <= 0.0:
-        return 0.0, 0.0, 0.0, 0.0, 0.0
-
-    if rh_ext_pct is None or not np.isfinite(rh_ext_pct):
-        rh_ext_pct = 50.0
-
-    theta_int_c = float(theta_int_c) if np.isfinite(theta_int_c) else float(theta_ext_c)
-    theta_ext_c = float(theta_ext_c) if np.isfinite(theta_ext_c) else theta_int_c
-    rh_int_pct = float(np.clip(rh_int_pct if np.isfinite(rh_int_pct) else 50.0, 1.0, 100.0))
-    rh_ext_pct = float(np.clip(rh_ext_pct, 0.0, 100.0))
-
-    x_ext = float(_humidity_ratio_from_t_rh(theta_ext_c, rh_ext_pct, p_pa=p_pa))
-    x_int = float(_humidity_ratio_from_t_rh(theta_int_c, rh_int_pct, p_pa=p_pa))
-    mass_flow_kg_s = float(h_ve_w_k) / CP_DA
-    latent_power_w = mass_flow_kg_s * L_V * (x_ext - x_int)
-    latent_energy_wh = latent_power_w  # 1 h timestep
-    return x_ext, x_int, mass_flow_kg_s, latent_power_w, latent_energy_wh
+    g_hu, g_dhu, x_int = np.zeros(n), np.zeros(n), np.zeros(n)
+    x_prev = float(np.clip(x_ext[0], x_min[0], x_max[0])) if n else 0.0
+    x_start = x_prev
+    for i in range(n):
+        g_hu[i] = max(rho_q[i] * (x_min[i] - x_ext[i]) - g_int[i] + g_abs[i]
+                      + cap[i] * (x_min[i] - x_prev), 0.0)  # (71)
+        g_dhu[i] = max(-rho_q[i] * (x_max[i] - x_ext[i]) + g_int[i] - g_abs[i]
+                       - cap[i] * (x_max[i] - x_prev), 0.0)  # (72)
+        if g_hu[i] > 0.0:
+            x_prev = x_min[i]
+        elif g_dhu[i] > 0.0:
+            x_prev = x_max[i]
+        else:
+            denom = rho_q[i] + cap[i]
+            if denom > 0.0:
+                x_prev = (rho_q[i] * x_ext[i] + g_int[i] - g_abs[i] + cap[i] * x_prev) / denom
+        x_int[i] = x_prev
+    out = {
+        "x_ext": x_ext, "x_set_min": x_min, "x_set_max": x_max, "rho_q_kg_s": rho_q,
+        "x_int": x_int, "g_hu_kg_s": g_hu, "g_dhu_kg_s": g_dhu,
+        "phi_hu_w": ISO52016_HWE_J_KG * g_hu,  # (73)
+        "phi_dhu_w": ISO52016_HWE_J_KG * g_dhu,  # (74)
+        # ventilation part of the dehumidification load: what the outdoor air brings above x_set_max
+        "phi_dhu_vent_w": np.maximum(ISO52016_HWE_J_KG * rho_q * (x_ext - x_max), 0.0),
+    }
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out["x_sup_hu_req"] = np.where(mech > 0.0, x_ext + g_hu / mech, np.nan)  # (78)
+        out["x_sup_dhu_req"] = np.where(mech > 0.0, x_ext - g_dhu / mech, np.nan)  # (79)
+    if x_sup_ss_kg_kg is not None:
+        x_ss = np.broadcast_to(np.asarray(x_sup_ss_kg_kg, dtype=float), (n,))
+        g_ss = mech * (x_ss - x_ext)  # (81): positive humidifies, negative dehumidifies
+        x_zone, x_p = np.zeros(n), x_start
+        for i in range(n):
+            other = rho_q[i] - mech[i]  # air that does not come from the mechanical system
+            denom = rho_q[i] + cap[i]
+            if denom > 0.0:
+                x_p = (mech[i] * x_ss[i] + other * x_ext[i] + g_int[i] - g_abs[i] + cap[i] * x_p) / denom  # (80)
+            x_zone[i] = x_p
+        out.update({
+            "x_int_ss": x_zone,
+            "g_ss_hu_kg_s": np.maximum(g_ss, 0.0), "g_ss_dhu_kg_s": np.maximum(-g_ss, 0.0),
+            "phi_ss_hu_w": ISO52016_HWE_J_KG * np.maximum(g_ss, 0.0),  # (82)
+            "phi_ss_dhu_w": ISO52016_HWE_J_KG * np.maximum(-g_ss, 0.0),  # (83)
+        })
+    return out
 
 
 @dataclass
@@ -7417,6 +7485,17 @@ class ISO52016:
         * ``external_radiation_model``: "table" (default) or "dynamic";
           ``sky_temperature_model``; ``external_emissivity_default``.
         * ``return_sankey_data``: also return the data of the energy-flow diagram.
+        * Moisture and latent load (EN ISO 52016-1 6.5.14, ideal humidity control):
+          ``latent_rh_humidification_pct`` / ``latent_rh_dehumidification_pct`` (set-point
+          relative humidity, default 25 / 60 %, the EN 16798-1 limits;
+          ``latent_indoor_rh_pct`` sets both), ``moisture_production_kg_s`` (G_int, scalar
+          or hourly array), ``moisture_absorption_kg_s`` (G_abs, default 0, Table B.20),
+          ``latent_internal_fraction`` (latent share of the internal gains, added to G_int),
+          ``latent_mechanical_supply_m3_s`` (flow for eq. 78-79) and
+          ``latent_system_supply_moisture_kg_kg`` (system-specific supply moisture content
+          for eq. 80-83). Results: ``Phi_HU_W``, ``Phi_DHU_W``, ``G_HU_kg_s``,
+          ``G_DHU_kg_s``, ``X_int_kg_kg_da``, ``X_set_min/max_kg_kg_da``,
+          ``X_sup_HU/DHU_req_kg_kg_da`` and the ``Q_latent_*`` / ``Q_H_latent_*`` columns.
 
         Per-surface optional inputs of the building dictionary: ``construction_class``
         (Table B.13), ``solar_transmittance_correction_factor`` and
@@ -8022,7 +8101,6 @@ class ISO52016:
         E_tb_loss_Wh = 0.0
         E_ground_loss_Wh = 0.0
         E_storage_Wh = 0.0
-        E_latent_Wh = 0.0
 
         # ------------------------------------------------------------------
         # STATE CAPACITY (J/K) aligned to the nodes of the equation
@@ -8797,17 +8875,6 @@ class ISO52016:
                     if q_vent > 0:  E_vent_loss_Wh += q_vent * dt_h
                     else:           E_solar_Wh     += (-q_vent) * dt_h
 
-                    rh_ext = float(RH_arr[Tstepi]) if Tstepi < len(RH_arr) else np.nan
-                    x_ext, x_int, m_dot_kg_s, phi_latent_w, e_latent_wh = _latent_heat_load_from_air_exchange(
-                        float(H_ve_nat),
-                        T_in,
-                        T_out,
-                        rh_ext,
-                        rh_int_pct=float(kwargs.get("latent_indoor_rh_pct", 50.0)),
-                    )
-                    if phi_latent_w > 0:
-                        E_latent_Wh += phi_latent_w * dt_h
-
                     # 5) Thermal bridges
                     q_tb = float(t_Th.thermal_bridge_heat) * (T_in - T_out)
                     if q_tb > 0:  E_tb_loss_Wh += q_tb * dt_h
@@ -8902,7 +8969,7 @@ class ISO52016:
                 if Tstep_first_act <= Tstepi < Tstep_first_act + 6:  # primi 6 passi attivi di debug
                     print(f"[t={Tstepi}] T_op0={Theta_int_op[Tstepi,0]:.2f}  Phi_HC={Phi_HC_nd_act[Tstepi]:.1f}  "
                         f"int_gains={float(int_gains):.1f}  Phi_solar={float(Phi_sol_dir_zt_t):.1f}  "
-                        f"H_ve_nat={float(H_ve_nat):.3f}  Phi_lat={phi_latent_w:.1f}")
+                        f"H_ve_nat={float(H_ve_nat):.3f}")
                 pbar.update(1)
             n_w=n_w+1
 
@@ -9053,50 +9120,60 @@ class ISO52016:
 
         RH_act = RH_arr[act_slice] if len(RH_arr) >= Tstepn else np.full(len(hourly_results), np.nan)
         int_gains_act = int_gains_arr[act_slice]
-        latent_rows = []
-        for _idx, (_hve, _tint, _text, _rh, _int_g) in enumerate(
-            zip(hourly_results["H_ve"].to_numpy(dtype=float),
-                hourly_results["T_air"].to_numpy(dtype=float),
-                hourly_results["T_ext"].to_numpy(dtype=float),
-                np.asarray(RH_act, dtype=float),
-                int_gains_act)
-        ):
-            x_ext, x_int, m_dot_kg_s, phi_lat_vent_w, q_lat_vent_wh = _latent_heat_load_from_air_exchange(
-                float(_hve),
-                float(_tint),
-                float(_text),
-                float(_rh) if np.isfinite(_rh) else np.nan,
-                rh_int_pct=float(kwargs.get("latent_indoor_rh_pct", 50.0)),
-            )
-            phi_lat_int_w   = f_lat_int * float(_int_g)           # latent internal gains [W] (ISO 52016 §6.5.6)
-            phi_lat_total_w = phi_lat_vent_w + phi_lat_int_w      # net latent: >0 dehumidify, <0 humidify
-            q_lat_total_wh  = q_lat_vent_wh  + phi_lat_int_w      # 1 h timestep
-            latent_rows.append((
-                x_ext, x_int, m_dot_kg_s,
-                phi_lat_vent_w, q_lat_vent_wh,
-                phi_lat_int_w,
-                phi_lat_total_w, q_lat_total_wh,
-            ))
-
-        if latent_rows:
-            latent_arr = np.asarray(latent_rows, dtype=float)
-            hourly_results["X_ext_kg_kg_da"]         = latent_arr[:, 0]
-            hourly_results["X_int_ref_kg_kg_da"]     = latent_arr[:, 1]
-            hourly_results["m_dot_vent_kg_s"]        = latent_arr[:, 2]
-            hourly_results["Q_latent_vent_W"]        = np.clip(latent_arr[:, 3], 0.0, None)   # ventilation dehumidification only
-            hourly_results["Q_latent_vent_Wh"]       = np.clip(latent_arr[:, 4], 0.0, None)
-            hourly_results["Q_int_latent_W"]         = latent_arr[:, 5]                        # internal latent gains (signed)
-            hourly_results["Q_latent_W_signed"]      = latent_arr[:, 6]                        # total signed (vent + int)
-            hourly_results["Q_latent_W"]             = np.clip(latent_arr[:, 6], 0.0, None)   # latent cooling need
-            hourly_results["Q_latent_Wh"]            = np.clip(latent_arr[:, 7], 0.0, None)
-            hourly_results["Q_H_latent_W"]           = np.clip(-latent_arr[:, 6], 0.0, None)  # latent heating need (humidification)
-            hourly_results["Q_H_latent_Wh"]          = np.clip(-latent_arr[:, 7], 0.0, None)
-        else:
-            for _col in ("X_ext_kg_kg_da", "X_int_ref_kg_kg_da", "m_dot_vent_kg_s",
-                         "Q_latent_vent_W", "Q_latent_vent_Wh", "Q_int_latent_W",
-                         "Q_latent_W_signed", "Q_latent_W", "Q_latent_Wh",
-                         "Q_H_latent_W", "Q_H_latent_Wh"):
-                hourly_results[_col] = 0.0
+        # EN ISO 52016-1 6.5.14: moisture content and (de)humidification / latent load
+        # of the zone with ideal humidity control. Set-points: the dehumidification and
+        # humidification relative humidity (latent_rh_dehumidification_pct /
+        # latent_rh_humidification_pct); latent_indoor_rh_pct, when given, sets both.
+        _both_rh = kwargs.get("latent_indoor_rh_pct")
+        _rh_hu = kwargs.get("latent_rh_humidification_pct",
+                            DEFAULT_RH_SET_HUMIDIFICATION_PCT if _both_rh is None else _both_rh)
+        _rh_dhu = kwargs.get("latent_rh_dehumidification_pct",
+                             DEFAULT_RH_SET_DEHUMIDIFICATION_PCT if _both_rh is None else _both_rh)
+        _bld_m = building_object.get("building", {}) or {}
+        _zone_vol_m3 = float(_bld_m.get("zone_volume_m3") or _bld_m.get("zone_volume") or _bld_m.get("volume") or 0.0)
+        _dt_h_lat = _infer_timestep_hours_from_index(hourly_results.index, default=1.0)
+        # moisture production G_int [kg/s]: kwarg moisture_production_kg_s (scalar or hourly array)
+        # plus the legacy latent fraction of the sensible internal gains (latent_internal_fraction)
+        _phi_lat_int = f_lat_int * np.asarray(int_gains_act, dtype=float)
+        _g_int = np.asarray(kwargs.get("moisture_production_kg_s", 0.0), dtype=float) + _phi_lat_int / ISO52016_HWE_J_KG
+        _mech_q = kwargs.get("latent_mechanical_supply_m3_s")
+        _mb = _zone_moisture_balance(
+            hourly_results["H_ve"].to_numpy(dtype=float),
+            hourly_results["T_air"].to_numpy(dtype=float),
+            hourly_results["T_ext"].to_numpy(dtype=float),
+            np.asarray(RH_act, dtype=float),
+            _zone_vol_m3,
+            _dt_h_lat * 3600.0,
+            _rh_hu,
+            _rh_dhu,
+            g_int_kg_s=_g_int,
+            g_abs_kg_s=kwargs.get("moisture_absorption_kg_s", 0.0),  # Table B.20: no absorption by default
+            x_sup_ss_kg_kg=kwargs.get("latent_system_supply_moisture_kg_kg"),
+            q_mech_rho_kg_s=None if _mech_q is None else ISO52016_RHO_A_KG_M3 * np.asarray(_mech_q, dtype=float),
+        )
+        hourly_results["X_ext_kg_kg_da"] = _mb["x_ext"]
+        hourly_results["X_set_min_kg_kg_da"] = _mb["x_set_min"]
+        hourly_results["X_set_max_kg_kg_da"] = _mb["x_set_max"]
+        hourly_results["X_int_kg_kg_da"] = _mb["x_int"]
+        hourly_results["m_dot_vent_kg_s"] = _mb["rho_q_kg_s"]
+        hourly_results["G_HU_kg_s"] = _mb["g_hu_kg_s"]
+        hourly_results["G_DHU_kg_s"] = _mb["g_dhu_kg_s"]
+        hourly_results["Phi_HU_W"] = _mb["phi_hu_w"]
+        hourly_results["Phi_DHU_W"] = _mb["phi_dhu_w"]
+        hourly_results["X_sup_HU_req_kg_kg_da"] = _mb["x_sup_hu_req"]
+        hourly_results["X_sup_DHU_req_kg_kg_da"] = _mb["x_sup_dhu_req"]
+        hourly_results["Q_latent_vent_W"] = _mb["phi_dhu_vent_w"]  # ventilation part of the dehumidification load
+        hourly_results["Q_latent_vent_Wh"] = _mb["phi_dhu_vent_w"] * _dt_h_lat
+        hourly_results["Q_int_latent_W"] = _phi_lat_int
+        hourly_results["Q_latent_W_signed"] = _mb["phi_dhu_w"] - _mb["phi_hu_w"]  # >0 dehumidify, <0 humidify
+        hourly_results["Q_latent_W"] = _mb["phi_dhu_w"]  # latent cooling need
+        hourly_results["Q_latent_Wh"] = _mb["phi_dhu_w"] * _dt_h_lat
+        hourly_results["Q_H_latent_W"] = _mb["phi_hu_w"]  # latent heating need (humidification)
+        hourly_results["Q_H_latent_Wh"] = _mb["phi_hu_w"] * _dt_h_lat
+        if "x_int_ss" in _mb:
+            hourly_results["X_int_ss_kg_kg_da"] = _mb["x_int_ss"]
+            hourly_results["Phi_ss_HU_W"] = _mb["phi_ss_hu_w"]
+            hourly_results["Phi_ss_DHU_W"] = _mb["phi_ss_dhu_w"]
 
         hourly_results["Q_C_sensible"] = hourly_results["Q_C"]
         hourly_results["Q_C_latent"]   = hourly_results["Q_latent_W"]   # total latent cooling need (vent + internal)

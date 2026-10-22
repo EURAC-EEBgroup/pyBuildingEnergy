@@ -1,3 +1,26 @@
+Unreleased
+----------
+
+Engine
+~~~~~~
+
+* Moisture content and latent load of the single-zone engine now follow EN ISO 52016-1
+  6.5.14 (eq. 71-84) with ideal humidity control: separate humidification and
+  dehumidification set-points, the storage term of the zone air volume (the moisture
+  content is carried from hour to hour), moisture production ``moisture_production_kg_s``
+  and absorption ``moisture_absorption_kg_s``, the moisture content the mechanical supply
+  needs to cover the load (eq. 78-79) and, when
+  ``latent_system_supply_moisture_kg_kg`` is given, the system-specific content and loads
+  (eq. 80-83).  New columns ``Phi_HU_W``, ``Phi_DHU_W``, ``G_HU_kg_s``, ``G_DHU_kg_s``,
+  ``X_int_kg_kg_da``, ``X_set_min_kg_kg_da``, ``X_set_max_kg_kg_da``,
+  ``X_sup_HU_req_kg_kg_da``, ``X_sup_DHU_req_kg_kg_da``; the ``Q_latent_*`` and
+  ``Q_H_latent_*`` columns are kept.
+* Result-changing: the constants are those of Table 20 (``ca`` 1006 J/(kg K), ``hwe``
+  2.466e6 J/kg) and the default set-points are 25 % (humidification) and 60 %
+  (dehumidification), the EN 16798-1 limits, instead of a single 50 %.  Pass
+  ``latent_indoor_rh_pct=50`` to reproduce the single set-point.  The multizone engine
+  has no moisture calculation.
+
 2.1.1 (2026-10-21)
 ------------------
 
