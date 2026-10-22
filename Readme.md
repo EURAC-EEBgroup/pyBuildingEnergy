@@ -56,24 +56,6 @@ The calculation methods can be used for residential or non-residential buildings
 
 ISO 52016-1:2018 also contains specifications for the assessment of thermal zones in the building or in the part of a building. The calculations are performed per thermal zone. In the calculations, the thermal zones can be assumed to be thermally coupled or not. ISO 52016-1:2018 is applicable to buildings at the design stage, to new buildings after construction and to existing buildings in the use phase.
 
-## Use of UNI/TS 11300 input data
-
-The project uses UNI/TS 11300 data to describe the technical systems connected to
-the building model. These data provide the system-side parameters needed after
-the ISO 52016-1 calculation, including heating and cooling emission,
-distribution, storage and generation efficiencies, generation COP, recovered
-losses, auxiliary energy and primary-energy factors. The same structure can also
-include domestic-hot-water and ventilation parameters and is used to assemble
-the combined ISO 52016-1 / systems / photovoltaic request.
-
-Therefore, UNI/TS 11300 is used here as an input and system-accounting
-framework: ISO 52016-1 calculates the hourly building heating and cooling needs,
-while the UNI/TS 11300 parameters are used to describe how those needs are
-served and converted into system and energy-carrier quantities. The repository
-does not claim to implement a complete standalone UNI/TS 11300 certification
-calculation; the example archetypes and payload builder are available in
-[`examples/building_examples.py`](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/examples/building_examples.py).
-
 -- 
 
 ## Validation - ASHRAE 140-2023 And ISO 52016-1 **(New)**
