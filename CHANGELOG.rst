@@ -20,6 +20,12 @@ Engine
   (dehumidification), the EN 16798-1 limits, instead of a single 50 %.  Pass
   ``latent_indoor_rh_pct=50`` to reproduce the single set-point.  The multizone engine
   has no moisture calculation.
+* Composer: add the ``lighting`` scenario key (EN 15193-1, ``LightingSystemCalculator``
+  options plus ``profile_24h`` / ``weekend_profile_24h``).  The lighting electricity
+  now joins the site load, so it is seen by the PV self-consumption, the grid import,
+  the final energy and the primary energy; new summary keys ``E_lighting_kWh``,
+  ``LENI_kWh_m2a`` and an ``E_lighting_kWh`` hourly column.  The lighting heat is not
+  fed back to the zone, whose gains stay those of the building JSON.
 
 2.1.1 (2026-10-21)
 ------------------

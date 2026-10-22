@@ -80,6 +80,7 @@ from .emission_15316_2 import EmissionSystemCalculator
 from .generation_15316_4_1 import BoilerGeneratorCalculator
 from .heat_pump_15316_4_2 import HeatPumpSystemCalculator
 from .iso_15316_1 import HeatingSystemCalculator
+from .lighting_15193_1 import LightingSystemCalculator
 from .primary_energy_52000_1 import PrimaryEnergyAccountingCalculator
 from .renewables_15316_4_3_4_6 import RenewableEnergySystemCalculator
 from .utils import ISO52016
@@ -95,6 +96,12 @@ DEFAULT_SCENARIO: dict[str, Any] = {
     "generation": "boiler_15316_4_1",
     "pv": None,                             # e.g. "pv_with_battery_dispatch"
     "ahu": None,                            # e.g. "ahu_fixed_supply_basic"
+    # EN 15193-1 lighting: LightingSystemCalculator options (installed_power_density_W_m2, F_D, F_O, F_C,
+    # daylight_control_fraction, parasitic_power_W_m2, emergency_lighting_kWh_m2_a, ...) plus the optional
+    # profile_24h / weekend_profile_24h (hourly use fractions); None = lighting not counted. Its electricity
+    # joins the site load (PV self-consumption, grid import, primary energy); the zone heat gains stay those
+    # of the building JSON, so do not enter the lighting heat there twice.
+    "lighting": None,
     "dhw": {"enabled": True, "daily_volume_l": 150.0, "draw_temperature_C": 40.0, "cold_water_temperature_C": 12.0},
     "options": {
         "autosize": True,                   # set nominal powers / capacities from the peak load
@@ -418,6 +425,7 @@ def compose_config(scenario: dict[str, Any] | None = None, catalog: dict | None 
         "hvac_system": hvac_system,
         "dhw": sc["dhw"],
         "pv": pv_config,
+        "lighting": copy.deepcopy(sc["lighting"]),
         "options": opt,
         "compose_notes": notes,
     }
@@ -666,6 +674,8 @@ class CompositionResult:
         ]
         if s.get("ahu_fan_kWh") is not None:
             lines.append(f"{'AHU (system side)':34s} heating coil {s['ahu_coil_heat_kWh']:.0f}  cooling coil {s['ahu_coil_cool_kWh']:.0f} kWh   fans {s['ahu_fan_kWh']:.0f} kWh_el")
+        if s.get("E_lighting_kWh") is not None:
+            lines.append(f"{'Lighting (EN 15193-1)':34s} {s['E_lighting_kWh']:.0f} kWh_el   LENI {s['LENI_kWh_m2a']:.1f} kWh/m2a")
         lines += [
             f"{'Generation demand':34s} H {s['Q_H_gen_demand_kWh']:9.0f}  C {s['Q_C_gen_demand_kWh']:8.0f}  DHW {s['Q_W_gen_demand_kWh']:7.0f} kWh   unmet {s['Q_unmet_kWh']:.0f} kWh",
             "-" * 78,
@@ -684,6 +694,51 @@ class CompositionResult:
         if self.warnings:
             lines += ["-" * 78, "WARNINGS:"] + [f"  ! {w}" for w in self.warnings]
         return "\n".join(lines)
+
+
+def _lighting_electricity(lcfg, hourly: pd.DataFrame, idx: pd.DatetimeIndex, dt: float, area: float, notes: list[str], warnings: list[str]):
+    """Hourly lighting electricity [kWh] of the EN 15193-1 calculator, or zeros when no lighting is configured.
+
+    Returns ``(series, summary)``; the summary is empty when lighting is not configured.
+    """
+    if not lcfg:
+        return pd.Series(0.0, index=idx), {}
+    cfg = dict(lcfg)
+    weekday_24h, weekend_24h = cfg.pop("profile_24h", None), cfg.pop("weekend_profile_24h", None)
+    cfg.setdefault("area_m2", area)
+    cfg["time_step_hours"] = dt
+    data = pd.DataFrame({"dt_h": dt}, index=idx)
+    for col in ("GHI", "G(h)", "I_sol_global_W_m2"):  # global horizontal irradiance for the daylight control
+        if col in hourly.columns:
+            data["GHI"] = hourly[col].astype(float)
+            break
+    if "GHI" not in data.columns and float(cfg.get("daylight_control_fraction", 0.0) or 0.0) > 0.0:
+        warnings.append(
+            "lighting.daylight_control_fraction is set but the zone results carry no global horizontal "
+            "irradiance (G(h)/GHI): no daylight reduction is applied."
+        )
+    for name, prof in (("profile_24h", weekday_24h), ("weekend_profile_24h", weekend_24h)):
+        if prof is not None and len(prof) != 24:
+            raise ValueError(f"lighting.{name} needs 24 hourly values.")
+    if weekday_24h is not None:
+        values = np.asarray(weekday_24h, dtype=float)[idx.hour]
+        if weekend_24h is not None:
+            values = np.where(idx.dayofweek >= 5, np.asarray(weekend_24h, dtype=float)[idx.hour], values)
+        data["lighting_profile"] = values
+    result = LightingSystemCalculator(cfg).run_timeseries(data)
+    ts, summ = result.timeseries["E_L_total_kWh"], result.summary
+    notes.append(
+        f"Lighting (EN 15193-1): {summ['E_L_total_kWh']:.0f} kWh_el added to the site load; its heat "
+        f"({summ['Q_L_internal_gain_kWh']:.0f} kWh) is NOT fed back to the zone, whose gains are those of the building JSON."
+    )
+    return ts, {
+        "E_lighting_kWh": float(summ["E_L_total_kWh"]),
+        "E_lighting_use_kWh": float(summ["E_L_lighting_kWh"]),
+        "E_lighting_parasitic_kWh": float(summ["E_L_parasitic_kWh"]),
+        "E_lighting_emergency_kWh": float(summ["E_L_emergency_kWh"]),
+        "LENI_kWh_m2a": float(summ["LENI_kWh_m2a"]),
+        "Q_lighting_internal_gain_kWh": float(summ["Q_L_internal_gain_kWh"]),
+    }
 
 
 def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> CompositionResult:
@@ -810,7 +865,8 @@ def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> Comp
     # for why the boiler can no longer go through HeatingSystemCalculator).
     # ============================================================================
     baseline = pd.Series(float(opt["baseline_electricity_kWh_per_year"]) / len(idx), index=idx)
-    site_load_pre = w_em + w_dis + ahu_fan + baseline
+    e_light, lighting_summary = _lighting_electricity(config.get("lighting"), hourly, idx, dt, area, notes, warnings)
+    site_load_pre = w_em + w_dis + ahu_fan + baseline + e_light
 
     gcfg = ext_gen["config"]
     if opt["autosize"]:
@@ -1004,7 +1060,7 @@ def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> Comp
     need_total = float(q_h.sum() + q_c.sum() + q_w.sum())
     final_total = sum(carriers.values())
     final_by_carrier = dict(carriers)
-    final_by_carrier["electricity_kWh"] = carriers["electricity_kWh"] + float(w_em.sum() + w_dis.sum() + ahu_fan.sum() + baseline.sum())
+    final_by_carrier["electricity_kWh"] = carriers["electricity_kWh"] + float(w_em.sum() + w_dis.sum() + ahu_fan.sum() + baseline.sum() + e_light.sum())
 
     summary: dict[str, float] = {
         "floor_area_m2": area,
@@ -1020,6 +1076,8 @@ def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> Comp
         "system_efficiency": need_total / max(final_total + float(w_em.sum() + w_dis.sum() + ahu_fan.sum()), 1e-9),
         "peak_H_kW": peak_h, "peak_C_kW": peak_c,
     }
+    if lighting_summary:
+        summary.update(lighting_summary)
     if ahu_active:
         summary.update({"ahu_coil_heat_kWh": float(ahu_coil_h.sum()), "ahu_coil_cool_kWh": float(ahu_coil_c.sum()), "ahu_fan_kWh": float(ahu_fan.sum())})
     if pv_summary:
@@ -1032,6 +1090,8 @@ def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> Comp
         "AHU_coil_heat_kWh": ahu_coil_h, "AHU_coil_cool_kWh": ahu_coil_c, "AHU_fan_kWh": ahu_fan,
         "W_aux_kWh": w_em + w_dis, "E_site_el_load_kWh": site_load,
     }, index=idx)
+    if lighting_summary:
+        hourly_out["E_lighting_kWh"] = e_light
     if pv_ts is not None:
         for col in ("E_PV_gen_kWh", "E_PV_self_consumed_kWh", "E_PV_export_kWh", "E_grid_after_PV_kWh", "E_battery_state_of_charge_kWh"):
             if col in pv_ts.columns:
