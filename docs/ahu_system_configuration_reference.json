@@ -1,0 +1,314 @@
+{
+  "meta": {
+    "library": "pybuildingenergy",
+    "version": "2.0.3",
+    "topic": "Air handling unit (AHU) configuration reference - sensible EN 16798-5-1 model",
+    "derived_from": [
+      "src/pybuildingenergy/source/ventilation_16798_5_1.py (SensibleAHUConfig, sensible_ahu_config_from_dict, calculate_sensible_ahu_step)",
+      "src/pybuildingenergy/source/ventilation.py (_resolve_component_streams, resolve_ventilation_boundary)",
+      "src/pybuildingenergy/source/utils.py (component profile resolution, AHU diagnostic columns)",
+      "docs/ventilation_ahu_audit.html (implementation audit shipped with the repository)"
+    ],
+    "reference_standards": {
+      "chain": "ISO 52016-1 (zone heat balance) -> EN 16798-7 (required zone airflow) -> EN 16798-5-1 (AHU and system energy)",
+      "EN_16798_5_1": {
+        "title": "Energy performance of buildings - Ventilation for buildings - Part 5-1: Calculation methods for energy requirements of ventilation and air conditioning systems (Methods M5-6, M5-8, M6-5, M6-8, M7-5, M7-8) - Method 1: Distribution and generation",
+        "role": "Thermodynamic AHU calculation: sensible heat recovery, frost limit, bypass, coils, fans and fan heat.",
+        "clauses_cited_in_code_and_audit": ["Table B.2 (supply-temperature controller strategies: fixed, outdoor-compensated, load-compensated)", "formula (46) (direct frost protection by effectiveness reduction)", "formula (77) (heat-recovery bookkeeping, valid only for balanced flow, no recirculation, no ODA preheating, frost correction inactive)"],
+        "not_implemented": "formulas (47b)-(49) (indirect frost treatment)"
+      },
+      "ISO_52016_1": {
+        "role": "Zone coupling: the AHU supply enters the zone balance as one additive stream of the affine ventilation boundary, section 6.5.10, with H_k = rho_air * cp_air * q_supply and source temperature = delivered supply temperature."
+      },
+      "EN_16798_7": {
+        "role": "Upstream source of the required airflow (the AHU receives the required flow; the legacy ventilation_type values temp_wind / occupancy / custom implement EN 16798-7 style airflow calculations)."
+      },
+      "reference_implementation": "Fan part-load pressure and efficiency relations follow the EPB Center EN 16798-5-1 reference implementation/spreadsheet (acknowledged in the module docstring).",
+      "important_caveats": [
+        "The module evaluates and demonstrates the calculation approach for a sensible, balanced-airflow subset. It does not replace the standard, which must be consulted alongside it.",
+        "supply_temperature_mode 'extract_compensated' is NOT one of the controller modes of Table B.2: it is a generic piecewise-linear extension.",
+        "Defaults for fan efficiencies (0.72 / 0.78), fan heat fractions (0.90) and frost limit (-5 degC) are placeholders for product/design data."
+      ]
+    },
+    "not_included": [
+      "Latent cooling / dehumidification, humidity recovery, humidification (the model is sensible only)",
+      "Recirculation",
+      "Airflow leakage, AHU casing and duct losses",
+      "Ground preheating (earth-to-air heat exchangers)",
+      "Unbalanced supply/extract flow (rejected with an error)",
+      "Multi-zone air distribution and detailed VAV control (one AHU component serves the zone it is configured in)",
+      "Indirect frost treatment and explicit defrost equipment (preheater, recirculation defrost)",
+      "Altitude-corrected air density: rho = 1.204 kg/m3, cp = 1006 J/(kg K), rho*cp = 1211.224 J/(m3 K)"
+    ],
+    "three_levels_of_ventilation_modelling": {
+      "simple_default": "legacy ventilation_type values or 'constant_ach' components: outdoor-air stream, no AHU calculation.",
+      "prescribed": "'prescribed' component: you supply H_k and the supply temperature (computed elsewhere).",
+      "detailed_ahu": "'mechanical_supply' component: this reference."
+    },
+    "related_but_different": {
+      "VentilationSystemCalculator": "source/ventilation_16798_5_7.py - simple bilancio with heat-recovery efficiency and fans; no coils, no supply-temperature control, not coupled to the ISO 52016 solver.",
+      "ahu_modelica.py": "untracked, psychrometric (humidity) prototype needing an EPW reader; not part of the packaged AHU model."
+    }
+  },
+
+  "where_to_put_it": {
+    "single_zone": "building_parameters.ventilation.components  (list)",
+    "multizone": "zones[i].ventilation.components  (per zone); if a zone has none, the global building_parameters.ventilation.components list is used",
+    "rules": [
+      "Each component needs a unique, non-empty 'name'; duplicates raise ValueError.",
+      "When a 'components' list is present it REPLACES the legacy scalar ventilation_type path for that zone: add a 'constant_ach' component if you also want infiltration.",
+      "Components without a 'profile' key run at 1.0 (always on), so infiltration stays active when the AHU schedule is off.",
+      "constant_ach needs a positive zone volume: building.zone_volume_m3 (aliases zone_volume, volume) in single zone; zone volume keys in multizone."
+    ],
+    "component_types": {
+      "mechanical_supply": "the AHU (this file)",
+      "constant_ach": { "keys": { "air_changes_per_hour": "required [1/h]", "source_temperature": "'outdoor' (default) or a number [degC]" }, "meaning": "infiltration / natural ventilation" },
+      "prescribed": { "keys": { "heat_transfer_coefficient_w_k": "required [W/K]", "source_temperature_c": "required [degC]", "category": "optional, default 'supply'" }, "meaning": "externally computed supply stream" }
+    }
+  },
+
+  "mechanical_supply_component": {
+    "required": {
+      "name": { "type": "string" },
+      "ventilation_type": { "type": "string", "value": "mechanical_supply" },
+      "supply_flow_m3_h": { "type": "number", "unit": "m3/h", "description": "Design/required balanced airflow." },
+      "sensible_heat_recovery_efficiency": { "type": "number", "range": [0, 1], "description": "Sensible temperature efficiency (0 = no heat recovery)." },
+      "supply_temperature_setpoint_c": { "type": "number", "unit": "degC", "required_when": "supply_temperature_mode == 'fixed' (default mode); missing -> KeyError" }
+    },
+
+    "airflow": {
+      "extract_flow_m3_h": { "type": "number", "unit": "m3/h", "default": "supply_flow_m3_h", "description": "Must equal the supply flow (relative difference > 1e-6 raises ValueError: unbalanced flow is out of scope)." }
+    },
+
+    "supply_temperature_control": {
+      "supply_temperature_mode": {
+        "type": "string", "default": "fixed",
+        "allowed": ["fixed", "outdoor_compensated", "extract_compensated"],
+        "description": {
+          "fixed": "Constant requested supply temperature (supply_temperature_setpoint_c).",
+          "outdoor_compensated": "Piecewise-linear curve on the OUTDOOR temperature (Table B.2 strategy).",
+          "extract_compensated": "Piecewise-linear curve on the EXTRACT (lagged zone air) temperature. Extension beyond Table B.2."
+        },
+        "note": "A 'scheduled' mode exists in the Python API (SupplyTemperatureControlMode.SCHEDULED + scheduled_setpoint_c) but is NOT reachable through the dict/JSON component: any other string raises ValueError."
+      },
+      "supply_temperature_points": { "type": "list[[reference_C, supply_C]]", "required_when": "compensated modes", "constraints": "at least 2 pairs; unique reference temperatures (sorted automatically); values outside the curve are clamped to the end points", "example": [[-10, 21], [15, 18]] },
+      "supply_temperature_minimum_c": { "type": "number|null", "default": null, "unit": "degC", "description": "Lower clamp of the requested setpoint (all modes)." },
+      "supply_temperature_maximum_c": { "type": "number|null", "default": null, "unit": "degC", "description": "Upper clamp; minimum must be <= maximum." }
+    },
+
+    "heat_recovery": {
+      "heat_recovery_control": { "type": "string", "default": "modulating_bypass", "allowed": ["modulating_bypass", "always_on"], "description": { "modulating_bypass": "Mixes outdoor air with heat-recovery outlet air to track the supply setpoint; modulates continuously also in economizer conditions (outdoor warmer than extract).", "always_on": "No modulation: the recovery core always operates." } },
+      "frost_control": { "type": "string", "default": "exhaust_limit", "allowed": ["exhaust_limit", "none"], "description": { "exhaust_limit": "Reduces the effective efficiency so that the exhaust leaving the core stays at or above frost_exhaust_limit_c (direct approach, formula (46)).", "none": "No frost protection." } },
+      "frost_exhaust_limit_c": { "type": "number", "default": -5.0, "unit": "degC" }
+    },
+
+    "coils": {
+      "heating_coil_max_power_w": { "type": "number|null", "default": null, "unit": "W", "constraint": ">= 0", "description": "null = unlimited. Delivered power is capped; the shortfall is reported in required_heating_coil_power_w." },
+      "cooling_coil_enabled": { "type": "boolean", "default": false, "description": "Accepts true/false, 1/0, yes/no, on/off (also as strings). When false the required cooling power is only REPORTED as unmet." },
+      "cooling_coil_max_power_w": { "type": "number|null", "default": null, "unit": "W", "constraint": ">= 0", "description": "Ignored when the coil is disabled. Sensible cooling only." }
+    },
+
+    "fans": {
+      "supply_fan_specific_power_w_per_m3_s": { "type": "number", "default": 0.0, "unit": "W/(m3/s)", "constraint": ">= 0", "description": "NOMINAL specific fan power at design flow (SFP). Default 0 = NO fan electricity and no fan heat." },
+      "extract_fan_specific_power_w_per_m3_s": { "type": "number", "default": 0.0, "unit": "W/(m3/s)", "constraint": ">= 0" },
+      "supply_fan_heat_fraction_to_air": { "type": "fraction", "default": 0.90, "description": "Share of the supply-fan power that heats the supply air (added after the coils; the coil target compensates for it)." },
+      "extract_fan_heat_fraction_to_air": { "type": "fraction", "default": 0.90, "description": "Share of the extract-fan power that heats the extract air BEFORE the heat exchanger. Set 0 for a fan downstream of the heat recovery." },
+      "fan_performance_model": { "type": "string", "default": "en16798_5_1", "allowed": ["en16798_5_1", "constant_sfp"], "description": { "en16798_5_1": "Design pressure derived from nominal SFP and efficiency (unless given); part load: delta_p = delta_p_design * (q/q_design)^2 and efficiency = eta_ref * sqrt(q/q_ref).", "constant_sfp": "P = q * SFP at every flow." } },
+      "supply_fan_design_pressure_pa": { "type": "number|null", "default": "SFP * nominal_efficiency", "unit": "Pa", "constraint": "> 0" },
+      "extract_fan_design_pressure_pa": { "type": "number|null", "default": "SFP * nominal_efficiency", "unit": "Pa", "constraint": "> 0" },
+      "supply_fan_nominal_efficiency": { "type": "number", "default": 0.72, "range": "(0, 1]" },
+      "extract_fan_nominal_efficiency": { "type": "number", "default": 0.78, "range": "(0, 1]" },
+      "supply_fan_reference_flow_m3_h": { "type": "number|null", "default": "design flow of the step", "unit": "m3/h", "constraint": "> 0", "description": "Product-data reference flow for the part-load efficiency correction." },
+      "extract_fan_reference_flow_m3_h": { "type": "number|null", "default": "design flow of the step", "unit": "m3/h", "constraint": "> 0" },
+      "supply_fan_reference_efficiency": { "type": "number|null", "default": "nominal efficiency", "range": "(0, 1]" },
+      "extract_fan_reference_efficiency": { "type": "number|null", "default": "nominal efficiency", "range": "(0, 1]" }
+    },
+
+    "schedule": {
+      "profile": { "type": "string|null", "default": null, "allowed": ["occupancy_profile", "appliances_profile", "lighting_profile", "heating_profile", "cooling_profile", "ventilation_profile"], "description": "Name of the profile column giving the CONTINUOUS flow fraction in [0, 1] relative to the design flow (reduced fan speed, not ON/OFF duty cycle). Values outside [0, 1] raise ValueError. null = always 1.0." },
+      "missing_profile_policy": { "type": "string", "default": "error", "allowed": ["error", "warn"], "aliases": { "error": ["raise", "strict"], "warn": ["warning", "use_default", "default", "fallback"] }, "description": "What to do when 'profile' names a column that is not available. For mechanical_supply the default is 'error' (a misspelt schedule would silently run the AHU at 100%); for the other component types the default is 'warn' (uses 1.0)." }
+    }
+  },
+
+  "air_path_and_formulas": {
+    "order": "outdoor air -> sensible heat recovery (frost-limited, modulating bypass) -> cooling coil -> heating coil -> supply fan heat -> supply stream. Extract: zone air -> extract fan heat -> heat-recovery exhaust side -> exhaust (frost check).",
+    "extract_temperature": "PREVIOUS-timestep zone air-node temperature (not operative): explicit lag that avoids the T_zone -> T_extract -> T_supply -> T_zone algebraic loop.",
+    "steps": [
+      "requested supply setpoint from the controller (clamped by min/max)",
+      "fan power and fan temperature rise: dT_fan = P_fan * heat_fraction / (rho*cp*q)",
+      "T_extract_at_HR = T_extract + dT_extract_fan ; dT = T_extract_at_HR - T_outdoor",
+      "frost: if T_EHA = T_extract_at_HR - eta*dT < limit then eta_eff = (T_extract_at_HR - limit) / dT (clamped to [0, eta])",
+      "T_after_HR = T_outdoor + eta_eff*dT ; modulating bypass mixes outdoor air to reach T_target = T_setpoint - dT_supply_fan",
+      "cooling coil = rho*cp*q*max(0, T_after_HR - T_target) (only delivered if enabled, capped by max power)",
+      "heating coil = rho*cp*q*max(0, T_target - T_after_cooling) (capped by max power)",
+      "T_supply = T_after_coils + dT_supply_fan"
+    ],
+    "zone_coupling": "H_k = 1211.224 * supply_flow_m3_h / 3600 [W/K], source temperature = delivered supply temperature; zero flow -> zero conductance."
+  },
+
+  "outputs": {
+    "diagnostic_hourly_columns": {
+      "naming": "single-zone: <prefix>_<component_name>; multizone: <prefix>_<component_name>_<zone_name>",
+      "columns": {
+        "Q_ahu_coil": "delivered heating-coil power [W], timestep average",
+        "Q_ahu_coil_req": "required heating-coil power [W]",
+        "Q_ahu_cool": "delivered sensible cooling-coil power [W]",
+        "Q_ahu_cool_req": "required sensible cooling-coil power [W] (exposes unmet demand when the coil is disabled or capped)",
+        "Q_ahu_hr": "heat-recovery power [W] (negative in economizer operation)",
+        "P_ahu_fan": "total fan electric power [W]",
+        "T_ahu_sup": "delivered supply temperature [degC]",
+        "T_ahu_sup_req": "requested supply temperature [degC] (NaN when the AHU is off)",
+        "q_sup_m3h": "actual supply flow [m3/h]",
+        "q_ext_m3h": "actual extract flow [m3/h]",
+        "ahu_bypass": "effective bypass fraction (frost + modulation), not a damper position",
+        "ahu_frost": "frost protection active (0/1)"
+      },
+      "stream_columns_seen_in_single_zone_output": ["H_ve_<component>", "T_ve_source_<component>", "Q_ve_<component>"],
+      "energy_bookkeeping": "Coil energy is a SYSTEM-side diagnostic and is deliberately NOT added to the zone energy balance/Sankey (the zone ventilation term already uses the conditioned supply temperature: adding it would double count). Convert W to kWh yourself (multiply by the time step). P_ahu_fan is an electric load that can be added to E_site_el_load_kWh for the PV calculator."
+    },
+    "standalone_api": {
+      "usage": [
+        "from pybuildingenergy.source.ventilation_16798_5_1 import sensible_ahu_config_from_dict, calculate_sensible_ahu_step, AHUStepInputs",
+        "cfg = sensible_ahu_config_from_dict(component_dict)",
+        "out = calculate_sensible_ahu_step(cfg, AHUStepInputs(outdoor_temperature_c=..., extract_temperature_c=..., required_supply_flow_m3_h=..., required_extract_flow_m3_h=..., operation_fraction=1.0, flow_fraction=1.0))"
+      ],
+      "AHUStepInputs_extra": { "operation_fraction": "ON/OFF duty fraction [0, 1] (only in the standalone API; the solver fixes it at 1.0)", "flow_fraction": "continuous flow ratio [0, 1] (the solver maps the component profile to it)", "scheduled_setpoint_c": "only for the API-level 'scheduled' mode" },
+      "AHUStepOutputs_fields": ["requested_supply_temperature_c", "actual_supply_temperature_c", "actual_supply_flow_m3_h", "actual_extract_flow_m3_h", "required_heating_coil_power_w", "actual_heating_coil_power_w", "required_cooling_coil_power_w", "actual_cooling_coil_power_w", "fan_electric_power_w", "heat_recovery_power_w", "bypass_fraction", "frost_protection_required"]
+    }
+  },
+
+  "example_configurations": {
+    "ahu_fixed_supply_basic": {
+      "description": "Balanced AHU 600 m3/h, 75% heat recovery, fixed 19 degC supply, no cooling.",
+      "component": {
+        "name": "ahu_supply",
+        "ventilation_type": "mechanical_supply",
+        "supply_flow_m3_h": 600.0,
+        "sensible_heat_recovery_efficiency": 0.75,
+        "supply_temperature_mode": "fixed",
+        "supply_temperature_setpoint_c": 19.0,
+        "supply_fan_specific_power_w_per_m3_s": 1200.0,
+        "extract_fan_specific_power_w_per_m3_s": 900.0,
+        "profile": "ventilation_profile"
+      }
+    },
+
+    "ahu_outdoor_compensated_with_cooling_coil": {
+      "description": "Weather-compensated supply (21 degC at -10 degC outdoor, 18 degC at 15 degC), capped coils, cooling coil enabled.",
+      "component": {
+        "name": "ahu_supply",
+        "ventilation_type": "mechanical_supply",
+        "supply_flow_m3_h": 600.0,
+        "sensible_heat_recovery_efficiency": 0.75,
+        "supply_temperature_mode": "outdoor_compensated",
+        "supply_temperature_points": [[-10, 21], [15, 18]],
+        "supply_temperature_minimum_c": 16.0,
+        "supply_temperature_maximum_c": 22.0,
+        "heat_recovery_control": "modulating_bypass",
+        "frost_control": "exhaust_limit",
+        "frost_exhaust_limit_c": -3.0,
+        "heating_coil_max_power_w": 4000.0,
+        "cooling_coil_enabled": true,
+        "cooling_coil_max_power_w": 3000.0,
+        "supply_fan_specific_power_w_per_m3_s": 1200.0,
+        "extract_fan_specific_power_w_per_m3_s": 900.0,
+        "profile": "ventilation_profile"
+      }
+    },
+
+    "ahu_extract_compensated": {
+      "description": "Supply temperature reduced as the room warms (extension beyond EN 16798-5-1 Table B.2): 21 degC supply at 20 degC extract, 17 degC at 26 degC.",
+      "component": {
+        "name": "ahu_supply",
+        "ventilation_type": "mechanical_supply",
+        "supply_flow_m3_h": 800.0,
+        "sensible_heat_recovery_efficiency": 0.70,
+        "supply_temperature_mode": "extract_compensated",
+        "supply_temperature_points": [[20, 21], [26, 17]],
+        "cooling_coil_enabled": true,
+        "supply_fan_specific_power_w_per_m3_s": 1100.0,
+        "extract_fan_specific_power_w_per_m3_s": 1000.0
+      }
+    },
+
+    "ahu_with_manufacturer_fan_data": {
+      "description": "Fans described by product data: design pressure, efficiencies and reference flow for the part-load correction; extract fan downstream of the heat recovery (no extract-fan heat).",
+      "component": {
+        "name": "ahu_supply",
+        "ventilation_type": "mechanical_supply",
+        "supply_flow_m3_h": 1000.0,
+        "sensible_heat_recovery_efficiency": 0.80,
+        "supply_temperature_setpoint_c": 20.0,
+        "fan_performance_model": "en16798_5_1",
+        "supply_fan_specific_power_w_per_m3_s": 1500.0,
+        "extract_fan_specific_power_w_per_m3_s": 1300.0,
+        "supply_fan_design_pressure_pa": 700.0,
+        "extract_fan_design_pressure_pa": 600.0,
+        "supply_fan_nominal_efficiency": 0.65,
+        "extract_fan_nominal_efficiency": 0.65,
+        "supply_fan_reference_flow_m3_h": 1000.0,
+        "supply_fan_reference_efficiency": 0.65,
+        "supply_fan_heat_fraction_to_air": 0.85,
+        "extract_fan_heat_fraction_to_air": 0.0,
+        "profile": "ventilation_profile"
+      }
+    },
+
+    "ahu_simple_no_frost_no_bypass": {
+      "description": "Simplest hardware: recovery always on, no frost control, constant-SFP fans, unlimited heating coil.",
+      "component": {
+        "name": "ahu_supply",
+        "ventilation_type": "mechanical_supply",
+        "supply_flow_m3_h": 400.0,
+        "sensible_heat_recovery_efficiency": 0.60,
+        "supply_temperature_setpoint_c": 18.0,
+        "heat_recovery_control": "always_on",
+        "frost_control": "none",
+        "fan_performance_model": "constant_sfp",
+        "supply_fan_specific_power_w_per_m3_s": 1000.0,
+        "extract_fan_specific_power_w_per_m3_s": 1000.0
+      }
+    },
+
+    "prescribed_supply_alternative": {
+      "description": "When the supply condition is computed elsewhere: fixed conductance and supply temperature (no AHU physics).",
+      "component": {
+        "name": "external_ahu",
+        "ventilation_type": "prescribed",
+        "heat_transfer_coefficient_w_k": 200.0,
+        "source_temperature_c": 19.0,
+        "category": "supply"
+      }
+    },
+
+    "single_zone_building_snippet": {
+      "description": "Where the AHU sits in a single-zone building JSON, together with infiltration (always on).",
+      "building": { "zone_volume_m3": 300.0 },
+      "building_parameters": {
+        "ventilation": {
+          "components": [
+            { "name": "infiltration", "ventilation_type": "constant_ach", "air_changes_per_hour": 0.15, "source_temperature": "outdoor" },
+            { "name": "ahu_supply", "ventilation_type": "mechanical_supply", "supply_flow_m3_h": 600.0, "sensible_heat_recovery_efficiency": 0.75, "supply_temperature_mode": "fixed", "supply_temperature_setpoint_c": 19.0, "supply_fan_specific_power_w_per_m3_s": 1200.0, "extract_fan_specific_power_w_per_m3_s": 900.0, "profile": "ventilation_profile" }
+          ]
+        }
+      }
+    },
+
+    "multizone_zone_snippet": {
+      "description": "Per-zone AHU in a multizone building JSON (zones[i].ventilation.components).",
+      "zones": [
+        {
+          "name": "Soggiorno_Cucina",
+          "net_floor_area": 58.4,
+          "zone_volume_m3": 175.0,
+          "ventilation": {
+            "components": [
+              { "name": "infiltration", "ventilation_type": "constant_ach", "air_changes_per_hour": 0.15 },
+              { "name": "ahu", "ventilation_type": "mechanical_supply", "supply_flow_m3_h": 350.0, "sensible_heat_recovery_efficiency": 0.75, "supply_temperature_setpoint_c": 19.0, "supply_fan_specific_power_w_per_m3_s": 1200.0, "extract_fan_specific_power_w_per_m3_s": 900.0, "profile": "ventilation_profile" }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

@@ -965,7 +965,13 @@ def _compute_multizone_sankey_by_zone(
     return sankey_by_zone, pd.DataFrame(summary_rows)
 
 
-def _write_multizone_sankey_html(sankey_by_zone: dict, summary_df: pd.DataFrame, out_html_path: str) -> None:
+def _write_multizone_sankey_html(
+    sankey_by_zone: dict,
+    summary_df: pd.DataFrame,
+    out_html_path: str,
+    building_object: dict | None = None,
+    hourly_results: pd.DataFrame | None = None,
+) -> None:
     sections = []
     sections.append("<h1>Multizone Annual Energy Sankey by Thermal Zone</h1>")
     sections.append("<p>Convention: values in Wh, cooling is extracted energy.</p>")
@@ -980,6 +986,10 @@ def _write_multizone_sankey_html(sankey_by_zone: dict, summary_df: pd.DataFrame,
         sections.append(fig.to_html(include_plotlyjs="cdn" if include_js else False, full_html=False))
         include_js = False
 
+    if building_object is not None and hourly_results is not None:
+        sections.append("<h2>Heat exchanged between thermal zones</h2>")
+        sections.append(_interzone_heat_exchange_html_fragment(building_object, hourly_results))
+
     html = (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<title>Multizone Sankey by Zone</title>"
@@ -991,6 +1001,149 @@ def _write_multizone_sankey_html(sankey_by_zone: dict, summary_df: pd.DataFrame,
     )
     with open(out_html_path, "w", encoding="utf-8") as f:
         f.write(html)
+
+
+def _sanitize_result_column_token(value: object) -> str:
+    """Match the token convention used by the multizone simulation outputs."""
+    token = "".join(ch if ch.isalnum() else "_" for ch in str(value)).strip("_")
+    while "__" in token:
+        token = token.replace("__", "_")
+    return token or "unnamed"
+
+
+def _interzone_heat_exchange_html_fragment(
+    building_object: dict,
+    hourly_results: pd.DataFrame,
+ ) -> str:
+    """Build an HTML fragment for annual/monthly internal-partition transfer.
+
+    The two face-flux outputs of an internal partition can differ because its
+    thermal mass may temporarily store energy.  The symmetric value
+    ``(Q_to_B - Q_to_A) / 2`` is therefore used as the net A -> B transfer.
+    """
+    hourly = hourly_results.copy()
+    hourly.index = pd.DatetimeIndex(hourly.index)
+    dt_h = infer_timestep_hours(hourly.index, default=1.0)
+    links = []
+
+    for surface in building_object.get("building_surface", []):
+        if str(surface.get("boundary", "")).upper() != "INTERNAL":
+            continue
+        zone_a = str(surface.get("zone", ""))
+        zone_b = str(surface.get("adjacent_zone", ""))
+        if not zone_a or not zone_b:
+            continue
+
+        token = _sanitize_result_column_token(surface.get("name", "internal_partition"))
+        col_a = f"Q_opaque_inside_surface_{token}_to_{_sanitize_result_column_token(zone_a)}"
+        col_b = f"Q_opaque_inside_surface_{token}_to_{_sanitize_result_column_token(zone_b)}"
+        if col_a not in hourly.columns or col_b not in hourly.columns:
+            continue
+
+        q_to_a = pd.to_numeric(hourly[col_a], errors="coerce").fillna(0.0)
+        q_to_b = pd.to_numeric(hourly[col_b], errors="coerce").fillna(0.0)
+        q_a_to_b = (q_to_b - q_to_a) / 2.0  # +: A -> B, -: B -> A
+        links.append(
+            {
+                "surface": str(surface.get("name", token)),
+                "zone_a": zone_a,
+                "zone_b": zone_b,
+                "q_a_to_b": q_a_to_b,
+                "energy_to_a_kwh": float((q_to_a * dt_h).sum() / 1000.0),
+                "energy_to_b_kwh": float((q_to_b * dt_h).sum() / 1000.0),
+                "net_a_to_b_kwh": float((q_a_to_b * dt_h).sum() / 1000.0),
+            }
+        )
+
+    if not links:
+        return "<p>No INTERNAL partitions with paired face-flux outputs were found.</p>"
+
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        row_heights=[0.48, 0.52],
+        vertical_spacing=0.14,
+        specs=[[{"type": "domain"}], [{"type": "xy"}]],
+        subplot_titles=("Annual net heat transfer", "Monthly net heat transfer"),
+    )
+    node_labels = []
+    node_index = {}
+    sources, targets, values, labels = [], [], [], []
+    for link in links:
+        energy = link["net_a_to_b_kwh"]
+        source = link["zone_a"] if energy >= 0 else link["zone_b"]
+        target = link["zone_b"] if energy >= 0 else link["zone_a"]
+        for zone in (source, target):
+            if zone not in node_index:
+                node_index[zone] = len(node_labels)
+                node_labels.append(zone)
+        sources.append(node_index[source])
+        targets.append(node_index[target])
+        values.append(abs(energy))
+        labels.append(f"{link['surface']}: {abs(energy):.1f} kWh")
+
+    fig.add_trace(
+        go.Sankey(
+            node={"label": node_labels, "pad": 24, "thickness": 22},
+            link={"source": sources, "target": targets, "value": values, "label": labels},
+            valueformat=".1f",
+            valuesuffix=" kWh",
+        ),
+        row=1,
+        col=1,
+    )
+
+    for link in links:
+        monthly = (link["q_a_to_b"] * dt_h / 1000.0).resample("ME").sum()
+        fig.add_trace(
+            go.Bar(
+                x=monthly.index.strftime("%Y-%m"),
+                y=monthly.values,
+                name=f"{link['surface']} ({link['zone_a']} → {link['zone_b']})",
+            ),
+            row=2,
+            col=1,
+        )
+
+    fig.update_layout(
+        title="Heat exchanged between thermal zones",
+        template="plotly_white",
+        height=900,
+        barmode="relative",
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
+    )
+    fig.update_yaxes(
+        title_text="Net energy [kWh]; positive = first zone → second zone",
+        row=2,
+        col=1,
+        zeroline=True,
+        zerolinewidth=1,
+    )
+    fig.update_xaxes(title_text="Month", row=2, col=1)
+
+    table = pd.DataFrame(
+        [
+            {
+                "partition": link["surface"],
+                "zone A": link["zone_a"],
+                "zone B": link["zone_b"],
+                "net A → B [kWh]": link["net_a_to_b_kwh"],
+                "into A face [kWh]": link["energy_to_a_kwh"],
+                "into B face [kWh]": link["energy_to_b_kwh"],
+            }
+            for link in links
+        ]
+    )
+    note = (
+        "<p>Positive monthly values mean heat flows from zone A to zone B; negative values mean the reverse. "
+        "The annual Sankey shows the net direction. The two face values can differ because the partition itself "
+        "has thermal mass.</p>"
+    )
+    return (
+        fig.to_html(include_plotlyjs="cdn", full_html=False)
+        + note
+        + table.to_html(index=False, border=0, float_format=lambda x: f"{x:.2f}")
+    )
 
 
 
@@ -2076,7 +2229,13 @@ if __name__ == "__main__":
         sankey_summary.to_csv(sankey_summary_path, index=False)
         with open(sankey_json_path, "w", encoding="utf-8") as f:
             json.dump(sankey_by_zone, f, indent=2)
-        _write_multizone_sankey_html(sankey_by_zone, sankey_summary, sankey_html_path)
+        _write_multizone_sankey_html(
+            sankey_by_zone=sankey_by_zone,
+            summary_df=sankey_summary,
+            out_html_path=sankey_html_path,
+            building_object=building_object,
+            hourly_results=res_v1,
+        )
         _log_progress(
             run_start_t,
             f"Sankey post-processing completed in {time.perf_counter() - sankey_start_t:.1f}s.",

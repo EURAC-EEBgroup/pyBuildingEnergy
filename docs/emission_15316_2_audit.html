@@ -64,12 +64,12 @@
     <tr>
       <td>Embedded emitter loss temperature term</td>
       <td><code>embedded_K</code></td>
-      <td>Temperature term for losses to embedded structures or adjacent zones.</td>
+      <td>Delta_theta_emb (EN 15316-2 Table B.3 / eq. 33): not part of the temperature sum; enters only the embedded loss of eq. 20 with a signed denominator. Heating values positive, cooling negative.</td>
     </tr>
     <tr>
-      <td>Auxiliary fan/control powers</td>
+      <td>Auxiliary fan power (default); control power only when electric_control_aux is true (Table A.12)</td>
       <td><code>fan_power_W</code>, <code>fan_count</code>, <code>control_power_W</code>, <code>control_count</code></td>
-      <td>Auxiliary electricity associated with emission devices.</td>
+      <td>Fan auxiliary electricity (eq. 14, W_fan = n_fan P_fan t_h,rL / 1000). Control devices are included only for electrical control systems with auxiliary energy.</td>
     </tr>
     <tr>
       <td>Convective fraction</td>
@@ -95,7 +95,7 @@
     </tr>
     <tr>
       <td>Clause 6.5, Eq. 16</td>
-      <td>Heating equivalent temperature is baseline plus variation; cooling equivalent temperature is baseline minus variation.</td>
+      <td>Heating and cooling equivalent temperatures are baseline plus variation (EN 15316-2 eq. 16); cooling variations are negative (Table B.11).</td>
       <td><code>EmissionSystemCalculator._simulate_service()</code></td>
       <td><code>theta_H_int_inc_C</code>, <code>theta_C_int_inc_C</code></td>
     </tr>
@@ -107,7 +107,7 @@
     </tr>
     <tr>
       <td>Clause 6.5, Eq. 20</td>
-      <td>Calculates embedded emission loss from equivalent output, embedded temperature term and the combined temperature difference.</td>
+      <td>Calculates the embedded emission loss Q_emb,ls = Q_em,out,inc * delta_theta_emb / (theta_int,inc - theta_e,comb), with the signed temperature difference.</td>
       <td><code>EmissionSystemCalculator._simulate_service()</code></td>
       <td><code>Q_H_emb_ls_kWh</code>, <code>Q_C_emb_ls_kWh</code></td>
     </tr>
@@ -131,7 +131,7 @@
     </tr>
     <tr>
       <td>Clause 6.5, Eq. 27/28</td>
-      <td>Emission auxiliary electricity is fan/control power multiplied by operating hours.</td>
+      <td>Emission auxiliary electricity is fan power multiplied by the operation time t_h,rL (t_h_rl input, or load-factor estimate); control power is added only with electric_control_aux = true.</td>
       <td><code>EmissionSystemCalculator._simulate_service()</code></td>
       <td><code>W_H_em_aux_kWh</code>, <code>W_C_em_aux_kWh</code></td>
     </tr>

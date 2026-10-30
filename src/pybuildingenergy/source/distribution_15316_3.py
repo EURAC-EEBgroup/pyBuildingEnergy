@@ -29,6 +29,8 @@ import pandas as pd
 
 _KWH_EPS = 1e-12
 _WATER_HEAT_CAPACITY_DENSITY_KWH_M3K = 1.15
+_WATER_DENSITY_KG_M3 = 990.0
+_WATER_SPECIFIC_HEAT_KWH_KGK = 1.163e-3
 
 
 @dataclass
@@ -51,16 +53,17 @@ class DistributionSystemCalculator:
         """Run the hourly distribution calculation."""
 
         prepared = self._prepare_timeseries(data)
-        results = prepared.copy()
-        results = pd.concat(
-            [
-                results,
-                self._simulate_service(prepared, "H"),
-                self._simulate_service(prepared, "C"),
-                self._simulate_service(prepared, "W"),
-            ],
-            axis=1,
-        )
+        service_frames = [
+            self._simulate_service(prepared, service) for service in ("H", "C", "W")
+        ]
+        # `prepared` passes caller columns through untouched (see
+        # _prepare_timeseries), which lets e.g. a "beta_H_dis" override be
+        # read by _simulate_service above. That same name is also an output
+        # column of the H service frame, so it must be dropped from the base
+        # frame here or the two would collide into a duplicate column.
+        produced = {col for frame in service_frames for col in frame.columns}
+        base = prepared.drop(columns=[c for c in prepared.columns if c in produced])
+        results = pd.concat([base, *service_frames], axis=1)
         summary = self._summarize(results)
         return DistributionSimulationResult(
             timeseries=results,
@@ -87,10 +90,15 @@ class DistributionSystemCalculator:
         cfg = dict(data or {})
         sections = [_section_options(item) for item in cfg.get("pipe_sections", [])]
 
-        # Derive max_length_m from pipe_sections when not provided explicitly.
-        # EN 15316-3 §6 uses the total hydraulic path length (straight + equivalent)
-        # for the head-loss calculation; falling back to 0 would zero out the
-        # pump auxiliary energy, which is non-physical.
+        # Derive max_length_m from pipe_sections when not provided explicitly,
+        # by summing them. Eq.(21) wants the length of the single most
+        # unfavourable circuit (generator to most distant tap/emitter), which
+        # equals this sum ONLY if pipe_sections lists that one path's segments
+        # in series (Annex B's convention: Section V + Section S + Section A).
+        # If pipe_sections instead lists multiple parallel branches, this sum
+        # overstates L_max - pass max_length_m explicitly in that case.
+        # Falling back to 0 would zero out the pump auxiliary energy, which is
+        # non-physical.
         _sections_length = sum(
             float(s.get("length_m", 0.0)) + float(s.get("equivalent_length_m", 0.0))
             for s in sections
@@ -103,8 +111,17 @@ class DistributionSystemCalculator:
             "nominal_power_kW": max(float(cfg.get("nominal_power_kW", 0.0)), 0.0),
             "design_flow_m3_h": max(float(cfg.get("design_flow_m3_h", 0.0)), 0.0),
             "design_deltaT_K": max(float(cfg.get("design_deltaT_K", 10.0)), _KWH_EPS),
-            "supply_temperature_C": float(cfg.get("supply_temperature_C", 45.0)),
-            "return_temperature_C": float(cfg.get("return_temperature_C", 35.0)),
+            # Defaults are service-specific: a cooling circuit silently
+            # defaulting to heating-circuit temperatures (e.g. 45/35 degC)
+            # would sit above any realistic ambient, clip Eq.(7)'s delta to 0
+            # and report zero distribution loss for every unconfigured
+            # cooling service.
+            "supply_temperature_C": float(
+                cfg.get("supply_temperature_C", 7.0 if name == "cooling" else 45.0)
+            ),
+            "return_temperature_C": float(
+                cfg.get("return_temperature_C", 12.0 if name == "cooling" else 35.0)
+            ),
             "dhw_temperature_C": float(cfg.get("dhw_temperature_C", cfg.get("hot_water_temperature_C", 55.0))),
             "dhw_return_deltaT_K": max(float(cfg.get("dhw_return_deltaT_K", 5.0)), 0.0),
             "max_length_m": max(float(cfg.get("max_length_m", _max_length_default)), 0.0),
@@ -114,7 +131,12 @@ class DistributionSystemCalculator:
             "design_delta_pressure_kPa": max(
                 float(cfg.get("design_delta_pressure_kPa", 0.0)), 0.0
             ),
-            "pump_control_code": int(cfg.get("pump_control_code", cfg.get("control_code", 4))),
+            # Table B.5 defines code 4 for heating pumps; Tables B.6/B.7 only
+            # define codes 0 and 3 for cooling/DHW, so 4 is not a meaningful
+            # default there (see _pump_control_constants).
+            "pump_control_code": int(
+                cfg.get("pump_control_code", cfg.get("control_code", 4 if name == "heating" else 3))
+            ),
             "pump_selection_factor": max(float(cfg.get("pump_selection_factor", 1.0)), 0.0),
             "pump_label_power_kW": max(float(cfg.get("pump_label_power_kW", 0.0)), 0.0),
             "eei": _fraction(cfg.get("eei", 0.23), f"{name}.eei"),
@@ -123,10 +145,22 @@ class DistributionSystemCalculator:
                 0.0,
             ),
             "part_load_mode": str(cfg.get("part_load_mode", "load")).lower(),
+            # Table B.11: 0.10 for an insulated pump, 0.25 otherwise (the
+            # conservative default below, when neither is given).
             "recoverable_aux_fraction": _fraction(
-                cfg.get("recoverable_aux_fraction", cfg.get("f_aux_rbl", 0.25)),
+                cfg.get(
+                    "recoverable_aux_fraction",
+                    cfg.get("f_aux_rbl", 0.10 if bool(cfg.get("pump_insulated", False)) else 0.25),
+                ),
                 f"{name}.recoverable_aux_fraction",
             ),
+            # EN 15316-3 Eq.(8)-(9): open-circuited DHW stubs, lumped per zone.
+            "stub_volume_m3": max(float(cfg.get("stub_volume_m3", 0.0)), 0.0),
+            "stub_ambient_temperature_C": cfg.get("stub_ambient_temperature_C", 20.0),
+            "taps_per_hour": max(float(cfg.get("taps_per_hour", 1.0)), 0.0),
+            "stub_recoverable": bool(cfg.get("stub_recoverable", False)),
+            # EN 15316-3 Eq.(31): ribbon heater auxiliary energy for DHW.
+            "ribbon_heater": bool(cfg.get("ribbon_heater", False)),
         }
 
     def _prepare_timeseries(self, data: pd.DataFrame) -> pd.DataFrame:
@@ -136,7 +170,13 @@ class DistributionSystemCalculator:
             raise ValueError("data must contain at least one row.")
 
         df = data.copy()
-        out = pd.DataFrame(index=df.index)
+        # Start from a copy of the caller's own data (not a blank frame) so that
+        # columns this module does not itself recognize - a named ambient-
+        # temperature series (Table 10: ambient temperatures are "Varying:
+        # YES"), a "beta_{H,C,W}_dis" override, or a "pump_mode_{H,C}" column
+        # for Eq.(29)/(30) - pass through untouched and are still resolvable
+        # by name downstream.
+        out = df.copy()
         out["hours"] = self._time_step_hours(df)
         out["T_ext_C"] = _series_from_aliases(
             df, ["T_ext", "theta_ext", "outdoor_temperature_C", "T_external_C"], default=np.nan
@@ -210,16 +250,33 @@ class DistributionSystemCalculator:
         return pd.Series(fallback, index=df.index, dtype=float).clip(lower=0.0)
 
     def _simulate_service(self, prepared: pd.DataFrame, service: str) -> pd.DataFrame:
-        opts = self.services[service]
+        opts = dict(self.services[service])
         q_out = prepared[f"Q_{service}_dis_out_kWh"].astype(float)
         hours = prepared["hours"].astype(float)
         op_hours = self._operation_hours(q_out, hours, opts)
         mean_temp = self._mean_water_temperature(prepared, service, opts)
 
-        thermal = self._thermal_losses(mean_temp, op_hours, service, opts)
-        beta = self._part_load(q_out, hours, op_hours, opts)
+        thermal = self._thermal_losses(prepared, mean_temp, op_hours, hours, service, opts)
+
+        # Table 10 lists beta_H,dis / beta_C,dis as external "Varying: YES"
+        # operating-conditions inputs (sourced from the emission module,
+        # M3-5), not something this module derives on its own. When the
+        # caller supplies it directly, use it as-is; otherwise fall back to
+        # the Q/nominal-power heuristic.
+        beta_col = f"beta_{service}_dis"
+        if beta_col in prepared.columns:
+            beta = prepared[beta_col].astype(float).clip(0.0, 1.0)
+        else:
+            beta = self._part_load(q_out, hours, op_hours, opts)
+
+        mode_col = f"pump_mode_{service}"
+        opts["pump_mode"] = prepared[mode_col] if mode_col in prepared.columns else None
+
         pump = self._pump_auxiliary(q_out, hours, op_hours, beta, opts, service)
 
+        # Eq.(32)-(35) (clause 6.4.7) follow directly from the pump auxiliary
+        # energy of clause 6.4.5; the ribbon heater (6.4.6) is not folded into
+        # that recoverable/recovered split.
         aux_rbl = pump["W_aux_kWh"] * opts["recoverable_aux_fraction"]
         aux_rvd = pump["W_aux_kWh"] * (1.0 - opts["recoverable_aux_fraction"])
 
@@ -230,14 +287,28 @@ class DistributionSystemCalculator:
         else:
             thermal_rbl = thermal["Q_loss_recoverable_kWh"]
 
-        q_in = (q_out + thermal["Q_loss_kWh"] - aux_rvd).clip(lower=0.0)
+        # Eq.(31): a ribbon heater compensates its pipes' loss electrically,
+        # at the pipe itself. That portion of Q_dis_ls therefore does not
+        # need to be replenished thermally by the generator (it is removed
+        # from the thermal balance below) and the electricity it consumes is
+        # part of the DHW distribution system's total auxiliary energy
+        # (Table 4 has a single "Auxiliary energy ... W_W,dis" output, not a
+        # separate ribbon-heater category) - previously it was computed but
+        # added to neither.
+        rib_thermal_covered = (
+            thermal["Q_rib_kWh"] if (service == "W" and opts["ribbon_heater"])
+            else pd.Series(0.0, index=q_out.index)
+        )
+        w_aux_total = pump["W_aux_kWh"] + rib_thermal_covered
+        net_thermal_loss = (thermal["Q_loss_kWh"] - rib_thermal_covered).clip(lower=0.0)
+        q_in = (q_out + net_thermal_loss - aux_rvd).clip(lower=0.0)
 
         out = pd.DataFrame(index=prepared.index)
         out[f"theta_{service}_dis_mean_C"] = mean_temp
         out[f"Q_{service}_dis_ls_kWh"] = thermal["Q_loss_kWh"]
         out[f"Q_{service}_dis_th_rbl_kWh"] = thermal_rbl
         out[f"W_{service}_dis_hydr_kWh"] = pump["W_hydr_kWh"]
-        out[f"W_{service}_dis_aux_kWh"] = pump["W_aux_kWh"]
+        out[f"W_{service}_dis_aux_kWh"] = w_aux_total
         out[f"Q_{service}_dis_aux_rbl_kWh"] = aux_rbl
         out[f"Q_{service}_dis_aux_rvd_kWh"] = aux_rvd
         out[f"Q_{service}_dis_rbl_kWh"] = thermal_rbl + aux_rbl
@@ -248,6 +319,11 @@ class DistributionSystemCalculator:
         out[f"delta_p_{service}_des_kPa"] = pump["delta_p_des_kPa"]
         out[f"V_{service}_des_m3_h"] = pump["design_flow_m3_h"]
         out[f"t_{service}_dis_op_h"] = op_hours
+        if service == "W":
+            out["Q_W_dis_stub_kWh"] = thermal["Q_stub_kWh"]
+            if opts["ribbon_heater"]:
+                # Included in W_W_dis_aux_kWh above; also reported standalone.
+                out["W_W_dis_rib_kWh"] = thermal["Q_rib_kWh"]
         return out
 
     def _operation_hours(
@@ -288,28 +364,217 @@ class DistributionSystemCalculator:
 
     def _thermal_losses(
         self,
+        prepared: pd.DataFrame,
         mean_temp: pd.Series,
         op_hours: pd.Series,
+        hours: pd.Series,
         service: str,
         opts: dict[str, Any],
     ) -> dict[str, pd.Series]:
         total = pd.Series(0.0, index=mean_temp.index)
         recoverable = pd.Series(0.0, index=mean_temp.index)
+        rib_flagged = pd.Series(0.0, index=mean_temp.index)
+        rib_all = pd.Series(0.0, index=mean_temp.index)
+        non_op_hours = (hours - op_hours).clip(lower=0.0)
+        any_rib_target = False
 
         for section in opts["pipe_sections"]:
-            ambient = float(section["ambient_temperature_C"])
+            ambient = self._resolve_series(prepared, section["ambient_temperature_C"])
             length = float(section["length_m"]) + float(section["equivalent_length_m"])
             psi = float(section["linear_thermal_transmittance_W_mK"])
-            if service == "C":
-                delta = (ambient - mean_temp).clip(lower=0.0)
-            else:
-                delta = (mean_temp - ambient).clip(lower=0.0)
-            loss = psi * length * delta * op_hours / 1000.0
-            total = total + loss
-            if bool(section["recoverable"]):
-                recoverable = recoverable + loss
+            circulating = bool(section["circulating"])
 
-        return {"Q_loss_kWh": total, "Q_loss_recoverable_kWh": recoverable}
+            if service == "W" and not circulating:
+                # Eq.(15): simplified hourly method for a distribution pipe
+                # without circulation (a branch/stub run) - applies for the
+                # WHOLE time step, since such a pipe never carries hot water
+                # in steady state the way a circulation loop does.
+                theta_mean = ambient if psi <= _KWH_EPS else 25.0 * (psi ** -0.2)
+                delta = (theta_mean - ambient).clip(lower=0.0)
+                op_loss = psi * length * delta * hours / 1000.0
+                section_total = op_loss
+            else:
+                if service == "C":
+                    delta_op = (ambient - mean_temp).clip(lower=0.0)
+                else:
+                    delta_op = (mean_temp - ambient).clip(lower=0.0)
+                op_loss = psi * length * delta_op * op_hours / 1000.0
+                section_total = op_loss
+
+                if service == "W":
+                    # Eq.(10): circulation-loop loss while NOT tapping, via
+                    # the Eq.(11)-(14) decay model. Eq.(15) is NOT a valid
+                    # stand-in here: the standard scopes it explicitly to
+                    # "distribution systems without circulation and also for
+                    # pipes with open circuited stubs" - a different physical
+                    # case (a dead-end run that never carries actively
+                    # reheated water) from a circulation loop that is merely
+                    # idle between taps.
+                    #
+                    # Eq.(11)-(14) need the pipe's own thermal mass
+                    # (pipe_volume_m3, pipe_mass_kg, pipe_specific_heat_kWh_kgK).
+                    # Without that data this module cannot honestly produce a
+                    # number for this term, so it contributes 0 rather than
+                    # guessing - see _dhw_standby_loss.
+                    section_total = section_total + self._dhw_standby_loss(
+                        prepared, mean_temp, op_hours, non_op_hours, hours, length, psi, ambient, section
+                    )
+
+            total = total + section_total
+            if bool(section["recoverable"]):
+                recoverable = recoverable + section_total
+
+            if service == "W":
+                rib_all = rib_all + op_loss
+                if bool(section["ribbon_target"]):
+                    any_rib_target = True
+                    rib_flagged = rib_flagged + op_loss
+
+        stub_loss = pd.Series(0.0, index=mean_temp.index)
+        if service == "W":
+            stub_loss = self._dhw_stub_loss(prepared, op_hours, opts)
+            total = total + stub_loss
+            if opts["stub_recoverable"]:
+                recoverable = recoverable + stub_loss
+
+        return {
+            "Q_loss_kWh": total,
+            "Q_loss_recoverable_kWh": recoverable,
+            "Q_stub_kWh": stub_loss,
+            # Eq.(31): ribbon heater energy = Eq.(7) taking into account only
+            # the hot-water pipe length. Sections flagged "ribbon_target" are
+            # used when given; otherwise this falls back to the whole
+            # service's operating-time loss (an approximation when the
+            # supply-only pipe length is not singled out).
+            "Q_rib_kWh": rib_flagged if any_rib_target else rib_all,
+        }
+
+    def _dhw_standby_loss(
+        self,
+        prepared: pd.DataFrame,
+        mean_temp: pd.Series,
+        op_hours: pd.Series,
+        non_op_hours: pd.Series,
+        hours: pd.Series,
+        length: float,
+        psi: float,
+        ambient: pd.Series,
+        section: dict[str, Any],
+    ) -> pd.Series:
+        """Eq.(10), via Eq.(11)-(14): circulation-loop DHW loss while idle.
+
+        theta_W,avg,begin for each idle interval is chained from the previous
+        idle hour's decayed end temperature (theta_W,dis,atap), not reset to
+        the operating mean on every idle row: a pipe idle for several
+        consecutive hours keeps cooling, it does not jump back to its hot
+        operating temperature at the start of every hour-bin. The chain
+        restarts at the operating mean (Eq.2) the first idle hour after a
+        tap. This needs a sequential pass over the timeseries (Eq.11's
+        theta_W,dis,atap of one interval feeds the next as theta_W,avg,begin),
+        which cannot be vectorised like the rest of this module.
+
+        A caller-supplied "theta_W_avg_C" column (Table 10-style override)
+        bypasses the decay model entirely and is used directly as theta_W,avg.
+
+        Returns 0 when the section carries no pipe thermal-mass data
+        (pipe_volume_m3 and pipe_mass_kg both 0) and no override is given:
+        Eq.(11)-(14) are undefined without it, and guessing a value here
+        would repeat the Eq.(15) mix-up this method replaces.
+        """
+
+        index = mean_temp.index
+        if "theta_W_avg_C" in prepared.columns:
+            theta_avg = prepared["theta_W_avg_C"].astype(float)
+            delta_standby = (theta_avg - ambient).clip(lower=0.0)
+            return psi * length * delta_standby * non_op_hours / 1000.0
+
+        volume_m3 = float(section["pipe_volume_m3"])
+        mass_kg = float(section["pipe_mass_kg"])
+        if volume_m3 <= _KWH_EPS and mass_kg <= _KWH_EPS:
+            return pd.Series(0.0, index=index)
+
+        specific_heat = float(section["pipe_specific_heat_kWh_kgK"])
+        hot_water = _series_from_aliases(
+            prepared,
+            ["theta_W_dis_hot_C", "T_W_supply_C", "dhw_temperature_C"],
+            default=self.services["W"]["dhw_temperature_C"],
+        ).astype(float)
+
+        thermal_capacitance_kWh_K = (
+            _WATER_SPECIFIC_HEAT_KWH_KGK * _WATER_DENSITY_KG_M3 * volume_m3
+            + specific_heat * mass_kg
+        )
+        delta_full = (hot_water - ambient).clip(lower=_KWH_EPS)  # Eq.(12) denominator term
+        q_L_kW = psi * delta_full * length / 1000.0  # Eq.(13) q_i * L_i, in kW
+        if thermal_capacitance_kWh_K <= _KWH_EPS:
+            c_i_per_h = pd.Series(np.inf, index=index)  # effectively instant decay
+        else:
+            c_i_per_h = (q_L_kW / thermal_capacitance_kWh_K) / delta_full  # Eq.(12) / t_atap
+
+        n = len(index)
+        op_arr = op_hours.to_numpy(dtype=float)
+        non_op_arr = non_op_hours.to_numpy(dtype=float)
+        mean_arr = mean_temp.to_numpy(dtype=float)
+        ambient_arr = ambient.to_numpy(dtype=float)
+        c_i_per_h_arr = c_i_per_h.to_numpy(dtype=float)
+
+        loss = np.zeros(n, dtype=float)
+        carry_temp: float | None = None  # theta_W,dis,atap of the previous idle hour
+        for i in range(n):
+            if op_arr[i] > _KWH_EPS:
+                carry_temp = None  # tapping resets the chain
+            if non_op_arr[i] <= _KWH_EPS:
+                continue
+            begin_temp = mean_arr[i] if carry_temp is None else carry_temp
+            t_atap = non_op_arr[i]
+            c_i = min(c_i_per_h_arr[i] * t_atap, 50.0)  # cap: avoid exp() under/overflow
+            theta_atap = ambient_arr[i] + (begin_temp - ambient_arr[i]) * np.exp(-c_i)  # Eq.(11)
+            theta_avg_i = (begin_temp + theta_atap) / 2.0  # Eq.(14)
+            loss[i] = psi * length * max(theta_avg_i - ambient_arr[i], 0.0) * t_atap / 1000.0  # Eq.(7)/(10)
+            carry_temp = theta_atap
+
+        return pd.Series(loss, index=index)
+
+    def _resolve_series(self, prepared: pd.DataFrame, value: Any) -> pd.Series:
+        if isinstance(value, str):
+            if value not in prepared.columns:
+                raise KeyError(
+                    f"ambient_temperature_C references column {value!r}, "
+                    "which is not present in the input data."
+                )
+            return prepared[value].astype(float)
+        return pd.Series(float(value), index=prepared.index)
+
+    def _dhw_stub_loss(
+        self, prepared: pd.DataFrame, op_hours: pd.Series, opts: dict[str, Any]
+    ) -> pd.Series:
+        """Eq.(8)-(9): additional loss of open-circuited DHW stubs while tapping."""
+
+        volume_m3 = float(opts["stub_volume_m3"])
+        if volume_m3 <= _KWH_EPS:
+            return pd.Series(0.0, index=op_hours.index)
+
+        ambient = self._resolve_series(prepared, opts["stub_ambient_temperature_C"])
+        hot_water = _series_from_aliases(
+            prepared,
+            ["theta_W_dis_hot_C", "T_W_supply_C", "dhw_temperature_C"],
+            default=self.services["W"]["dhw_temperature_C"],
+        ).astype(float)
+
+        # Eq.(9): mass flow of hot water in the open-circuited stub(s) during
+        # tapping [kg/h], from the stub pipe volume, water density and the
+        # number of tappings per hour. "taps_per_hour" is a single configured
+        # value by default (Table 6's n_tap is a per-zone-and-time-step
+        # input); a "n_tap_W" column, if supplied, overrides it with a real
+        # per-interval tapping-count profile.
+        taps_per_hour = (
+            prepared["n_tap_W"].astype(float)
+            if "n_tap_W" in prepared.columns
+            else float(opts["taps_per_hour"])
+        )
+        m_stub_kg_h = volume_m3 * _WATER_DENSITY_KG_M3 * taps_per_hour
+        delta = (hot_water - ambient).clip(lower=0.0)
+        return m_stub_kg_h * _WATER_SPECIFIC_HEAT_KWH_KGK * delta * op_hours
 
     def _part_load(
         self,
@@ -356,6 +621,21 @@ class DistributionSystemCalculator:
         epsilon = self._pump_expenditure_factor(beta, p_hydr, opts, service)
         w_hydr = p_hydr * beta * op_hours * float(opts["hydraulic_correction_factor"])
         w_aux = w_hydr * epsilon
+
+        pump_mode = opts.get("pump_mode")
+        if pump_mode is not None:
+            # Eq.(29)/(30): intermittent circulation-pump operation in space
+            # heating/cooling systems has a setback phase (minimum speed, a
+            # 30% mean pump efficiency is assumed) and a boost phase (full
+            # electrical design power), on top of the regular mode above.
+            mode = pump_mode.reindex(q_out.index).astype(str).str.lower()
+            is_setback = mode == "setback"
+            is_boost = mode == "boost"
+            w_setback = p_hydr * hours
+            w_boost = 3.3 * p_hydr * hours
+            w_hydr = w_hydr.where(~is_setback, w_setback).where(~is_boost, w_boost)
+            w_aux = w_aux.where(~is_setback, w_setback).where(~is_boost, w_boost)
+
         return {
             "W_hydr_kWh": w_hydr,
             "W_aux_kWh": w_aux,
@@ -401,23 +681,33 @@ class DistributionSystemCalculator:
         service: str,
     ) -> pd.Series:
         cp1, cp2 = _pump_control_constants(service, int(opts["pump_control_code"]))
-        eei = float(opts["eei"])
+        f_e, eei_override = self._pump_efficiency_factor(p_hydr_kW, opts)
+        eei = eei_override if eei_override is not None else float(opts["eei"])
         beta_pos = beta.where(beta > _KWH_EPS, np.nan)
-        f_e = self._pump_efficiency_factor(p_hydr_kW, opts)
         epsilon = f_e * (cp1 + cp2 / beta_pos) * eei / 0.25
         return epsilon.replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
-    def _pump_efficiency_factor(self, p_hydr_kW: float, opts: dict[str, Any]) -> float:
+    def _pump_efficiency_factor(
+        self, p_hydr_kW: float, opts: dict[str, Any]
+    ) -> tuple[float, float | None]:
         label_power = float(opts["pump_label_power_kW"])
         if label_power > _KWH_EPS:
-            return label_power / p_hydr_kW
+            return label_power / p_hydr_kW, None  # Eq.(28): existing installation
 
         p_hydr_W = p_hydr_kW * 1000.0
         if 1.0 < p_hydr_W < 2500.0:
+            # Eq.(26): EU Regulation 622/2012 reference power for wet-running
+            # circulation pumps. The formula is evaluated in W (the "17"
+            # constant is not scale-invariant); the final x1000 conversion to
+            # kW in the standard cancels in this ratio, so it is omitted here.
             p_ref_W = 1.7 * p_hydr_W + 17.0 * (1.0 - np.exp(-0.3 * p_hydr_W))
-            return float(p_ref_W / p_hydr_W)
+            return float(p_ref_W / p_hydr_W), None
 
-        return max(float(opts["pump_selection_factor"]), 1.0)
+        # Eq.(27): all other pumps. The standard requires EEI = 0.25 here,
+        # which makes the EEI/0.25 term in Eq.(24) equal to 1.
+        b = float(opts["pump_selection_factor"])
+        f_e = (1.25 + (0.2 / p_hydr_kW) ** 0.5) * b
+        return float(f_e), 0.25
 
     def _time_step_hours(self, df: pd.DataFrame) -> pd.Series:
         step = _series_from_aliases(df, ["time_step_hours", "dt_h"], default=np.nan)
@@ -461,6 +751,9 @@ class DistributionSystemCalculator:
                     f"t_{prefix}_dis_op_h": s(f"t_{prefix}_dis_op_h"),
                 }
             )
+        summary["QW_dis_stub_kWh"] = s("Q_W_dis_stub_kWh")
+        if "W_W_dis_rib_kWh" in results:
+            summary["WW_dis_rib_kWh"] = s("W_W_dis_rib_kWh")
 
         summary["Q_dis_ls_kWh"] = (
             summary["QH_dis_ls_kWh"]
@@ -494,8 +787,27 @@ def _section_options(data: dict[str, Any]) -> dict[str, Any]:
             ),
             0.0,
         ),
-        "ambient_temperature_C": float(cfg.get("ambient_temperature_C", 20.0)),
+        # A number is a constant ambient temperature; a string names a column
+        # in the input timeseries, for EN 15316-3 Table 10's "Varying: YES"
+        # ambient temperatures (e.g. different value in/out of heating season).
+        "ambient_temperature_C": cfg.get("ambient_temperature_C", 20.0),
         "recoverable": bool(cfg.get("recoverable", True)),
+        # DHW only. False = distribution pipe without circulation (a branch or
+        # stub run): EN 15316-3 Eq.(15) applies for its whole duration, not
+        # just while not tapping.
+        "circulating": bool(cfg.get("circulating", True)),
+        # DHW only, used by Eq.(31) (ribbon heater): if no section in the
+        # service is flagged, Eq.(31) falls back to the service's total
+        # operating-time loss.
+        "ribbon_target": bool(cfg.get("ribbon_target", False)),
+        # DHW circulating sections only, for Eq.(11)-(14)'s standby decay
+        # (see _dhw_standby_loss). All default to 0 - i.e. no standby loss is
+        # added unless real pipe thermal-mass data is supplied.
+        "pipe_volume_m3": max(float(cfg.get("pipe_volume_m3", 0.0)), 0.0),
+        "pipe_mass_kg": max(float(cfg.get("pipe_mass_kg", 0.0)), 0.0),
+        "pipe_specific_heat_kWh_kgK": max(
+            float(cfg.get("pipe_specific_heat_kWh_kgK", 0.0)), 0.0
+        ),
     }
 
 
@@ -528,17 +840,18 @@ def _fraction(value: Any, name: str) -> float:
 
 
 def _pump_control_constants(service: str, control_code: int) -> tuple[float, float]:
+    # Table B.5 (heating) defines codes 0, 3 AND 4. Tables B.6 (cooling) and
+    # B.7 (DHW) define ONLY codes 0 and 3 - any other code (including 4, used
+    # for heating's variable-Delta-p-variable control) falls back to the
+    # table's "controlled" (code 3) constants, since the standard gives no
+    # values for it there.
     if service == "H":
         return {0: (0.25, 0.75), 3: (0.75, 0.25), 4: (0.90, 0.10)}.get(
             control_code, (0.90, 0.10)
         )
     if service == "C":
-        return {0: (0.25, 0.75), 3: (0.85, 0.15), 4: (0.85, 0.15)}.get(
-            control_code, (0.85, 0.15)
-        )
-    return {0: (0.25, 0.94), 3: (0.50, 0.63), 4: (0.50, 0.63)}.get(
-        control_code, (0.50, 0.63)
-    )
+        return {0: (0.25, 0.75), 3: (0.85, 0.15)}.get(control_code, (0.85, 0.15))
+    return {0: (0.25, 0.94), 3: (0.50, 0.63)}.get(control_code, (0.50, 0.63))
 
 
 def _ratio(numerator: float, denominator: float) -> float:

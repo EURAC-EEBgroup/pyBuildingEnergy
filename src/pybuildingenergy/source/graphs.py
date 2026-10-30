@@ -41,9 +41,14 @@ def line_and_bar(
     y1_data_line: list,
     y1_name: list,
     frequency: str,
+    y_unit: str = "W",
+    y2_data_line: list = None,
+    y2_name: list = None,
+    y2_title: str = "Relative humidity",
 ):
     """
-    bar(Y-axis) and line(Y-axis-1) chart together:
+    bar(Y-axis) and line(Y-axis-1) chart together, with an optional third axis
+    (Y-axis-2, 0-100%) for a humidity-like series:
 
     :param **theme_type**: chart theme. Possible options:
             * themeType.LIGHT
@@ -67,6 +72,10 @@ def line_and_bar(
     :param **y1_data_line**: data for line_chart. -> list of lists, e.g.[[1,2,3,4],[4,5,6,7]]
     :param **y1_name**: name of the data to be visualize as lines. same length of y_bar_plot. -> list of lists, e.g [['Q_H, 'Q_HC]]
     :param **frequency**: data frequency to be used in the graph title. e.g. daily, hourly, etc.
+    :param **y_unit**: unit shown on the bar y-axis labels (e.g. "W", "kWh"). Default: "W" (legacy default).
+    :param **y2_data_line**: optional data for a third axis (0-100%), e.g. relative humidity. -> list of lists.
+    :param **y2_name**: name of the series in y2_data_line. same length of y2_data_line.
+    :param **y2_title**: title of the third axis. Default: "Relative humidity".
 
     :return: chart in html format
     """
@@ -85,32 +94,47 @@ def line_and_bar(
                 axislabel_opts=opts.LabelOpts(formatter="{value} °C"),
             )
         )
-        .set_global_opts(
-            title_opts=opts.TitleOpts(title=f"{frequency} energy need"),
-            datazoom_opts=[
-                opts.DataZoomOpts(range_start=0, range_end=100),
-                opts.DataZoomOpts(type_="inside"),
-            ],
-            toolbox_opts=opts.ToolboxOpts(
-                feature=opts.ToolBoxFeatureOpts(
-                    save_as_image=opts.ToolBoxFeatureSaveAsImageOpts(
-                        title="Download as Image"
-                    ),
-                    restore=opts.ToolBoxFeatureRestoreOpts(title="Restore"),
-                    data_view=opts.ToolBoxFeatureDataViewOpts(
-                        title="View Data", lang=["Data View", "Close", "Refresh"]
-                    ),
-                    data_zoom=opts.ToolBoxFeatureDataZoomOpts(
-                        zoom_title="Zoom In", back_title="Zoom Out"
-                    ),
-                    magic_type=opts.ToolBoxFeatureMagicTypeOpts(is_show=False),
-                )
-            ),
-            tooltip_opts=opts.TooltipOpts(trigger="axis"),
-            yaxis_opts=opts.AxisOpts(
-                name=y_title, axislabel_opts=opts.LabelOpts(formatter="{value} W")
-            ),
+    )
+    if y2_data_line:
+        bar = bar.extend_axis(
+            yaxis=opts.AxisOpts(
+                name=y2_title,
+                type_="value",
+                min_=0,
+                max_=100,
+                interval=20,
+                position="right",
+                offset=80,
+                axislabel_opts=opts.LabelOpts(formatter="{value} %"),
+            )
         )
+    bar = bar.set_global_opts(
+        title_opts=opts.TitleOpts(title=f"{frequency} energy need", pos_top="0%"),
+        legend_opts=opts.LegendOpts(pos_top="8%", pos_left="center", orient="horizontal"),
+        datazoom_opts=[
+            opts.DataZoomOpts(range_start=0, range_end=100),
+            opts.DataZoomOpts(type_="inside"),
+        ],
+        toolbox_opts=opts.ToolboxOpts(
+            pos_top="0%",
+            feature=opts.ToolBoxFeatureOpts(
+                save_as_image=opts.ToolBoxFeatureSaveAsImageOpts(
+                    title="Download as Image"
+                ),
+                restore=opts.ToolBoxFeatureRestoreOpts(title="Restore"),
+                data_view=opts.ToolBoxFeatureDataViewOpts(
+                    title="View Data", lang=["Data View", "Close", "Refresh"]
+                ),
+                data_zoom=opts.ToolBoxFeatureDataZoomOpts(
+                    zoom_title="Zoom In", back_title="Zoom Out"
+                ),
+                magic_type=opts.ToolBoxFeatureMagicTypeOpts(is_show=False),
+            )
+        ),
+        tooltip_opts=opts.TooltipOpts(trigger="axis"),
+        yaxis_opts=opts.AxisOpts(
+            name=y_title, axislabel_opts=opts.LabelOpts(formatter="{value} " + y_unit)
+        ),
     )
 
     for i, values in enumerate(y_bar_plot):
@@ -120,7 +144,7 @@ def line_and_bar(
             label_opts=opts.LabelOpts(is_show=False),
         )
 
-    # Y-AXIS - 1
+    # Y-AXIS - 1 (temperature-like lines)
     lineChart = Line().add_xaxis(x_data)
     for i, line in enumerate(y1_data_line):
         lineChart.add_yaxis(
@@ -129,6 +153,16 @@ def line_and_bar(
             y_axis=line,
             label_opts=opts.LabelOpts(is_show=False),
         )
+
+    # Y-AXIS - 2 (optional humidity-like lines, own 0-100% axis)
+    if y2_data_line:
+        for i, line in enumerate(y2_data_line):
+            lineChart.add_yaxis(
+                series_name=y2_name[i],
+                yaxis_index=2,
+                y_axis=line,
+                label_opts=opts.LabelOpts(is_show=False),
+            )
 
     bar.height = "600px"
     bar.width = "1400px"
@@ -663,4 +697,108 @@ class Graphs_and_report:
         print("Report created!")
         return json.dumps({"report": "created"})
 
+
+# ========================================================================================================
+#                                   MULTI-FREQUENCY / MULTI-ZONE THERMAL REPORT
+# ========================================================================================================
+
+def _resample(series: "pd.Series", frequency: str, how: str) -> "pd.Series":
+    """Resample a datetime-indexed series, tolerating both the new ('ME','YE')
+    and the old ('M','Y') pandas resampling aliases (see the same pattern used
+    throughout this module, e.g. in ``Graphs_and_report.variables_plot``).
+
+    The engine's hourly index labels each row with the END of its interval
+    (the first row of a year is 01:00, the last is 00:00 of the NEXT year):
+    the same convention handled in ``composer.py``'s monthly primary-energy
+    balance. Binning by calendar day/month/year on that raw index puts the
+    very last hour of the year into a spurious extra bucket (e.g. a
+    "next January" with just that one hour) instead of December, where it
+    physically belongs -- so for any boundary-sensitive frequency the index
+    is shifted back by one timestep first.
+    """
+
+    new_map = {"yearly": "YE", "monthly": "ME", "daily": "D", "hourly": "h"}
+    old_map = {"yearly": "Y", "monthly": "M", "daily": "D", "hourly": "h"}
+    if frequency not in new_map:
+        raise ValueError(f"Invalid frequency '{frequency}'. Use one of {list(new_map)}.")
+
+    if frequency in ("daily", "monthly", "yearly") and len(series.index) > 1:
+        dt_h = pd.Series(series.index).diff().dropna().median().total_seconds() / 3600.0
+        if dt_h and dt_h > 0:
+            series = series.copy()
+            series.index = series.index - pd.Timedelta(hours=dt_h)
+
+    try:
+        resampler = series.resample(new_map[frequency])
+    except Exception:
+        resampler = series.resample(old_map[frequency])
+    return getattr(resampler, how)()
+
+
+def thermal_html_report(
+    thermal_need_kWh: dict,
+    t_op_C: dict,
+    t_ext_C,
+    rh_ext_pct=None,
+    frequencies=("hourly", "daily", "monthly"),
+    folder_directory: str = "",
+    name_file: str = "thermal_report",
+) -> str:
+    """Build ONE html report (hourly + daily + monthly, stacked) with thermal
+    energy need as bars and operative/outdoor temperature (+ optional outdoor
+    relative humidity) as lines -- for a single zone or for several zones at
+    once.
+
+    Unlike ``Graphs_and_report`` (built around one single-zone dataframe with
+    fixed column names), this function takes already-extracted series keyed by
+    whatever label should appear in the chart legend, so the SAME function
+    serves both the single-zone engine (one label, e.g. "Q_H") and the
+    multizone engine (one label per zone, e.g. "Z_ground", "Z_first").
+
+    :param thermal_need_kWh: {label: pd.Series} thermal energy per timestep [kWh], plotted as bars (one series per label, e.g. per zone or per Q_H/Q_C).
+    :param t_op_C: {label: pd.Series} operative temperature [degC], plotted as lines on the same axis as t_ext_C (one line per label, e.g. per zone).
+    :param t_ext_C: pd.Series, outdoor temperature [degC], plotted alongside t_op_C.
+    :param rh_ext_pct: optional pd.Series, outdoor relative humidity [%], plotted on its own 0-100% axis. Indoor humidity is not modelled by ISO 52016, so only the outdoor value is available here.
+    :param frequencies: which resampling frequencies to stack in the report, each as its own chart. Values: "hourly", "daily", "monthly", "yearly". Default: all three.
+    :param folder_directory: directory where the html file is saved.
+    :param name_file: name of the html file (without extension). Default: "thermal_report".
+
+    :return: path of the saved html report.
+    """
+
+    if not thermal_need_kWh or not t_op_C:
+        raise ValueError("thermal_need_kWh and t_op_C must each contain at least one series.")
+
+    charts = []
+    for freq in frequencies:
+        need_res = {label: _resample(series, freq, "sum") for label, series in thermal_need_kWh.items()}
+        top_res = {label: _resample(series, freq, "mean") for label, series in t_op_C.items()}
+        text_res = _resample(t_ext_C, freq, "mean")
+        rh_res = _resample(rh_ext_pct, freq, "mean") if rh_ext_pct is not None else None
+
+        x_data = text_res.index.strftime("%Y-%m-%d %H:%M").to_list()
+
+        chart = line_and_bar(
+            theme_type=ThemeType.ROMA,
+            x_data=x_data,
+            y_bar_plot=[s.to_list() for s in need_res.values()],
+            y_name=list(need_res.keys()),
+            y_title="Thermal need",
+            y_unit="kWh",
+            y1_data_line=[s.to_list() for s in top_res.values()] + [text_res.to_list()],
+            y1_name=list(top_res.keys()) + ["T_ext"],
+            frequency=capitalize_first_letter(freq),
+            y2_data_line=[rh_res.to_list()] if rh_res is not None else None,
+            y2_name=["RH_ext"] if rh_res is not None else None,
+        )
+        charts.append(chart)
+
+    page = Page(layout=Page.SimplePageLayout)
+    page.add(*charts)
+
+    file_path = "{}/{}.html".format(folder_directory, name_file) if folder_directory else f"{name_file}.html"
+    page.render(file_path)
+
+    print("Report created!")
+    return file_path
 

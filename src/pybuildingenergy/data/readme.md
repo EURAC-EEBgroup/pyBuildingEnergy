@@ -1,4 +1,12 @@
-# Building archetype 
+# Building archetype
+
+## DHW profiles
+
+`dhw_profiles.json` contains the EN 12831-3:2017 Annex B Table B.2 hourly
+domestic-hot-water profiles. They are loaded through
+`pybuildingenergy.dhw_annex_b_table_b2_hourly_fractions()` or
+`pybuildingenergy.load_dhw_annex_b_table_b2_profiles()` and are included in
+the installed package as package data.
 
 To define the archetypes, reference has been made to the available dataset from Tabula and Episcope (https://webtool.building-typology.eu/#bm). A more thorough study is underway to provide more detailed building models compared to those currently available, also taking into account the different construction typologies within the same country.
 The physical characteristics of the building components were retrieved from the reference technical sheets provided for each building archetype according to its different use and construction period (you can download the files directly from Tabula https://webtool.building-typology.eu/#bd). The thermal capacity of the building element was calculated using the  follwoing formula:
@@ -130,7 +138,6 @@ POWER:
 **COOLING SYSTEM**
 for the building archetype the cooling system is set off.
 In this case the values of cooling setpoint and setback are the same -->
-
 
 
 

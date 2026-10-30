@@ -41,6 +41,11 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 import pybuildingenergy as pybui  # noqa: E402
+from pybuildingenergy import (  # noqa: E402
+    DHW_ANNEX_B_TABLE_B2_VOLUME_PERCENT,
+    DHW_DAY_TYPE_COLUMNS,
+    dhw_annex_b_table_b2_hourly_fractions,
+)
 
 
 warnings.filterwarnings(
@@ -435,45 +440,6 @@ def dhw_cold_water_temperature_C(scenario: str) -> float:
     return 9.5 if scenario == "bolzano" else 11.2
 
 
-DHW_DAY_TYPE_COLUMNS = ("Workday", "Weekend", "Holiday")
-
-# EN 12831-3:2017 Annex B, Table B.2 gives relative hourly hot-water
-# volume profiles by building category. The tabulated values are percentages
-# rounded to one decimal, so some columns sum to 99.7 or 99.9 rather than
-# exactly 100. The helper below normalizes each profile before it is used.
-DHW_ANNEX_B_TABLE_B2_VOLUME_PERCENT = {
-    "single_family_dwelling": [
-        1.8, 1.0, 0.6, 0.3, 0.4, 0.6,
-        2.4, 4.7, 6.8, 5.7, 6.1, 6.1,
-        6.3, 6.4, 5.1, 4.4, 4.3, 4.7,
-        5.7, 6.5, 6.6, 5.8, 4.5, 3.1,
-    ],
-    "apartment_dwelling": [
-        1.0, 1.0, 1.0, 0.0, 0.0, 1.0,
-        3.0, 6.0, 8.0, 6.0, 5.0, 5.0,
-        6.0, 6.0, 5.0, 4.0, 4.0, 5.0,
-        6.0, 7.0, 7.0, 6.0, 5.0, 2.0,
-    ],
-    "residential_home_elderly": [
-        0.3, 0.3, 0.4, 0.7, 1.0, 1.8,
-        9.3, 15.7, 8.1, 7.5, 7.0, 6.6,
-        7.1, 5.1, 3.8, 3.3, 4.1, 2.9,
-        6.1, 4.1, 1.4, 1.8, 0.9, 0.4,
-    ],
-    "student_residence": [
-        1.4, 1.0, 0.5, 0.6, 1.3, 3.4,
-        5.8, 5.8, 6.2, 5.4, 5.1, 4.7,
-        4.2, 4.5, 4.1, 4.3, 5.3, 6.0,
-        6.6, 6.0, 5.6, 5.4, 3.9, 2.8,
-    ],
-    "hospital": [
-        0.4, 0.4, 0.5, 0.8, 1.2, 2.8,
-        7.5, 10.5, 8.0, 7.5, 7.5, 7.0,
-        7.5, 5.5, 4.3, 3.7, 4.5, 3.2,
-        7.0, 4.5, 2.0, 2.0, 1.2, 0.5,
-    ],
-}
-
 # Both example buildings are residential, two-floor, 120 m2 useful-area houses.
 # The single-family dwelling curve is therefore used for both climates; the
 # Workalendar country still gives scenario-specific workday/holiday calendars.
@@ -481,37 +447,6 @@ SCENARIO_DHW_ANNEX_B_PROFILE = {
     "athens": "single_family_dwelling",
     "bolzano": "single_family_dwelling",
 }
-
-
-def dhw_annex_b_table_b2_hourly_fractions(
-    profile_key: str = "single_family_dwelling",
-) -> pd.DataFrame:
-    """Return EN 12831-3 Annex B Table B.2 hourly fractions for the examples.
-
-    ``Volume_and_energy_DHW_calculation`` expects one 24-hour vector for each
-    day type. Table B.2 is category-based, not day-type-based, so the selected
-    category profile is reused for workdays, weekends and holidays. The values
-    are normalized to fractions that sum to 1.0 per day type.
-    """
-
-    if profile_key not in DHW_ANNEX_B_TABLE_B2_VOLUME_PERCENT:
-        available = ", ".join(sorted(DHW_ANNEX_B_TABLE_B2_VOLUME_PERCENT))
-        raise ValueError(
-            f"Unknown EN 12831-3 Annex B Table B.2 profile '{profile_key}'. "
-            f"Available profiles: {available}."
-        )
-    percent = pd.Series(
-        DHW_ANNEX_B_TABLE_B2_VOLUME_PERCENT[profile_key],
-        index=range(24),
-        dtype=float,
-    )
-    if len(percent) != 24:
-        raise ValueError(f"DHW profile '{profile_key}' must contain 24 hourly values.")
-    total = float(percent.sum())
-    if total <= 0.0:
-        raise ValueError(f"DHW profile '{profile_key}' must have a positive sum.")
-    fractions = percent / total
-    return pd.DataFrame({column: fractions.values for column in DHW_DAY_TYPE_COLUMNS})
 
 
 def make_dhw_profile(
@@ -936,39 +871,40 @@ def heat_pump_config(
 
 
 def boiler_generation_config(scenario: str = "athens") -> dict:
-    """Scenario-specific EN 15316-4-1 combustion-generator assumptions."""
+    """Scenario-specific EN 15316-4-1 condensing-boiler assumptions, in the
+    BoilerGeneratorCalculator shape (the sole EN 15316-4-1 implementation in
+    this package - see pybuildingenergy.source.generation_15316_4_1)."""
 
     config = {
-        "demand_unit": "kWh",
-        "fuel": "natural_gas",
-        "condensing": True,
-        "nominal_power_kW": 18.0,
-        "full_load_efficiency": 0.94,
-        "part_load_efficiency": 0.98,
-        "efficiency_max": 1.08,
-        "minimum_part_load_ratio": 0.15,
-        "return_temperature_reference_C": 45.0,
-        "return_temperature_efficiency_slope_per_K": 0.0020,
-        "standby_loss_kWh_per_h": 0.010,
-        "auxiliary_power_kW": 0.035,
-        "standby_auxiliary_power_kW": 0.004,
-        "thermal_loss_room_fraction": 0.75,
-        "auxiliary_to_medium_fraction": 0.20,
-        "heating_supply_temperature_C": 45.0,
-        "heating_return_temperature_C": 35.0,
-        "dhw_sink_temperature_C": 55.0,
-        "dhw_return_temperature_C": 45.0,
+        "boiler_type": "condensing", "fuel_type": "natural_gas",
+        "rated_power_kW": 18.0, "intermediate_load_fraction": 0.30,
+        "eta_Pn_test_pct": 94.0, "eta_Pint_test_pct": 98.0,
+        "theta_test_Pn_C": 60.0, "theta_test_Pint_C": 40.0,
+        "f_corr_pct_per_K": 0.04, "P_gen_ls_P0_W": 90.0,
+        "P_aux_on_W": 35.0, "P_aux_off_W": 4.0,
+        "f_jacket": 0.75, "f_location": 1.0, "f_aux_recoverable": 0.20,
+        "dew_point_C": 55.0, "condensing_gain_pct": 8.0,
+        "efficiency_table": {"condensing": {
+            "eta_Pn_test_pct": 94.0, "eta_Pint_test_pct": 98.0,
+            "theta_test_Pn_C": 60.0, "theta_test_Pint_C": 40.0,
+        }},
+        "loss_table": {"condensing": {"P_gen_ls_P0_W": 90.0}},
+        "boiler_location": "inside_heated",
+        "heating_supply_temperature_C": 45.0, "heating_return_temperature_C": 35.0,
+        "dhw_sink_temperature_C": 55.0, "dhw_return_temperature_C": 45.0,
     }
     if scenario == "bolzano":
         config.update(
             {
-                "nominal_power_kW": 22.0,
-                "full_load_efficiency": 0.95,
-                "part_load_efficiency": 1.00,
-                "standby_loss_kWh_per_h": 0.012,
-                "auxiliary_power_kW": 0.040,
+                "rated_power_kW": 22.0,
+                "eta_Pn_test_pct": 95.0, "eta_Pint_test_pct": 100.0,
+                "P_gen_ls_P0_W": 108.0, "P_aux_on_W": 40.0,
             }
         )
+        config["efficiency_table"]["condensing"].update(
+            {"eta_Pn_test_pct": 95.0, "eta_Pint_test_pct": 100.0}
+        )
+        config["loss_table"]["condensing"]["P_gen_ls_P0_W"] = 108.0
     return config
 
 
@@ -1175,10 +1111,10 @@ def emission_system_config(scenario: str = "athens") -> dict:
             "convective_fraction": 0.95,
         },
         "cooling": {
-            "stratification_K": 0.40,
-            "control_K": 0.70,
+            "stratification_K": -0.40,
+            "control_K": -0.70,
             "radiation_K": 0.0,
-            "hydraulic_balancing_K": 0.10,
+            "hydraulic_balancing_K": -0.10,
             "room_automation_K": -0.50,
             "embedded_K": 0.0,
             "nominal_power_kW": 8.0,
@@ -1213,7 +1149,7 @@ def building_with_emission_setpoints(
             setpoints[key] = float(setpoints[key]) + h_delta
     for key in ["cooling_setpoint", "cooling_setback"]:
         if key in setpoints:
-            setpoints[key] = float(setpoints[key]) - c_delta
+            setpoints[key] = float(setpoints[key]) + c_delta
 
     return adjusted
 
@@ -4822,7 +4758,7 @@ def run_example(args: argparse.Namespace) -> None:
                 "E_C_total_kWh"
             ].reindex(generation_loads.index).fillna(0.0)
         if heating_generation_method == "en15316-4-1":
-            heating_generation_result = pybui.CombustionBoilerSystemCalculator(
+            heating_generation_result = pybui.BoilerGeneratorCalculator(
                 boiler_generation_config(scenario)
             ).run_timeseries(generation_loads)
         elif heating_generation_method == "en15316-4-4":

@@ -1,4 +1,170 @@
-# Chapter: Interpretation of Distribution Inputs According to EN 15316-3
+# Building and HVAC Input Reference
+
+## Building Input (`building`)
+
+This section documents the building input accepted by the modular configuration shown in `example_building_emission_only.json`. The building model is located in the top-level `building` object; systems are independent optional blocks under `systems`.
+
+```json
+{
+  "$schema": "pybuildingenergy-system-config-v2",
+  "weather": {"source": "pvgis", "file": null},
+  "building": {"...": "building model"},
+  "systems": {"...": "enabled simulation subsystems"}
+}
+```
+
+### Weather
+
+`weather.source` selects the weather source. The example uses `pvgis`. `weather.file` is `null` when no local weather file is supplied. When a file-based weather workflow is used, set `file` to the corresponding path and configure a compatible source in the simulation call.
+
+### Basic Building Data
+
+The `building.building` object contains the geometric, location and classification data shared by the envelope calculation.
+
+| Input | Unit | Meaning |
+|---|---:|---|
+| `name` | — | Building identifier. |
+| `azimuth_relative_to_true_north` | ° | Rotation of the building reference axes from true north. |
+| `latitude`, `longitude` | ° | Site coordinates used for weather and solar geometry. |
+| `exposed_perimeter` | m | Exposed perimeter used by the ground model. |
+| `height` | m | Building height. |
+| `wall_thickness` | m | Wall thickness; used by the ground calculation. The same value is also declared under `building_parameters.construction` in the example. |
+| `n_floors` | — | Number of floors. |
+| `building_type_class` | — | Building-use classification. |
+| `adj_zones_present` | boolean | States whether adjacent zones are modelled. |
+| `number_adj_zone` | — | Number of adjacent zones. |
+| `net_floor_area` | m² | Net conditioned floor area. |
+| `construction_class` | — | Thermal-mass class, for example `class_i`. |
+
+### Envelope Surfaces (`building_surface`)
+
+`building_surface` is a list of roof, wall, slab and window objects. Every surface in the example includes `name`, `type`, `area`, `sky_view_factor`, `u_value`, `orientation` and `name_adj_zone`.
+
+| Input | Unit | Meaning |
+|---|---:|---|
+| `name` | — | Unique, readable surface identifier. |
+| `type` | — | `opaque` for roof/wall/slab, or `transparent` for a window. |
+| `area` | m² | Gross surface area. For windows this is the total window area, including the frame. |
+| `sky_view_factor` | — | Fraction between 0 and 1 representing the view to the sky. The example uses `0.0` for the ground slab. |
+| `boundary` | — | Optional, but recommended over relying on `sky_view_factor`. One of `OUTDOORS` (default), `GROUND`, `ADIABATIC`, `INTERNAL`. Always set this explicitly for a ground slab or for a partition to another zone/unmodelled space — see the note below. |
+| `u_value` | W/(m² K) | Thermal transmittance in the normal/open state. |
+| `orientation.azimuth` | ° | Azimuth: 0 north, 90 east, 180 south, 270 west. |
+| `orientation.tilt` | ° | Tilt: 0 horizontal/upward-facing, 90 vertical. |
+
+**Ground contact vs. internal partitions.** For backward compatibility, an opaque surface with no explicit `boundary` and `sky_view_factor == 0` is still inferred as ground contact ("GR") — but only when it is near-horizontal (tilt close to 0° or 180°), matching the ground-slab convention. A *vertical* opaque surface with `sky_view_factor == 0` (e.g. a party wall shared with an attached building, or an internal partition between two zones with no sky view) is **not** inferred as ground contact: it stays a normal exposed wall unless you tag it explicitly. Partitions towards another zone or an unmodelled space — whether vertical (a wall) or horizontal (a floor/ceiling between two stacked zones, as in a multizone model) — should always be tagged `"boundary": "ADIABATIC"` (or `"INTERNAL"` for a real multizone coupling); relying on `sky_view_factor == 0` for that purpose is ambiguous and, for a horizontal partition, would incorrectly resolve to ground contact.
+| `name_adj_zone` | — / `null` | Adjacent-zone identifier. Use `null` for the exterior surfaces in the example. |
+
+Opaque surfaces additionally use:
+
+| Input | Unit | Meaning |
+|---|---:|---|
+| `solar_absorptance` | — | Solar absorptance of the outer opaque surface, between 0 and 1. |
+| `thermal_capacity` | J/(m² K) | Areal thermal capacity of the construction. |
+
+Transparent surfaces additionally use:
+
+| Input | Unit | Meaning |
+|---|---:|---|
+| `g_value` | — | Total solar energy transmittance of the window in its normal/open state. |
+| `height`, `width` | m | Window geometry used by the shading calculation. |
+| `parapet` | m | Height of the lower window edge above the reference level. |
+| `shading` | boolean | Enables the configured fixed shading calculation. |
+| `shading_type` | — | Fixed-shading geometry type, such as `horizontal_overhang`. |
+| `width_or_distance_of_shading_elements` | m | Geometric input for the fixed shading object. |
+| `overhang_properties.width_of_horizontal_overhangs` | m | Projection width of a horizontal overhang. |
+| `annex_f_shading_objects` | list | Optional ISO 52016-1 Annex F skyline elements. Each element contains `azimuth_start_deg`, `azimuth_end_deg`, `distance_m`, and either `top_height_m` or `base_height_m` + `height_m`; angles use N=0, E=90, S=180, W=270. |
+
+Example Annex F obstacle input:
+
+```json
+{
+  "shading_type": "obstacles",
+  "annex_f_shading_objects": [
+    {
+      "kind": "obstacle",
+      "azimuth_start_deg": 165,
+      "azimuth_end_deg": 195,
+      "distance_m": 20,
+      "top_height_m": 15,
+      "window_sill_height_m": 1
+    }
+  ]
+}
+```
+
+The hourly Annex F calculation reduces the direct beam according to the
+projected shadow height and leaves diffuse irradiance unaffected. The caller
+then combines direct and diffuse irradiance using the ISO 52016-1 factor.
+
+### Optional Movable Shading per Window
+
+`movable_shading` is optional and is placed inside the individual transparent-surface object. If it is omitted, no roller shutter, external shutter or venetian blind is connected to that window and the calculation uses the window `u_value` and `g_value` unchanged.
+
+When present, the hourly calculation uses the open window properties and the `closed` properties according to the selected control rule. `closed.u_value` and `closed.g_value` must be product-specific values, not generic default values.
+
+```json
+{
+  "name": "Window S",
+  "type": "transparent",
+  "area": 6.0,
+  "u_value": 1.4,
+  "g_value": 0.45,
+  "movable_shading": {
+    "type": "external_shutter",
+    "closed": {
+      "u_value": 1.2,
+      "g_value": 0.12
+    },
+    "control": {
+      "mode": "solar",
+      "months": [4, 5, 6, 7, 8, 9],
+      "solar_irradiance_threshold_W_m2": 180
+    }
+  }
+}
+```
+
+| `movable_shading` input | Unit | Accepted values / meaning |
+|---|---:|---|
+| `type` | — | `roller_shutter`, `external_shutter` or `venetian_blind`. |
+| `closed.u_value` | W/(m² K) | Thermal transmittance while the device is closed. |
+| `closed.g_value` | — | Total solar energy transmittance while the device is closed, between 0 and 1. |
+| `control.mode` | — | `solar`, `night`, `night_and_solar`, `schedule` or `always_closed`. |
+| `control.months` | — | Optional active months, numbered 1 to 12. It defaults to all months. |
+| `control.solar_irradiance_threshold_W_m2` | W/m² | Window-plane irradiance threshold used by `solar` control. Default: 150 W/m². |
+| `control.night_start_hour`, `control.night_end_hour` | h | Closing/opening hour for `night` control. Defaults: 22 and 7. |
+| `control.closed_start_hour`, `control.closed_end_hour` | h | Closing/opening hour for `schedule` control. Defaults: 22 and 7. |
+
+Fixed shading (`shading`, overhangs and obstacles) and movable shading are separate inputs: the former changes the incident solar irradiance, while the latter selects the window properties for the current state.
+
+### Building Parameters (`building_parameters`)
+
+`building_parameters` contains operating conditions and envelope-related data.
+
+| Section | Inputs in the example | Unit / meaning |
+|---|---|---|
+| `temperature_setpoints` | `heating_setpoint`, `heating_setback`, `cooling_setpoint`, `cooling_setback` | °C zone setpoints. |
+| `system_capacities` | `heating_capacity`, `cooling_capacity` | W maximum ideal HVAC capacity. |
+| `airflow_rates` | `infiltration_rate` | h⁻¹ air-change rate. |
+| `construction` | `wall_thickness`, `thermal_bridge_heat_W_K` | m wall thickness; W/K total thermal-bridge coefficient. |
+| `climate_parameters` | `coldest_month` | Month number from 1 to 12. |
+| `internal_gains` | `name`, `full_load`, `weekday`, `weekend` | Full-load gain and 24 hourly multipliers for each gain source. |
+| `heating_profile`, `cooling_profile`, `ventilation_profile` | `weekday`, `weekend` | 24 hourly availability multipliers, indexed from hour 0 to hour 23. |
+
+The `weekday` and `weekend` arrays in all profiles must contain 24 values. A zero disables the corresponding service or gain at that hour; one represents its configured full level.
+
+### Units Block
+
+The example declares the main envelope units explicitly:
+
+```json
+"units": {
+  "area": "m2",
+  "u_value": "W/m2K"
+}
+```
+
+Use SI values consistently throughout the building input. In particular, areas are in m², dimensions in m, temperatures in °C, thermal capacities in J/(m² K), and thermal bridge coefficients in W/K.
 
 ## EN 15316-2 - Emission System
 
@@ -10,6 +176,75 @@ In `new_building.py`, this part is organized on two levels:
 EN 15316-2 describes the emission subsystem, namely the transition from the useful zone energy need to the heat actually delivered to the indoor environment. In `new_building.py`, this part is handled by the `emission_15316_2_config` block and is used to calculate, hour by hour, emission losses, equivalent temperature increases caused by terminal components, and any electrical auxiliaries for fans or controls.
 
 In the model, the emission subsystem is the connection point between the zone load and distribution. Here the thermal need is corrected by accounting for stratification, control, radiation, hydraulic balancing, room automation and, when required, intermittent operation effects.
+
+### How to Load the Emission System (JSON, schema `pybuildingenergy-system-config-v2`)
+
+The emission system is declared in the `systems.emission` block of a v2 document:
+
+```json
+"systems": {
+  "emission": {
+    "enabled": true,
+    "emitter_type": "Radiator",
+    "nominal_power_kW": 41.0,
+    "config": {
+      "demand_unit": "kWh",
+      "heating": { "stratification_K": 1.2, "control_K": 1.2, "radiation_K": 0.0,
+                   "hydraulic_balancing_K": 0.0, "room_automation_K": -0.5,
+                   "embedded_K": 0.0, "nominal_power_kW": 41.0,
+                   "fan_power_W": 0.0, "fan_count": 0, "control_power_W": 0.0, "control_count": 0,
+                   "convective_fraction": 0.70 },
+      "cooling":  { "...same keys, cooling sign convention..." }
+    }
+  }
+}
+```
+
+Rules:
+
+- `enabled` must be `true`: the emission system is the interface between the zone load and the HVAC system, so it cannot be disabled.
+- `config` is the EN 15316-2 configuration. `heating` and `cooling` are both required blocks; a system without cooling uses zeros and `nominal_power_kW: 0`.
+- `nominal_power_kW` at the top level of the block is optional; if absent, `config.heating.nominal_power_kW` is used.
+- If only `systems.emission` is enabled, the document is an emission-only simulation: `simulate_config(config)` runs ISO 52016 for the building and then EN 15316-2 for the emitter. If distribution, DHW, PV or AHU are also enabled, `systems.generation` must be enabled too.
+- The document can be loaded with `pybuildingenergy.load_config(path)` and simulated with `pybuildingenergy.simulate_config(config)`.
+
+**Variables of `config.heating` and `config.cooling`** (same keys for both blocks):
+
+| Key | Unit | Meaning (EN 15316-2) | Sign / typical value |
+|---|---|---|---|
+| `stratification_K` | K | Δθstr, spatial temperature variation | heating positive (Annex B, e.g. radiators 1.2 K); cooling negative |
+| `control_K` | K | Δθctr, control variation (use Δθctr,1 for uncertified, Δθctr,2 for certified products) | heating positive (PI controller, uncertified: 1.2 K for radiators); cooling negative |
+| `radiation_K` | K | Δθrad, radiation effect of the emitter (product value, EN 442) | 0 unless the product value is known |
+| `hydraulic_balancing_K` | K | Δθhydr, hydraulic imbalance | 0 when balanced; positive otherwise; cooling negative |
+| `room_automation_K` | K | Δθroomaut, room automation | negative (stand-alone: −0.5 K) |
+| `embedded_K` | K | Δθemb, embedded emitters (not part of the temperature sum) | 0 for radiators; cooling negative (Table B.11) |
+| `nominal_power_kW` | kW | design useful output per hour; caps Q_em,out,inc | positive |
+| `fan_count`, `fan_power_W` | –, W | fans for auxiliary energy (eq. 14) | 0 for radiators |
+| `control_count`, `control_power_W` | –, W | control devices; included only with `electric_control_aux: true` | 0 for mechanical TRV |
+| `electric_control_aux` | bool | the control devices are electrical with auxiliary energy (Table A.12) | `false` by default |
+| `convective_fraction` | – | f_em,conv (Table B.17) | radiators 0.70; floor heating 0.50; fan coils 0.95 |
+| `backup_available` | bool | a backup or supplementary system covers the emitter deficit (eq. 16) | `false` by default |
+| `undersize_tolerance` | – | relative deficit above which the undersizing warning is raised without backup | 0.05 by default |
+| `notify_inc_fallback` | bool | warn when Q_em,out,inc is estimated by temperature ratios | `true` by default |
+
+The equivalent internal temperature is `θ_int,inc = θ_int,ini + SUM(delta)` with `delta = stratification + control + radiation + hydraulic balancing + room automation` (EN 15316-2 eq. 16-17). The standard is not fully consistent on the cooling sign; see the note in the Readme.
+
+**Time-series inputs** (for the `EmissionSystemCalculator` used directly, or passed by `simulate_config`):
+
+| Column | Unit | Required | Note |
+|---|---|---|---|
+| `T_ext` | °C | yes | outdoor temperature |
+| `T_op` (or `T_H_int_ini_C`, `T_C_int_ini_C`) | °C | yes | operative temperature of the zone |
+| `Q_H_kWh`, `Q_C_kWh` | kWh per step | yes | building need (ISO 52016) |
+| `time_step_hours` | h | yes | time step |
+| `Q_H_em_out_inc_kWh`, `Q_C_em_out_inc_kWh` | kWh per step | recommended | output at the modified set point, recalculated with ISO 52016 (the default path does it); if absent, a temperature-ratio estimate is used and notified |
+| `t_h_rl` | h per step | recommended | operation time of the emitter from the EN 15316-1 schedule; if absent, estimated from the load factor |
+
+**Main outputs** (per step and as annual summary): `Q_*_em_out_kWh` (expected output), `Q_*_em_out_inc_kWh`, `Q_*_em_temp_effect_kWh`, `Q_*_emb_ls_kWh`, `Q_*_em_ls_kWh` (EN 15316-2 eq. 22, signed), `Q_*_em_in_kWh` (eq. 23), `W_*_em_aux_kWh`, `theta_*_int_inc_C`, `Q_*_em_back_out_kWh` (backup, eq. 16) and `Q_*_em_unmet_kWh` (uncovered load).
+
+**Options of the emission-only document** (top-level `options`): `emission_inc_method` = `"recalculate"` (default, ISO 52016 at the equivalent set point) or `"approximate"` (faster, approximate, notified).
+
+**Radiator example.** The Poland case file includes a radiator alternative in `emission_alternatives.radiators_b2`, with values taken from EN 15316-2 Annex B: supply 70/55 °C (over-temperature 42.5 K, Δθstr,1 = 0.7 K), radiator on an external wall without radiation protection (Δθstr,2 = 1.7 K, so Δθstr = 1.2 K), uncertified PI controller (Δθctr,1 = 1.2 K), stand-alone room automation (−0.5 K), Δθemb = 0, f_em,conv = 0.70. To use it, copy the block into `systems.emission`.
 
 ### Interface Parameters Used by `iso_15316_1.py`
 
@@ -122,19 +357,19 @@ The aliases `iso_15316_2`, `15316_2` and `en15316_2` are automatically normalize
 
 ### Parameters of the `heating` Section
 
-The `heating` section collects the equivalent contributions that increase the indoor temperature seen by the terminal.
+The `heating` section collects the equivalent contributions to the indoor temperature seen by the terminal. The implementation uses the hourly procedure of EN 15316-2 (eq. 16-17): `theta_int,inc = theta_int,ini + SUM(delta)`, where `SUM(delta)` is the sum of `stratification_K`, `control_K`, `radiation_K`, `hydraulic_balancing_K` and `room_automation_K`. The values are entered with the sign tabulated in the standard: stratification, control, radiation and hydraulic balancing are typically positive (increase of the temperature seen by the terminal); room automation is typically negative (reduction).
 
-`stratification_K: 0.0` is the equivalent contribution due to stratification, expressed in `K`. It must be greater than or equal to `0 K`. Typical values are small, often between `0` and `2 K`.
+`stratification_K: 0.0` is the equivalent contribution due to stratification, expressed in `K`. Typical values are small and positive, often between `0` and `2 K` (Annex B tables).
 
-`control_K: 0.0` is the equivalent contribution due to terminal control, expressed in `K`. The minimum value is also `0 K`.
+`control_K: 0.0` is the equivalent contribution due to terminal control, expressed in `K`. Typically positive (Annex B, tables B.2-B.4).
 
-`radiation_K: 0.0` is the equivalent contribution due to radiation, expressed in `K`. It must be greater than or equal to `0 K`.
+`radiation_K: 0.0` is the equivalent contribution due to radiation, expressed in `K`. Typically zero or positive, depending on the emitter type.
 
-`hydraulic_balancing_K: 0.0` is the equivalent contribution due to hydraulic balancing, expressed in `K`. It must be greater than or equal to `0 K`.
+`hydraulic_balancing_K: 0.0` is the equivalent contribution due to hydraulic balancing, expressed in `K`. Typically positive when the hydraulic system is not balanced, zero when it is.
 
-`room_automation_K: 0.0` is the equivalent contribution of room automation, expressed in `K`. It must be greater than or equal to `0 K`.
+`room_automation_K: 0.0` is the equivalent contribution of room automation, expressed in `K`. Typically negative (for example `-0.5 K` for stand-alone automation), because automation reduces the temperature increase.
 
-`embedded_K: 0.0` represents the thermal contribution of emitters embedded in the building structure, expressed in `K` as an equivalent effect on the calculation. It must be greater than or equal to `0 K`.
+`embedded_K: 0.0` is the temperature variation of embedded emitters (`Δθemb`), expressed in `K`. It is not part of the temperature sum: it enters only the embedded loss of EN 15316-2 eq. 20, `Q_emb,ls = Q_em,out,inc · Δθemb / (θ_int,inc − θe,comb)`, with the signed denominator. Heating values are positive; cooling values are negative (Table B.11).
 
 `nominal_power_kW: 8.0` is the nominal power of the heating branch, in `kW`. It must be positive and coherent with the upper-level `nominal_power`.
 
@@ -142,7 +377,7 @@ The `heating` section collects the equivalent contributions that increase the in
 
 `fan_count: 0` is the number of fans. It is an integer count, so the minimum is `0`.
 
-`control_power_W: 0.0` is the electrical power of the control devices, in `W`. The minimum allowed value is `0 W`.
+`control_power_W: 0.0` is the electrical power of the control devices, in `W`. The minimum allowed value is `0 W`. It is included in the auxiliary energy only when `electric_control_aux: true` (electrical control system with auxiliary energy, EN 15316-2 Table A.12); by default the auxiliary energy is the fans only (EN 15316-2 eq. 27-28).
 
 `control_count: 0` is the number of control devices. The minimum is `0`.
 
@@ -152,7 +387,7 @@ The `heating` section collects the equivalent contributions that increase the in
 
 The `cooling` section uses the same structure as the heating part, but with sign and thermal reference consistent with cooling.
 
-`stratification_K`, `control_K`, `radiation_K`, `hydraulic_balancing_K`, `room_automation_K` and `embedded_K` have the same units and limits as in the heating section: `K`, with a minimum value of `0`.
+The K parameters have the same units as in the heating section (`K`) and the sign convention of EN 15316-2 Table B.11: `stratification_K`, `control_K` and `hydraulic_balancing_K` are negative for cooling, `room_automation_K` is negative, and `embedded_K` is negative. The cooling equivalent temperature is `theta_C,int,inc = theta_C,int,ini + SUM(delta)`.
 
 `nominal_power_kW` has the same unit of measure as in the heating part, namely `kW`, and must be positive.
 

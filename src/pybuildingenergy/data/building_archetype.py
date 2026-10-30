@@ -739,8 +739,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
 import pandas as pd
-from functions import Perimeter_from_area, Area_roof, Check_area
-# from source.functions import Perimeter_from_area, Area_roof, Check_area
+from pybuildingenergy.source.functions import Perimeter_from_area, Area_roof, Check_area
 import pickle
 
 # ================================================================================================
@@ -1267,7 +1266,12 @@ def build_building_from_BUI(BUI: Dict[str, Any], INPUT_SYSTEM_HVAC: Optional[Dic
         air_change_rate_extra=ach_extra,
         internal_gains_base_value=internal_gains_base,
         internal_gains_extra=internal_gains_extra,
-        thermal_bridge_heat=float(bp.get("construction", {}).get("thermal_bridges", 0.0)),
+        thermal_bridge_heat=float(
+            bp.get("construction", {}).get(
+                "thermal_bridge_heat_W_K",
+                bp.get("construction", {}).get("thermal_bridges", 0.0),
+            )
+        ),
         thermal_resistance_floor=1.0 / max(arr["transmittance_U_elments"][5], 1e-6),
         area_elements=arr["area_elements"].tolist(),
         transmittance_U_elments=arr["transmittance_U_elments"].tolist(),
@@ -1400,7 +1404,7 @@ BUI = {
             {"name":"appliances","full_load":3.0,"weekday":[0.6]*24,"weekend":[0.6]*24},
             {"name":"lighting","full_load":3.0,"weekday":[0.2]*24,"weekend":[0.2]*24}
         ],
-        "construction": {"wall_thickness": 0.3, "thermal_bridges": 2, "units": "m / W/mK"},
+        "construction": {"wall_thickness": 0.3, "thermal_bridge_heat_W_K": 2, "units": "m / W/K"},
         "climate_parameters": {"coldest_month": 1, "units": "1-12"},
         "heating_profile": {
             "weekday": [0]*5 + [1]*17 + [0]*2, "weekend": [0]*5 + [1]*17 + [0]*2

@@ -1,0 +1,297 @@
+{
+  "meta": {
+    "library": "pybuildingenergy",
+    "version": "2.0.3",
+    "topic": "Distribution system inputs (EN 15316-3) configuration reference",
+    "derived_from": [
+      "src/pybuildingenergy/source/distribution_15316_3.py (DistributionSystemCalculator)",
+      "src/pybuildingenergy/source/iso_15316_1.py (HeatingSystemCalculator, distribution block)",
+      "examples/new_building_input_en.md"
+    ],
+    "architecture": [
+      "Distribution sits between emission and generation: it receives the useful energy required downstream (Q_*_dis_out_kWh, normally the emission input Q_H_em_in_kWh) and returns the energy the generator must supply (Q_*_dis_in_kWh), the thermal losses and the pump auxiliary electricity.",
+      "It can be configured on TWO levels. Level 1: flat keys inside the HVAC dict of HeatingSystemCalculator (heating only), in one of two modes chosen by 'distribution_calculation_mode' (simplified | analytical). Level 2: DistributionSystemCalculator, used standalone or fed to Level 1 through 'distribution_15316_3_config'; it handles heating, cooling and DHW.",
+      "Energy balance per service: Q_in = Q_out + Q_losses - Q_aux_recovered_by_fluid (clipped at 0). For cooling the recoverable terms change sign."
+    ],
+    "notes": [
+      "Every key is optional (cfg.get with a default).",
+      "Most numeric inputs are silently clipped at 0 (max(value, 0)); only eei and *_fraction keys are clipped at [0, 1], and time_step_hours must be > 0.",
+      "The water volumetric heat capacity is not identical everywhere: 1.15 kWh/(m3 K) in DistributionSystemCalculator, 1.163 in the fast path of HeatingSystemCalculator and c_w = 1.16 in its emission/simplified code."
+    ]
+  },
+
+  "level_1_heating_system_distribution_keys": {
+    "usage": "Keys of the flat HVAC dict passed to pybuildingenergy.HeatingSystemCalculator (they live next to the emission and generation keys).",
+    "common": {
+      "distribution_calculation_mode": {
+        "type": "string", "default": "simplified",
+        "allowed": ["simplified", "analytical"],
+        "aliases": { "analytical": ["analitico", "analitica"], "simplified": ["semplice", "simplificato"] },
+        "description": "Any other value fails an assertion at construction time."
+      },
+      "distribution_operation_time": { "type": "number", "default": 1, "unit": "h", "description": "Operating hours per step (tH_dis_i_ON). In analytical flat mode it is also used as time_step_hours." },
+      "heat_losses_recovered": { "type": "boolean", "default": true, "description": "false disables the recoverable share of the losses." },
+      "recoverable_losses": { "type": "number", "default": 0.0, "unit": "kWh", "description": "System recoverable losses (QW_sys_ls_rbl_tz_i) subtracted from the emission demand before it enters the calculation." }
+    },
+    "simplified_mode": {
+      "distribution_loss_coeff": { "type": "number", "default": 48, "unit": "W/K", "description": "Global loss coefficient: losses [kWh] = (T_mean_pipes - T_internal) * coeff / 1000 * operation_time. T_mean = (supply + return) / 2." },
+      "distribution_aux_power": { "type": "number", "default": 30, "unit": "W", "description": "Pump electric power; auxiliary [kWh] = operation_time * power / 1000 * distribution_aux_recovery / 100." },
+      "distribution_aux_recovery": { "type": "number", "default": 80, "unit": "%", "description": "Share of the auxiliary energy that reduces the generator input." },
+      "distribution_loss_recovery": { "type": "number", "default": 90, "unit": "%", "description": "Share of the losses that is recovered in the heated space." },
+      "simplified_approach": { "type": "number", "default": 80, "unit": "%", "description": "If exactly 0, no losses are treated as recoverable (any other value only acts as an on/off switch)." },
+      "balance": "Q_dis_in = Q_em_in + losses - aux - recoverable_losses; flow V = Q_dis_in / (c_w * (supply - return) * operation_time)."
+    },
+    "analytical_mode": {
+      "description": "Runs DistributionSystemCalculator step by step. The configuration comes from ONE of the two sources below.",
+      "source_A_full_dict": {
+        "key": "distribution_15316_3_config",
+        "aliases": ["distribution_config"],
+        "type": "object",
+        "description": "A complete DistributionSystemCalculator config (see level_2). When it is a dict it is used as is and all flat distribution_* keys below are ignored."
+      },
+      "source_B_flat_keys": {
+        "_note": "Used only when no config dict is supplied: the code builds a single 'heating' pipe section from these keys. Nominal power = emission nominal_power; time step = distribution_operation_time; supply/return temperatures = the values of the current step; operation_mode is always 'demand'.",
+        "distribution_length_m": { "type": "number", "default": 1.0, "unit": "m", "description": "Straight pipe length; also used as max_length_m for the pump head." },
+        "distribution_equivalent_length_m": { "type": "number", "default": 0.0, "unit": "m" },
+        "distribution_loss_coeff": { "type": "number", "default": 48, "unit": "W/(m K)", "description": "CAUTION: in analytical flat mode this same key becomes the linear thermal transmittance psi of the section (not W/K). With the default 1 m length the result equals the simplified W/K value; if you raise distribution_length_m keep or lower this value accordingly." },
+        "distribution_ambient_temperature_C": { "type": "number", "default": 20.0, "unit": "degC" },
+        "distribution_design_flow_m3_h": { "type": "number", "default": 0.0, "unit": "m3/h", "description": "0 = derive from nominal power and delta-T." },
+        "distribution_design_deltaT_K": { "type": "number", "default": 10.0, "unit": "K" },
+        "distribution_pump_control_code": { "type": "integer", "default": 4, "description": "See pump_control_constants." },
+        "distribution_eei": { "type": "fraction", "default": 0.23 },
+        "distribution_hydraulic_correction_factor": { "type": "number", "default": 1.0 },
+        "distribution_aux_recovery_fraction": { "type": "fraction", "default": "distribution_aux_recovery / 100", "description": "recoverable_aux_fraction." },
+        "distribution_pressure_loss_per_m_kPa": { "type": "number", "default": 0.10, "unit": "kPa/m" },
+        "distribution_additional_pressure_kPa": { "type": "number", "default": 0.0, "unit": "kPa" },
+        "distribution_resistance_ratio": { "type": "number", "default": 0.30 },
+        "distribution_design_delta_pressure_kPa": { "type": "number", "default": 0.0, "unit": "kPa" },
+        "distribution_pump_selection_factor": { "type": "number", "default": 1.0 },
+        "distribution_pump_label_power_kW": { "type": "number", "default": 0.0, "unit": "kW" },
+        "distribution_part_load_mode": { "type": "string", "default": "load", "allowed": ["load", "constant_when_on"] },
+        "heat_losses_recovered": "same key as in common; sets the section 'recoverable' flag"
+      }
+    },
+    "output_keys_per_step": ["QH_dis_i_req(kWh)", "QH_dis_i_in(kWh)", "Q_w_dis_i_ls(kWh)", "Q_w_dis_i_aux(kWh)", "Q_w_dis_i_ls_rbl_H(kWh)", "V_H_dis(m3/h)", "θH_dis_flw(°C)", "θH_dis_ret(°C)"]
+  },
+
+  "level_2_distribution_system_calculator": {
+    "module": "pybuildingenergy.source.distribution_15316_3",
+    "usage": "pybuildingenergy.DistributionSystemCalculator(config).run_timeseries(dataframe) -> DistributionSimulationResult(timeseries, summary, inputs)",
+
+    "general": {
+      "time_step_hours": { "type": "number", "default": 1.0, "unit": "h", "constraint": "> 0", "description": "Fallback when the input has neither time_step_hours/dt_h nor a DatetimeIndex." },
+      "demand_unit": { "type": "string", "default": "kWh", "allowed": ["Wh", "kWh"], "description": "Unit of the RAW demand columns (Q_H, Q_C, Q_W ...). Columns already named *_kWh are kWh." }
+    },
+
+    "service_blocks": {
+      "_blocks": {
+        "heating": "space heating (key 'heating')",
+        "cooling": "water-based space cooling (key 'cooling')",
+        "dhw": "domestic hot water (key 'dhw' or alias 'domestic_hot_water')"
+      },
+      "_note": "All three blocks share the same keys. A missing block is treated as an empty block (no pipes, no pump energy, zero losses).",
+
+      "pipe_sections": {
+        "type": "list[object]", "default": [],
+        "description": "Pipe stretches, each with its own insulation and surrounding temperature.",
+        "section_keys": {
+          "length_m": { "type": "number", "default": 0.0, "unit": "m", "constraint": ">= 0" },
+          "equivalent_length_m": { "type": "number", "default": 0.0, "unit": "m", "constraint": ">= 0", "description": "Equivalent length of fittings/valves." },
+          "linear_thermal_transmittance_W_mK": { "type": "number", "default": 0.0, "unit": "W/(m K)", "aliases": ["psi_W_mK"], "constraint": ">= 0", "description": "psi of the insulated pipe." },
+          "ambient_temperature_C": { "type": "number", "default": 20.0, "unit": "degC", "description": "Temperature of the space crossed by the pipe (heated room, basement, outdoors ...)." },
+          "recoverable": { "type": "boolean", "default": true, "description": "true = losses of this stretch are recoverable in the heated space (counted in Q_dis_th_rbl)." }
+        }
+      },
+
+      "operation_mode": { "type": "string", "default": "demand", "allowed": ["demand", "continuous", "fixed_fraction:<0..1>"], "description": { "demand": "Operating hours = time step whenever the demand > 0, else 0.", "continuous": "Always operating (all hours of the step).", "fixed_fraction:<x>": "Operating hours = time step * x, e.g. 'fixed_fraction:0.5'." } },
+      "part_load_mode": { "type": "string", "default": "load", "allowed": ["load", "constant_when_on"], "description": "'load': beta = q_out / hours / nominal_power clipped to [0, 1]. 'constant_when_on': beta = 1 whenever the system operates." },
+
+      "temperatures": {
+        "supply_temperature_C": { "type": "number", "default": 45.0, "unit": "degC", "used_in": ["heating", "cooling"] },
+        "return_temperature_C": { "type": "number", "default": 35.0, "unit": "degC", "used_in": ["heating", "cooling"], "description": "Mean water temperature = (supply + return) / 2." },
+        "dhw_temperature_C": { "type": "number", "default": 55.0, "unit": "degC", "aliases": ["hot_water_temperature_C"], "used_in": ["dhw"], "description": "Hot-water temperature; mean = dhw_temperature_C - dhw_return_deltaT_K / 2." },
+        "dhw_return_deltaT_K": { "type": "number", "default": 5.0, "unit": "K", "used_in": ["dhw"], "description": "Recirculation loop temperature drop." }
+      },
+
+      "sizing": {
+        "nominal_power_kW": { "type": "number", "default": 0.0, "unit": "kW", "description": "Reference power for beta and for the design flow. 0 = the maximum hourly power found in the input data." },
+        "design_flow_m3_h": { "type": "number", "default": 0.0, "unit": "m3/h", "description": "Design flow. 0 = nominal_power / (1.15 * design_deltaT_K)." },
+        "design_deltaT_K": { "type": "number", "default": 10.0, "unit": "K", "constraint": "> 0" }
+      },
+
+      "pump_hydraulics": {
+        "max_length_m": { "type": "number", "default": "sum(length_m + equivalent_length_m) of pipe_sections", "unit": "m", "description": "Hydraulic path length used for the pump head." },
+        "pressure_loss_per_m_kPa": { "type": "number", "default": 0.10, "unit": "kPa/m" },
+        "additional_pressure_kPa": { "type": "number", "default": 0.0, "unit": "kPa", "description": "Extra head (heat exchanger, valves, generator)." },
+        "resistance_ratio": { "type": "number", "default": 0.30, "aliases": ["f_comp"], "description": "Share of extra resistances (fittings) added to the pipe head." },
+        "design_delta_pressure_kPa": { "type": "number", "default": 0.0, "unit": "kPa", "description": "If > 0 it replaces the head computed as (1 + resistance_ratio) * pressure_loss_per_m_kPa * max_length_m + additional_pressure_kPa." },
+        "hydraulic_correction_factor": { "type": "number", "default": 1.0, "aliases": ["f_corr"], "description": "Multiplies the hydraulic energy." }
+      },
+
+      "pump_electricity": {
+        "pump_control_code": { "type": "integer", "default": 4, "aliases": ["control_code"], "description": "Selects the constants cp1, cp2 (see pump_control_constants). Codes without their own constants use the code-4 ones." },
+        "eei": { "type": "fraction", "default": 0.23, "description": "Energy Efficiency Index of the pump; scales the expenditure factor by eei / 0.25." },
+        "pump_label_power_kW": { "type": "number", "default": 0.0, "unit": "kW", "description": "If > 0: pump efficiency factor f_e = label power / hydraulic design power." },
+        "pump_selection_factor": { "type": "number", "default": 1.0, "description": "Used as f_e (min 1.0) when no label power is given and the hydraulic power is outside 1-2500 W." }
+      },
+
+      "recovery": {
+        "recoverable_aux_fraction": { "type": "fraction", "default": 0.25, "aliases": ["f_aux_rbl"], "description": "Share of the pump auxiliary energy recoverable as heat in the space; the remaining share is recovered by the fluid and reduces Q_in." }
+      }
+    },
+
+    "pump_control_constants": {
+      "formula": "epsilon = f_e * (cp1 + cp2 / beta) * eei / 0.25 ; W_hydr = P_hydr_des * beta * operating_hours * hydraulic_correction_factor ; W_aux = W_hydr * epsilon ; P_hydr_des [kW] = delta_p [kPa] * design_flow [m3/h] / 3600",
+      "f_e_rule": "label power / P_hydr if pump_label_power_kW > 0; else (1.7 P + 17 (1 - exp(-0.3 P)))/P with P in W when 1 W < P < 2500 W; else max(pump_selection_factor, 1).",
+      "no_pump_energy_when": "hydraulic power <= 0, i.e. no design flow or no head (no pipe_sections/max_length_m and no additional_pressure_kPa/design_delta_pressure_kPa).",
+      "codes": {
+        "heating": { "0": [0.25, 0.75], "3": [0.75, 0.25], "4": [0.90, 0.10], "other": [0.90, 0.10] },
+        "cooling": { "0": [0.25, 0.75], "3": [0.85, 0.15], "4": [0.85, 0.15], "other": [0.85, 0.15] },
+        "dhw":     { "0": [0.25, 0.94], "3": [0.50, 0.63], "4": [0.50, 0.63], "other": [0.50, 0.63] }
+      },
+      "note": "The code does not label the control codes; only their (cp1, cp2) pairs are defined."
+    },
+
+    "losses_and_signs": [
+      "Heating and DHW: loss per section [kWh] = psi * (length + equivalent length) * max(T_mean - T_ambient, 0) * operating_hours / 1000",
+      "Cooling: the temperature difference is max(T_ambient - T_mean, 0)",
+      "Cooling: recoverable thermal losses and recoverable/recovered auxiliary energy are reported with NEGATIVE sign"
+    ],
+
+    "timeseries_input": {
+      "index": "DatetimeIndex recommended (time step inferred from the median spacing).",
+      "heating_demand": { "columns_kWh": ["Q_H_kWh", "QH_kWh", "Q_H_em_in_kWh", "space_heating_kWh"], "columns_raw_in_demand_unit": ["Q_H", "Q_h", "Heating_needs"], "fallback": "positive part of Q_HC" },
+      "cooling_demand": { "columns_kWh": ["Q_C_kWh", "QC_kWh", "Q_C_em_in_kWh", "space_cooling_kWh"], "columns_raw_in_demand_unit": ["Q_C", "Cooling_needs"], "fallback": "negative part of Q_HC" },
+      "dhw_demand": { "columns_kWh": ["Q_W_kWh", "QW_kWh", "Q_DHW_kWh", "DHW_kWh", "dhw_kWh"], "columns_raw_in_demand_unit": ["Q_W", "Q_DHW"], "fallback": 0.0 },
+      "optional_time_step": ["time_step_hours", "dt_h"],
+      "optional_temperature_overrides": {
+        "description": "Per-row values replacing the constant temperatures of the service block.",
+        "heating": ["theta_H_dis_supply_C", "T_H_supply_C", "theta_H_dis_return_C", "T_H_return_C"],
+        "cooling": ["theta_C_dis_supply_C", "T_C_supply_C", "theta_C_dis_return_C", "T_C_return_C"],
+        "dhw": ["theta_W_dis_hot_C", "T_W_supply_C", "dhw_temperature_C"]
+      },
+      "note": "Chaining: pass the emission output column 'Q_H_em_in_kWh' (EmissionSystemCalculator.timeseries) as the heating demand."
+    },
+
+    "output_timeseries_columns_per_service": ["theta_{H|C|W}_dis_mean_C", "Q_{H|C|W}_dis_out_kWh", "Q_{H|C|W}_dis_ls_kWh", "Q_{H|C|W}_dis_th_rbl_kWh", "W_{H|C|W}_dis_hydr_kWh", "W_{H|C|W}_dis_aux_kWh", "Q_{H|C|W}_dis_aux_rbl_kWh", "Q_{H|C|W}_dis_aux_rvd_kWh", "Q_{H|C|W}_dis_rbl_kWh", "Q_{H|C|W}_dis_in_kWh", "beta_{H|C|W}_dis", "epsilon_{H|C|W}_dis", "P_{H|C|W}_hydr_des_kW", "delta_p_{H|C|W}_des_kPa", "V_{H|C|W}_des_m3_h", "t_{H|C|W}_dis_op_h"],
+    "summary_keys": {
+      "per_service (prefix H, C, W)": ["Q?_dis_out_kWh", "Q?_dis_ls_kWh", "Q?_dis_th_rbl_kWh", "W?_dis_aux_kWh", "Q?_dis_aux_rbl_kWh", "Q?_dis_aux_rvd_kWh", "Q?_dis_rbl_kWh", "Q?_dis_in_kWh", "e_?_dis_an", "beta_?_dis_mean", "epsilon_?_dis_mean", "t_?_dis_op_h"],
+      "totals": ["Q_dis_ls_kWh", "W_dis_aux_kWh", "Q_dis_rbl_kWh"]
+    }
+  },
+
+  "example_configurations": {
+    "simplified_default": {
+      "description": "Level 1 simplified distribution: 48 W/K global coefficient, 30 W pump, 90% of the losses recovered.",
+      "hvac_distribution_keys": {
+        "distribution_calculation_mode": "simplified",
+        "heat_losses_recovered": true,
+        "distribution_loss_recovery": 90,
+        "simplified_approach": 80,
+        "distribution_aux_recovery": 80,
+        "distribution_aux_power": 30,
+        "distribution_loss_coeff": 48,
+        "distribution_operation_time": 1
+      }
+    },
+
+    "analytical_flat_keys": {
+      "description": "Level 1 analytical mode built from flat keys: one 25 m pipe (psi 0.25 W/mK) running in a 15 degC unheated space.",
+      "hvac_distribution_keys": {
+        "distribution_calculation_mode": "analytical",
+        "heat_losses_recovered": false,
+        "distribution_operation_time": 1,
+        "distribution_length_m": 25.0,
+        "distribution_equivalent_length_m": 5.0,
+        "distribution_loss_coeff": 0.25,
+        "distribution_ambient_temperature_C": 15.0,
+        "distribution_design_deltaT_K": 8.0,
+        "distribution_pump_control_code": 4,
+        "distribution_eei": 0.20,
+        "distribution_pressure_loss_per_m_kPa": 0.10,
+        "distribution_additional_pressure_kPa": 15.0,
+        "distribution_aux_recovery_fraction": 0.25
+      }
+    },
+
+    "analytical_detailed_dict": {
+      "description": "Level 1 analytical mode with a full DistributionSystemCalculator dict (two pipe sections: risers in heated space + basement run).",
+      "hvac_distribution_keys": {
+        "distribution_calculation_mode": "analytical",
+        "distribution_15316_3_config": {
+          "time_step_hours": 1.0,
+          "demand_unit": "kWh",
+          "heating": {
+            "operation_mode": "demand",
+            "nominal_power_kW": 8.0,
+            "design_flow_m3_h": 0.7,
+            "design_deltaT_K": 10.0,
+            "pipe_sections": [
+              { "length_m": 18.0, "equivalent_length_m": 4.0, "linear_thermal_transmittance_W_mK": 0.20, "ambient_temperature_C": 20.0, "recoverable": true },
+              { "length_m": 12.0, "equivalent_length_m": 2.0, "linear_thermal_transmittance_W_mK": 0.30, "ambient_temperature_C": 10.0, "recoverable": false }
+            ],
+            "pump_control_code": 4,
+            "eei": 0.23,
+            "additional_pressure_kPa": 10.0,
+            "recoverable_aux_fraction": 0.25
+          }
+        }
+      }
+    },
+
+    "standalone_heating_cooling_dhw": {
+      "description": "DistributionSystemCalculator on its own for a residential building with heating, chilled-water cooling and a DHW recirculation loop.",
+      "distribution_system_config": {
+        "time_step_hours": 1.0,
+        "demand_unit": "kWh",
+        "heating": {
+          "operation_mode": "demand", "nominal_power_kW": 8.0, "design_deltaT_K": 10.0,
+          "supply_temperature_C": 40.0, "return_temperature_C": 30.0,
+          "pipe_sections": [ { "length_m": 30.0, "equivalent_length_m": 6.0, "linear_thermal_transmittance_W_mK": 0.25, "ambient_temperature_C": 18.0, "recoverable": true } ],
+          "pump_control_code": 4, "eei": 0.23
+        },
+        "cooling": {
+          "operation_mode": "demand", "nominal_power_kW": 6.0, "design_deltaT_K": 5.0,
+          "supply_temperature_C": 7.0, "return_temperature_C": 12.0,
+          "pipe_sections": [ { "length_m": 30.0, "equivalent_length_m": 6.0, "linear_thermal_transmittance_W_mK": 0.20, "ambient_temperature_C": 26.0, "recoverable": true } ],
+          "pump_control_code": 4, "eei": 0.23
+        },
+        "dhw": {
+          "operation_mode": "continuous", "nominal_power_kW": 3.0, "design_deltaT_K": 10.0,
+          "dhw_temperature_C": 55.0, "dhw_return_deltaT_K": 5.0,
+          "pipe_sections": [ { "length_m": 40.0, "equivalent_length_m": 8.0, "linear_thermal_transmittance_W_mK": 0.20, "ambient_temperature_C": 20.0, "recoverable": true } ],
+          "pump_control_code": 0, "eei": 0.23
+        }
+      }
+    },
+
+    "pump_with_label_power_and_fixed_head": {
+      "description": "Heating circuit where the pump label power and the design head are known (both override the estimated values).",
+      "distribution_system_config": {
+        "heating": {
+          "nominal_power_kW": 12.0,
+          "design_flow_m3_h": 1.0,
+          "design_delta_pressure_kPa": 25.0,
+          "pump_label_power_kW": 0.045,
+          "eei": 0.20,
+          "pump_control_code": 3,
+          "part_load_mode": "load",
+          "pipe_sections": [ { "length_m": 40.0, "equivalent_length_m": 10.0, "linear_thermal_transmittance_W_mK": 0.22, "ambient_temperature_C": 18.0, "recoverable": true } ]
+        }
+      }
+    },
+
+    "continuous_operation_uninsulated_basement": {
+      "description": "Worst case: pump always on (continuous), pipes crossing an unheated basement, losses not recoverable.",
+      "distribution_system_config": {
+        "heating": {
+          "operation_mode": "continuous",
+          "nominal_power_kW": 8.0,
+          "supply_temperature_C": 60.0, "return_temperature_C": 45.0,
+          "pipe_sections": [ { "length_m": 35.0, "equivalent_length_m": 5.0, "linear_thermal_transmittance_W_mK": 0.60, "ambient_temperature_C": 8.0, "recoverable": false } ],
+          "pump_control_code": 0
+        }
+      }
+    }
+  }
+}

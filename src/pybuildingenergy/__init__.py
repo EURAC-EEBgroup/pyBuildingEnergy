@@ -1,4 +1,4 @@
-"""Top-level package for pyBuildingEnergy."""
+"""Top-level package for pyBuildingEnergy.
 
 from .source.check_input import sanitize_and_validate_BUI
 from .source.utils import ISO52016
@@ -83,11 +83,17 @@ from .source.graphs import *
 from .source.utils import *
 from .source.ventilation import *
 from .source.table_iso_16798_1 import *
+The public API is loaded on first access. Keeping package import lightweight is
+important for command-line tools, test discovery and applications that only use
+one of the standard-specific calculators.
+"""
+
+from importlib import import_module
 
 
-__author__ = """Daniele Antonucci, Ulrich Filippi Oberagger, Olga Somova"""
-__email__ = 'daniele.antonucci@eurac.edu'
-__version__ = '2.0.3'
+__author__ = "Daniele Antonucci, Ulrich Filippi Oberegger, Olga Somova"
+__email__ = "daniele.antonucci@eurac.edu"
+__version__ = "2.1.1"
 
 __all__ = [
     "check_heating_system_inputs",
@@ -149,3 +155,149 @@ __all__ = [
     "HourlyProfileGenerator",
     "get_country_code_from_latlon"
 ]
+
+_PUBLIC_IMPORTS = {
+    "sanitize_and_validate_BUI": (".source.check_input", "sanitize_and_validate_BUI"),
+    "check_heating_system_inputs": (".source.check_input", "check_heating_system_inputs"),
+    "ISO52016": (".source.utils", "ISO52016"),
+    "Graphs_and_report": (".source.graphs", "Graphs_and_report"),
+    "thermal_html_report": (".source.graphs", "thermal_html_report"),
+    "HeatingSystemCalculator": (".source.iso_15316_1", "HeatingSystemCalculator"),
+    "MultiZoneHeatingSystemCalculator": (".source.iso_15316_1", "MultiZoneHeatingSystemCalculator"),
+    "EmissionSimulationResult": (".source.emission_15316_2", "EmissionSimulationResult"),
+    "EmissionSystemCalculator": (".source.emission_15316_2", "EmissionSystemCalculator"),
+    "DistributionSimulationResult": (".source.distribution_15316_3", "DistributionSimulationResult"),
+    "DistributionSystemCalculator": (".source.distribution_15316_3", "DistributionSystemCalculator"),
+    "StorageSimulationResult": (".source.storage_15316_5", "StorageSimulationResult"),
+    "StorageSystemCalculator": (".source.storage_15316_5", "StorageSystemCalculator"),
+    "BoilerConfig": (".source.generation_15316_4_1", "BoilerConfig"),
+    "BoilerGeneratorCalculator": (".source.generation_15316_4_1", "BoilerGeneratorCalculator"),
+    "default_boiler_config": (".source.generation_15316_4_1", "default_boiler_config"),
+    "dhw_tapping_cycle_energy_kWh": (".source.generation_15316_4_1", "dhw_tapping_cycle_energy_kWh"),
+    "gas_storage_water_heater_standby_loss_default_kWh_per_day": (
+        ".source.generation_15316_4_1", "gas_storage_water_heater_standby_loss_default_kWh_per_day",
+    ),
+    "direct_dhw_generator_rated_power_default_kW": (
+        ".source.generation_15316_4_1", "direct_dhw_generator_rated_power_default_kW",
+    ),
+    "condensing_gain_fraction": (".source.generation_15316_4_1", "condensing_gain_fraction"),
+    "chimney_loss_pct_from_flue_gas_analysis": (
+        ".source.generation_15316_4_1", "chimney_loss_pct_from_flue_gas_analysis",
+    ),
+    "saturation_humidity_kg_per_m3": (".source.generation_15316_4_1", "saturation_humidity_kg_per_m3"),
+    "fuel_power_input_kW": (".source.generation_15316_4_1", "fuel_power_input_kW"),
+    "split_standby_loss_pct": (".source.generation_15316_4_1", "split_standby_loss_pct"),
+    "boiler_efficiency_from_measured_values": (
+        ".source.generation_15316_4_1", "boiler_efficiency_from_measured_values",
+    ),
+    "rated_power_from_measured_efficiency_kW": (
+        ".source.generation_15316_4_1", "rated_power_from_measured_efficiency_kW",
+    ),
+    "CoolingSystemSimulationResult": (".source.cooling_16798_9", "CoolingSystemSimulationResult"),
+    "CoolingSystemCalculator": (".source.cooling_16798_9", "CoolingSystemCalculator"),
+    "CoolingStorageSimulationResult": (".source.cooling_storage_16798_15", "CoolingStorageSimulationResult"),
+    "CoolingStorageSystemCalculator": (".source.cooling_storage_16798_15", "CoolingStorageSystemCalculator"),
+    "CoolingGenerationSimulationResult": (".source.cooling_generation_16798_13", "CoolingGenerationSimulationResult"),
+    "CoolingGenerationSystemCalculator": (".source.cooling_generation_16798_13", "CoolingGenerationSystemCalculator"),
+    "HeatPumpPerformanceDataCalculator": (".source.performance_14511_14825", "HeatPumpPerformanceDataCalculator"),
+    "HeatPumpPerformanceDataResult": (".source.performance_14511_14825", "HeatPumpPerformanceDataResult"),
+    "en14825_part_load_factor": (".source.performance_14511_14825", "en14825_part_load_factor"),
+    "HeatPumpSimulationResult": (".source.heat_pump_15316_4_2", "HeatPumpSimulationResult"),
+    "HeatPumpSystemCalculator": (".source.heat_pump_15316_4_2", "HeatPumpSystemCalculator"),
+    "hp_part_load_cop_continuous": (".source.heat_pump_15316_4_2", "hp_part_load_cop_continuous"),
+    "hp_part_load_cop_on_off": (".source.heat_pump_15316_4_2", "hp_part_load_cop_on_off"),
+    "BoilerGeneratorSimulationResult": (".source.generation_15316_4_1", "BoilerGeneratorSimulationResult"),
+    "CogenerationSimulationResult": (".source.cogeneration_15316_4_4", "CogenerationSimulationResult"),
+    "CogenerationSystemCalculator": (".source.cogeneration_15316_4_4", "CogenerationSystemCalculator"),
+    "DistrictEnergySystemCalculator": (".source.district_15316_4_5", "DistrictEnergySystemCalculator"),
+    "DistrictSystemSimulationResult": (".source.district_15316_4_5", "DistrictSystemSimulationResult"),
+    "RenewableEnergySimulationResult": (".source.renewables_15316_4_3_4_6", "RenewableEnergySimulationResult"),
+    "RenewableEnergySystemCalculator": (".source.renewables_15316_4_3_4_6", "RenewableEnergySystemCalculator"),
+    "LayeredStorage": (".source.storage_15316_5", "LayeredStorage"),
+    "MixedSolarTank": (".source.renewables_15316_4_3_4_6", "MixedSolarTank"),
+    "PrimaryEnergyAccountingCalculator": (".source.primary_energy_52000_1", "PrimaryEnergyAccountingCalculator"),
+    "PrimaryEnergyAccountingResult": (".source.primary_energy_52000_1", "PrimaryEnergyAccountingResult"),
+    "LightingSimulationResult": (".source.lighting_15193_1", "LightingSimulationResult"),
+    "LightingSystemCalculator": (".source.lighting_15193_1", "LightingSystemCalculator"),
+    "VentilationSystemCalculator": (".source.ventilation_16798_5_7", "VentilationSystemCalculator"),
+    "VentilationSystemSimulationResult": (".source.ventilation_16798_5_7", "VentilationSystemSimulationResult"),
+    "BACSControlFactorCalculator": (".source.bacs_52120_1", "BACSControlFactorCalculator"),
+    "BACSSimulationResult": (".source.bacs_52120_1", "BACSSimulationResult"),
+    "CostOptimalityCalculator": (".source.economics_15459_1", "CostOptimalityCalculator"),
+    "EconomicSimulationResult": (".source.economics_15459_1", "EconomicSimulationResult"),
+    "ItalianStrepinTables": (".data.italian_strepin", "ItalianStrepinTables"),
+    "StrepinCase": (".data.italian_strepin", "StrepinCase"),
+    "apply_extra_measure_specs_to_bui": (".data.italian_strepin", "apply_extra_measure_specs_to_bui"),
+    "find_default_workbook": (".data.italian_strepin", "find_default_workbook"),
+    "load_italian_strepin_tables": (".data.italian_strepin", "load_italian_strepin_tables"),
+    "summarize_engine_performance": (".data.italian_strepin", "summarize_engine_performance"),
+    "DHWDesignSimulationResult": (".source.DHW", "DHWDesignSimulationResult"),
+    "DHWDesignLoadCalculator": (".source.DHW", "DHWDesignLoadCalculator"),
+    "Volume_and_energy_DHW_calculation": (".source.DHW", "Volume_and_energy_DHW_calculation"),
+    "generate_calendar": (".source.DHW", "generate_calendar"),
+    "DHW_DAY_TYPE_COLUMNS": (".source.dhw_profiles", "DHW_DAY_TYPE_COLUMNS"),
+    "DHW_ANNEX_B_TABLE_B2_VOLUME_PERCENT": (
+        ".source.dhw_profiles", "DHW_ANNEX_B_TABLE_B2_VOLUME_PERCENT",
+    ),
+    "load_dhw_annex_b_table_b2_profiles": (
+        ".source.dhw_profiles", "load_dhw_annex_b_table_b2_profiles",
+    ),
+    "dhw_annex_b_table_b2_hourly_fractions": (
+        ".source.dhw_profiles", "dhw_annex_b_table_b2_hourly_fractions",
+    ),
+    "HourlyProfileGenerator": (".source.generate_profile", "HourlyProfileGenerator"),
+    "get_country_code_from_latlon": (".source.generate_profile", "get_country_code_from_latlon"),
+    "CompositionResult": (".source.composer", "CompositionResult"),
+    "build_catalog": (".source.composer", "build_catalog"),
+    "print_catalog": (".source.composer", "print_catalog"),
+    "demo_building": (".source.composer", "demo_building"),
+    "load_building": (".source.composer", "load_building"),
+    "attach_ahu": (".source.composer", "attach_ahu"),
+    "build_hvac_system": (".source.composer", "build_hvac_system"),
+    "compose_config": (".source.composer", "compose_config"),
+    "save_config": (".source.composer", "save_config"),
+    "load_config": (".source.composer", "load_config"),
+    "normalize_system_config": (".source.composer", "normalize_system_config"),
+    "simulate": (".source.composer", "simulate"),
+    "simulate_config": (".source.composer", "simulate_config"),
+    "run_scenario": (".source.composer", "run_scenario"),
+    "compare_generation": (".source.composer", "compare_generation"),
+    "save_outputs": (".source.composer", "save_outputs"),
+    "EmissionOnlyResult": (".source.composer", "EmissionOnlyResult"),
+    "simulate_emission_only": (".source.composer", "simulate_emission_only"),
+    "MultizoneResult": (".source.composer", "MultizoneResult"),
+    "simulate_multizone": (".source.composer", "simulate_multizone"),
+}
+
+# Compatibility for attributes historically exposed by wildcard imports.
+_LEGACY_MODULES = (
+    ".source.DHW",
+    ".source.graphs",
+    ".source.utils",
+    ".source.ventilation",
+    ".source.table_iso_16798_1",
+)
+
+__all__ = list(_PUBLIC_IMPORTS)
+
+
+def __getattr__(name):
+    """Load a public or legacy top-level attribute only when it is requested."""
+    target = _PUBLIC_IMPORTS.get(name)
+    if target is not None:
+        module_name, attribute_name = target
+        value = getattr(import_module(module_name, __name__), attribute_name)
+        globals()[name] = value
+        return value
+
+    for module_name in _LEGACY_MODULES:
+        module = import_module(module_name, __name__)
+        if hasattr(module, name):
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(set(globals()) | set(__all__))

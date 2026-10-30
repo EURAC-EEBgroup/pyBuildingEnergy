@@ -4,6 +4,7 @@ import pytest
 import os
 import copy
 import importlib.util
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -206,8 +207,8 @@ def building_data():
             ],
             "construction": {
                 "wall_thickness": 0.3,
-                "thermal_bridges": 2,
-                "units": "m (for thickness), W/mK (for thermal bridges)"
+                "thermal_bridge_heat_W_K": 2,
+                "units": "m (for thickness), W/K (for total thermal-bridge coefficient)"
             },
             "climate_parameters": {
                 "coldest_month": 1,
@@ -539,6 +540,285 @@ def test_heat_pump_uses_en14825_part_load_correction():
     assert row["H_part_load_factor"] < 1.0
     assert row["H_performance"] < row["H_performance_full_load"]
     assert result.summary["EH_hp_in_kWh"] > 2.0 / 4.0
+
+
+def test_hp_part_load_cop_continuous_eq18_to_24():
+    """EN 15316-4-2:2017 Eq.(18)-(24): COP at part load for a
+    continuously-modulating compressor, hand-derived from the formulas."""
+
+    from pybuildingenergy.source.heat_pump_15316_4_2 import hp_part_load_cop_continuous
+
+    cop_full, phi_full, lr_cont_min, p_aux = 3.5, 6.0, 0.2, 0.2
+
+    # At LR=1 (full load) it must reduce exactly to cop_full_load.
+    assert hp_part_load_cop_continuous(cop_full, phi_full, 1.0, lr_cont_min, p_aux) == pytest.approx(cop_full)
+
+    # p_gen_aux_kW<=0: Eq.(18)'s correction is a no-op at every load ratio.
+    assert hp_part_load_cop_continuous(cop_full, phi_full, 0.5, lr_cont_min, 0.0) == pytest.approx(cop_full)
+
+    # Hand-derived at LR=0.5 with a non-zero auxiliary power.
+    lr = 0.5
+    p_gen_LR100 = phi_full / cop_full
+    p_comp_LR100 = p_gen_LR100 - p_aux
+    cop_net_100 = (cop_full * phi_full) / (phi_full - p_aux * cop_full)  # Eq.(18)
+    f_cont_min_net = (lr_cont_min * p_comp_LR100) / (lr_cont_min * p_gen_LR100 - p_aux)  # Eq.(19)
+    cop_net_lr = cop_net_100 * (1.0 + (f_cont_min_net - 1.0) * (1.0 - lr) / (1.0 - lr_cont_min))  # Eq.(21)
+    phi_lr = phi_full * lr
+    p_comp_lr = phi_lr / cop_net_lr  # Eq.(22)
+    expected = phi_lr / (p_comp_lr + p_aux)  # Eq.(23)/(24)
+
+    assert hp_part_load_cop_continuous(cop_full, phi_full, lr, lr_cont_min, p_aux) == pytest.approx(expected)
+
+
+def test_hp_part_load_cop_on_off_eq25_to_30():
+    """EN 15316-4-2:2017 Eq.(25)-(30): COP at part load for an ON/OFF
+    compressor, hand-derived from the formulas."""
+
+    from pybuildingenergy.source.heat_pump_15316_4_2 import hp_part_load_cop_on_off
+
+    cop_full, phi_full, lr_cont_min = 3.5, 6.0, 1.0
+    tau_eq, tau_out = 30.0, 1920.0
+
+    assert hp_part_load_cop_on_off(cop_full, phi_full, 0.0, lr_cont_min) != hp_part_load_cop_on_off(
+        cop_full, phi_full, 0.0, lr_cont_min
+    )  # NaN != NaN - no energy delivered at LR=0
+
+    lr = 0.5
+    p_gen_LR100 = phi_full / cop_full
+    p_gen_LRcont_min = p_gen_LR100 * lr_cont_min  # Eq.(26)
+    p_comp_lr = p_gen_LRcont_min * (1.0 - (lr_cont_min - lr) / lr_cont_min)  # Eq.(25)
+    p_onoff = p_gen_LRcont_min * (tau_eq * lr * (1.0 - lr) / tau_out)  # Eq.(28)
+    phi_lr = phi_full * lr
+    expected = phi_lr / (p_comp_lr + p_onoff)  # Eq.(29)/(30), p_gen_aux=0
+
+    assert hp_part_load_cop_on_off(
+        cop_full, phi_full, lr, lr_cont_min, tau_eq_s=tau_eq, tau_out_em_type_s=tau_out
+    ) == pytest.approx(expected)
+
+    # At LR=LR_cont,min the cycling-inertia penalty (Eq.28) vanishes.
+    at_boundary = hp_part_load_cop_on_off(
+        cop_full, phi_full, lr_cont_min, lr_cont_min, tau_eq_s=tau_eq, tau_out_em_type_s=tau_out
+    )
+    assert at_boundary == pytest.approx(cop_full)
+
+
+def test_heat_pump_defaults_to_method_a_2017_part_load():
+    """part_load_performance_method now DEFAULTS to 'method_a_2017' (EN
+    15316-4-2:2017 Eq.(18)-(30)) - a deliberate behaviour change replacing
+    the 2008 bin method's part-load treatment (which this module, until
+    now, left as a no-op, 'performance=full_load_performance always',
+    unless the caller opted into 'en14825'). 'none' (legacy alias
+    'simple') still disables any correction, for explicit backward compat."""
+
+    import pybuildingenergy as pybui
+
+    heating_map = pd.DataFrame({
+        "source_temperature_C": [7.0], "sink_temperature_C": [35.0],
+        "capacity_kW": [10.0], "cop": [4.0],
+    })
+    loads = pd.DataFrame(
+        {"T_ext": [7.0], "Q_H_kWh": [2.0], "Q_C_kWh": [0.0], "Q_W_kWh": [0.0], "T_H_sink_C": [35.0]},
+        index=pd.date_range("2026-01-01", periods=1, freq="h"),
+    )
+    base_config = {
+        "heating_performance_map": heating_map, "dhw_performance_map": heating_map,
+        "source_type": "air", "time_step_hours": 1.0, "demand_unit": "kWh",
+        "hp_operating_limit_C": 58.0, "external_auxiliary_power_W": 0.0, "standby_power_W": 0.0,
+        "heating_storage_loss_kWh_per_day": 0.0, "dhw_storage_loss_kWh_per_day": 0.0,
+    }
+
+    default_calc = pybui.HeatPumpSystemCalculator(base_config)
+    assert default_calc.part_load_performance_method == "method_a_2017"
+    default_row = default_calc.run_timeseries(loads).bins.iloc[0]
+
+    none_calc = pybui.HeatPumpSystemCalculator({**base_config, "part_load_performance_method": "none"})
+    none_row = none_calc.run_timeseries(loads).bins.iloc[0]
+    assert none_row["H_performance"] == pytest.approx(none_row["H_performance_full_load"])
+
+    # "simple" is still accepted as a legacy alias for "none".
+    simple_calc = pybui.HeatPumpSystemCalculator({**base_config, "part_load_performance_method": "simple"})
+    assert simple_calc.part_load_performance_method == "none"
+
+    # The new default must actually differ from the no-correction baseline.
+    assert default_row["H_performance"] != pytest.approx(none_row["H_performance"])
+
+
+def test_heat_pump_compressor_technology_sets_lr_cont_min_default():
+    """Table B.11: LR_cont,min defaults to 1.0 for 'on_off' (this module's
+    own default) and 0.2 for 'inverter' compressor technology - only for
+    the method_a_2017 path; an explicit *_part_load_minimum_capacity_ratio
+    always overrides it."""
+
+    import pybuildingenergy as pybui
+
+    base = {
+        "heating_performance_map": pd.DataFrame({
+            "source_temperature_C": [7.0], "sink_temperature_C": [35.0],
+            "capacity_kW": [10.0], "cop": [4.0],
+        }),
+        "source_type": "air",
+    }
+
+    on_off = pybui.HeatPumpSystemCalculator({**base, "compressor_technology": "on_off"})
+    assert on_off.heating_part_load_minimum_capacity_ratio == pytest.approx(1.0)
+
+    inverter = pybui.HeatPumpSystemCalculator({**base, "compressor_technology": "inverter"})
+    assert inverter.heating_part_load_minimum_capacity_ratio == pytest.approx(0.2)
+
+    overridden = pybui.HeatPumpSystemCalculator({
+        **base, "compressor_technology": "inverter", "heating_part_load_minimum_capacity_ratio": 0.35,
+    })
+    assert overridden.heating_part_load_minimum_capacity_ratio == pytest.approx(0.35)
+
+    with pytest.raises(ValueError):
+        pybui.HeatPumpSystemCalculator({**base, "compressor_technology": "scroll"})
+
+
+def test_heat_pump_powered_column_implements_eq31_eq32_zero_demand_step():
+    """EN 15316-4-2:2017 Eq.(31)-(32): the generator only draws standby
+    auxiliary power while POWERED (within its operating season); outside
+    it, energy use is zero. The 'powered' input column (default: always
+    powered, 1.0 - unchanged pre-existing behaviour) lets a caller mark
+    specific steps as outside the season to get Eq.(32) instead of
+    Eq.(31) there."""
+
+    import pybuildingenergy as pybui
+
+    heating_map = pd.DataFrame({
+        "source_temperature_C": [7.0], "sink_temperature_C": [35.0],
+        "capacity_kW": [10.0], "cop": [4.0],
+    })
+    base_config = {
+        "heating_performance_map": heating_map, "dhw_performance_map": heating_map,
+        "source_type": "air", "standby_power_W": 50.0, "external_auxiliary_power_W": 0.0,
+        "bin_width_C": 10.0,
+    }
+    idle_loads = pd.DataFrame(
+        {"T_ext": [7.0, 7.0], "Q_H_kWh": [0.0, 0.0], "Q_C_kWh": [0.0, 0.0], "Q_W_kWh": [0.0, 0.0]},
+        index=pd.date_range("2026-06-01", periods=2, freq="h"),
+    )
+
+    # Default (no 'powered' column): unchanged pre-existing behaviour -
+    # standby applies to every idle hour.
+    unchanged = pybui.HeatPumpSystemCalculator(base_config).run_timeseries(idle_loads)
+    row = unchanged.bins.iloc[0]
+    assert row["powered_hours"] == pytest.approx(2.0)
+    assert row["W_HW_gen_aux_kWh"] == pytest.approx(2.0 * 50.0 / 1000.0)
+
+    # One of the two hours marked outside the operating season (Eq.32):
+    # standby must apply to only the ONE still-powered hour.
+    seasonal_loads = idle_loads.assign(powered=[1.0, 0.0])
+    seasonal = pybui.HeatPumpSystemCalculator(base_config).run_timeseries(seasonal_loads)
+    row = seasonal.bins.iloc[0]
+    assert row["powered_hours"] == pytest.approx(1.0)
+    assert row["W_HW_gen_aux_kWh"] == pytest.approx(1.0 * 50.0 / 1000.0)
+
+    # Entirely outside the season: zero energy, not just zero demand.
+    off_season_loads = idle_loads.assign(powered=[0.0, 0.0])
+    off_season = pybui.HeatPumpSystemCalculator(base_config).run_timeseries(off_season_loads)
+    row = off_season.bins.iloc[0]
+    assert row["powered_hours"] == pytest.approx(0.0)
+    assert row["W_HW_gen_aux_kWh"] == pytest.approx(0.0)
+
+
+def test_heat_pump_independent_mode_caps_combined_runtime_no_double_counting():
+    """combined_operation='independent' must not let heating and DHW each
+    claim the full step duration from the SAME compressor: EN 15316-4-2:
+    2017 clause 5.9 requires dedicated simultaneous-mode test data for a
+    genuine simultaneous calculation (not modelled here), so this module
+    instead caps their COMBINED runtime at the step duration, shifting any
+    shortfall to back-up/unmet - rather than silently double-counting more
+    HP output than the unit could physically deliver in one step."""
+
+    import pybuildingenergy as pybui
+
+    heating_map = pd.DataFrame({
+        "source_temperature_C": [-7.0], "sink_temperature_C": [35.0],
+        "capacity_kW": [5.0], "cop": [3.0],
+    })
+    overload_loads = pd.DataFrame(
+        {"T_ext": [-7.0], "Q_H_kWh": [4.0], "Q_C_kWh": [0.0], "Q_W_kWh": [3.0], "T_H_sink_C": [35.0]},
+        index=pd.date_range("2026-01-01", periods=1, freq="h"),
+    )
+    calc = pybui.HeatPumpSystemCalculator({
+        "heating_performance_map": heating_map, "dhw_performance_map": heating_map,
+        "source_type": "air", "combined_operation": "independent",
+        "backup_mode": "parallel", "heating_backup_efficiency": 1.0, "dhw_backup_efficiency": 1.0,
+        "external_auxiliary_power_W": 0.0, "standby_power_W": 0.0,
+    })
+    row = calc.run_timeseries(overload_loads).bins.iloc[0]
+
+    combined_runtime = row["H_hp_runtime_h"] + row["W_hp_runtime_h"]
+    assert combined_runtime <= row["effective_hours"] + 1e-6
+    # The HP + back-up split must still add up to the original requirement
+    # for each service (nothing lost, nothing invented).
+    assert row["H_Q_hp_out_kWh"] + row["H_Q_backup_out_kWh"] == pytest.approx(4.0)
+    assert row["W_Q_hp_out_kWh"] + row["W_Q_backup_out_kWh"] == pytest.approx(3.0)
+
+    # Demand that fits within the step is a no-op (unchanged behaviour).
+    light_loads = pd.DataFrame(
+        {"T_ext": [-7.0], "Q_H_kWh": [1.0], "Q_C_kWh": [0.0], "Q_W_kWh": [0.5], "T_H_sink_C": [35.0]},
+        index=pd.date_range("2026-01-01", periods=1, freq="h"),
+    )
+    light_calc = pybui.HeatPumpSystemCalculator({
+        "heating_performance_map": pd.DataFrame({
+            "source_temperature_C": [-7.0], "sink_temperature_C": [35.0],
+            "capacity_kW": [10.0], "cop": [3.0],
+        }),
+        "dhw_performance_map": pd.DataFrame({
+            "source_temperature_C": [-7.0], "sink_temperature_C": [35.0],
+            "capacity_kW": [10.0], "cop": [3.0],
+        }),
+        "source_type": "air", "combined_operation": "independent",
+        "external_auxiliary_power_W": 0.0, "standby_power_W": 0.0,
+        "hp_operating_limit_C": None,
+    })
+    light_row = light_calc.run_timeseries(light_loads).bins.iloc[0]
+    assert light_row["H_Q_hp_out_kWh"] == pytest.approx(1.0)
+    assert light_row["W_Q_hp_out_kWh"] == pytest.approx(0.5)
+    assert light_row["H_Q_backup_out_kWh"] == pytest.approx(0.0)
+    assert light_row["W_Q_backup_out_kWh"] == pytest.approx(0.0)
+
+
+def test_heat_pump_performance_map_quality_warnings():
+    """Data-quality sanity checks (NOT an EN 14511 conformance check):
+    warns on a map with fewer than 2x2 distinct source/sink points, and on
+    conflicting duplicate (source, sink) rows - without refusing either."""
+
+    import pybuildingenergy as pybui
+
+    single_point_map = pd.DataFrame({
+        "source_temperature_C": [7.0], "sink_temperature_C": [35.0],
+        "capacity_kW": [10.0], "cop": [4.0],
+    })
+    with pytest.warns(UserWarning, match="distinct source temperature"):
+        pybui.HeatPumpSystemCalculator({
+            "heating_performance_map": single_point_map, "source_type": "air",
+        })
+
+    conflicting_map = pd.DataFrame({
+        "source_temperature_C": [7.0, 7.0, -7.0, -7.0],
+        "sink_temperature_C": [35.0, 35.0, 35.0, 35.0],
+        "capacity_kW": [6.0, 6.0, 5.0, 5.0],
+        "cop": [4.0, 3.5, 3.2, 3.2],  # two different cop values at the SAME (7.0, 35.0) point
+    })
+    with pytest.warns(UserWarning, match="DIFFERENT"):
+        pybui.HeatPumpSystemCalculator({
+            "heating_performance_map": conflicting_map, "source_type": "air",
+        })
+
+    # A well-formed 2x2 grid with no conflicts must NOT warn.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        pybui.HeatPumpSystemCalculator({
+            "heating_performance_map": pd.DataFrame({
+                "source_temperature_C": [-7.0, -7.0, 7.0, 7.0],
+                "sink_temperature_C": [35.0, 55.0, 35.0, 55.0],
+                "capacity_kW": [5.0, 4.0, 7.0, 6.0],
+                "cop": [3.2, 2.4, 4.2, 3.2],
+            }),
+            "source_type": "air",
+        })
 
 
 def test_emission_system_calculator_heating_cooling_effects():
@@ -1142,6 +1422,70 @@ def test_table25_surface_heat_transfer_defaults_by_boundary_and_heat_flow():
     assert internal_partition["radiative_heat_transfer_coefficient_external"] == pytest.approx(5.13)
 
 
+def test_thermal_bridge_total_input_changes_heat_transfer_coefficient():
+    from pybuildingenergy.source.utils import _thermal_bridge_heat_transfer_coefficient
+
+    low = {"building_parameters": {"construction": {"thermal_bridge_heat_W_K": 1.0}}}
+    high = {"building_parameters": {"construction": {"thermal_bridge_heat_W_K": 50.0}}}
+
+    assert _thermal_bridge_heat_transfer_coefficient(
+        low, default_length_m=40.0, default_psi_W_mK=0.05
+    ) == pytest.approx(1.0)
+    assert _thermal_bridge_heat_transfer_coefficient(
+        high, default_length_m=40.0, default_psi_W_mK=0.05
+    ) == pytest.approx(50.0)
+
+
+def test_thermal_bridge_length_times_linear_transmittance():
+    from pybuildingenergy.source.utils import _thermal_bridge_heat_transfer_coefficient
+
+    building = {
+        "building_parameters": {
+            "construction": {
+                "thermal_bridge_length_m": 25.0,
+                "thermal_bridge_psi_W_mK": 0.08,
+            }
+        }
+    }
+    result = _thermal_bridge_heat_transfer_coefficient(
+        building, default_length_m=40.0, default_psi_W_mK=0.05
+    )
+    assert result == pytest.approx(2.0)
+
+
+def test_thermal_bridge_inputs_reject_ambiguous_or_mixed_forms():
+    from pybuildingenergy.source.utils import _thermal_bridge_heat_transfer_coefficient
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        _thermal_bridge_heat_transfer_coefficient(
+            {"building_parameters": {"construction": {"thermal_bridges_W/mK": 0.24}}},
+            default_length_m=40.0,
+            default_psi_W_mK=0.05,
+        )
+    with pytest.raises(ValueError, match="not both"):
+        _thermal_bridge_heat_transfer_coefficient(
+            {"building_parameters": {"construction": {
+                "thermal_bridge_heat_W_K": 14.02,
+                "thermal_bridge_length_m": 58.44,
+                "thermal_bridge_psi_W_mK": 0.24,
+            }}},
+            default_length_m=40.0,
+            default_psi_W_mK=0.05,
+        )
+
+
+def test_ground_wall_thickness_uses_construction_and_rejects_conflicts():
+    from pybuildingenergy.source.utils import _wall_thickness_for_ground_m
+
+    assert _wall_thickness_for_ground_m(
+        {"building": {}, "building_parameters": {"construction": {"wall_thickness": 0.35}}}
+    ) == pytest.approx(0.35)
+    with pytest.raises(ValueError, match="Conflicting"):
+        _wall_thickness_for_ground_m(
+            {"building": {"wall_thickness": 0.30}, "building_parameters": {"construction": {"wall_thickness": 0.35}}}
+        )
+
+
 def test_ground_conductance_does_not_apply_outdoor_surface_coefficient():
     from pybuildingenergy.source import utils as utils_module
 
@@ -1393,6 +1737,60 @@ def test_iso52016_method1_combined_shading_factor_multiplies_total_irradiance():
         direct_irradiance_w_m2=800.0,
         shading_factor_obstacles=0.6,
     ) == pytest.approx(600.0)
+
+
+def test_annex_f_obstacle_blocks_lower_window_height():
+    """Annex F skyline geometry must reduce only the blocked window height."""
+    from pybuildingenergy.source.functions import shading_reduction_factor
+
+    factor, sunlit_height = shading_reduction_factor(
+        alpha_sol_t=10.0,
+        phi_sol_t=180.0,
+        beta_k_t=90.0,
+        gamma_k_t=180.0,
+        D_k_ovh_q=0.0,
+        L_k_ovh_q=0.0,
+        elements_shading_type="obstacles",
+        H_k=2.0,
+        W_k=1.0,
+        annex_f_shading_objects=[{
+            "kind": "obstacle",
+            "azimuth_start_deg": 170.0,
+            "azimuth_end_deg": 190.0,
+            "distance_m": 10.0,
+            "top_height_m": 2.0,
+        }],
+    )
+
+    expected_shadow = 2.0 - 10.0 * np.tan(np.radians(10.0))
+    assert sunlit_height == pytest.approx(2.0 - expected_shadow)
+    assert factor == pytest.approx(sunlit_height / 2.0)
+
+
+def test_annex_f_obstacle_outside_skyline_segment_does_not_shade():
+    from pybuildingenergy.source.functions import shading_reduction_factor
+
+    factor, sunlit_height = shading_reduction_factor(
+        alpha_sol_t=10.0,
+        phi_sol_t=180.0,
+        beta_k_t=90.0,
+        gamma_k_t=180.0,
+        D_k_ovh_q=0.0,
+        L_k_ovh_q=0.0,
+        elements_shading_type="obstacles",
+        H_k=2.0,
+        W_k=1.0,
+        annex_f_shading_objects=[{
+            "kind": "obstacle",
+            "azimuth_start_deg": 0.0,
+            "azimuth_end_deg": 90.0,
+            "distance_m": 10.0,
+            "top_height_m": 20.0,
+        }],
+    )
+
+    assert factor == pytest.approx(1.0)
+    assert sunlit_height == pytest.approx(2.0)
 
 
 def test_shading_reduction_factor_handles_wrapped_azimuth():
@@ -1741,6 +2139,54 @@ def test_multizone_solver_exports_ground_flux_columns(monkeypatch):
     assert pd.to_numeric(out["Q_ground_Z1"], errors="coerce").iloc[0] > 0.0
 
 
+def test_single_zone_opaque_surface_iso_type_does_not_ground_vertical_partitions():
+    """sky_view_factor==0 non deve classificare come terreno (GR) le superfici
+    verticali, in particolare le partizioni interne fra due zone; deve invece
+    continuare a farlo, per compatibilita', per le superfici orizzontali
+    (slab-on-ground) che non hanno un ``boundary`` esplicito."""
+    from pybuildingenergy.source.utils import _single_zone_opaque_surface_iso_type
+
+    # Legacy slab-on-ground surfaces (no explicit `boundary`): unchanged,
+    # sky_view_factor == 0 still means ground contact for horizontal elements.
+    ground_slab = {"sky_view_factor": 0.0, "orientation": {"tilt": 0.0}}
+    assert _single_zone_opaque_surface_iso_type(ground_slab) == "GR"
+    ground_slab_tilt_180 = {"sky_view_factor": 0.0, "orientation": {"tilt": 180.0}}
+    assert _single_zone_opaque_surface_iso_type(ground_slab_tilt_180) == "GR"
+
+    # A vertical wall with no sky view (e.g. a party wall in a terraced
+    # building, or an internal partition between two zones left un-tagged)
+    # must NOT be silently treated as ground contact.
+    vertical_no_sky_view = {"sky_view_factor": 0.0, "orientation": {"tilt": 90.0}}
+    assert _single_zone_opaque_surface_iso_type(vertical_no_sky_view) == "OP"
+
+    # An explicit boundary always wins, regardless of tilt/sky_view_factor:
+    # this is how a real internal partition between two zones (vertical or,
+    # like a multizone "Floor_between_..." surface, horizontal) must be
+    # tagged so the single-zone engine treats it as inert (adiabatic).
+    internal_partition_horizontal = {
+        "sky_view_factor": 0.0,
+        "orientation": {"tilt": 0.0},
+        "boundary": "INTERNAL",
+    }
+    assert _single_zone_opaque_surface_iso_type(internal_partition_horizontal) == "AD"
+    internal_partition_vertical = {
+        "sky_view_factor": 0.0,
+        "orientation": {"tilt": 90.0},
+        "boundary": "ADIABATIC",
+    }
+    assert _single_zone_opaque_surface_iso_type(internal_partition_vertical) == "AD"
+    explicit_ground = {
+        "sky_view_factor": 0.5,
+        "orientation": {"tilt": 90.0},
+        "boundary": "GROUND",
+    }
+    assert _single_zone_opaque_surface_iso_type(explicit_ground) == "GR"
+
+    # A normal wall (sky_view_factor > 0) is unaffected either way.
+    normal_wall = {"sky_view_factor": 0.5, "orientation": {"tilt": 90.0}}
+    assert _single_zone_opaque_surface_iso_type(normal_wall) == "OP"
+
+
 def test_build_multizone_opaque_inside_flux_links_and_fluxes():
     """I flussi opachi lato interno devono essere esportati con segno +surface->zone."""
     from pybuildingenergy.source.utils import (
@@ -1775,9 +2221,17 @@ def test_build_multizone_opaque_inside_flux_links_and_fluxes():
         h_pli_eli=h_pli_eli,
     )
 
-    assert [link["surface_token"] for link in links] == ["Roof_Z1", "Slab_Z1"]
+    # INTERNAL surfaces now export one link per zone-facing node, suffixed
+    # by zone so the OUTDOORS/GROUND column names stay unchanged.
+    assert [link["surface_token"] for link in links] == [
+        "Roof_Z1",
+        "Slab_Z1",
+        "Wall_Int_to_Z1",
+        "Wall_Int_to_Z2",
+    ]
 
-    theta_state = np.array([0.0, 15.0, 18.0, 20.0, 16.0], dtype=float)
+    # Row 5 = Wall Int's Pli=0 node (facing Z2), row 6 = Pli=1 node (facing Z1).
+    theta_state = np.array([0.0, 15.0, 18.0, 20.0, 16.0, 22.0, 19.0], dtype=float)
     surface_flux = _opaque_inside_fluxes_from_state(
         theta_state=theta_state,
         opaque_inside_links=links,
@@ -1785,6 +2239,12 @@ def test_build_multizone_opaque_inside_flux_links_and_fluxes():
 
     assert surface_flux["Roof_Z1"] == pytest.approx(-60.0)
     assert surface_flux["Slab_Z1"] == pytest.approx(96.0)
+    # h_pli_eli[0, 2] = 4.0, area 6.0 -> h_cond_face = 24.0.
+    assert surface_flux["Wall_Int_to_Z1"] == pytest.approx(24.0 * (22.0 - 19.0))
+    assert surface_flux["Wall_Int_to_Z2"] == pytest.approx(24.0 * (19.0 - 22.0))
+    # With a 2-node (no intermediate mass) partition, the flux entering one
+    # side exactly equals minus the flux entering the other side.
+    assert surface_flux["Wall_Int_to_Z1"] == pytest.approx(-surface_flux["Wall_Int_to_Z2"])
 
 
 def test_multizone_solver_exports_opaque_inside_flux_columns(monkeypatch):
@@ -1894,6 +2354,145 @@ def test_multizone_solver_exports_opaque_inside_flux_columns(monkeypatch):
     q_inside = pd.to_numeric(out["Q_opaque_inside_surface_Roof_Test"], errors="coerce")
     assert np.isfinite(q_inside).all()
     assert q_inside.iloc[0] < 0.0
+
+
+def test_multizone_solver_exports_internal_partition_flux_columns_both_sides(monkeypatch):
+    """Una partizione INTERNAL fra due zone deve esportare il flusso su entrambi i lati."""
+    from pybuildingenergy.source.utils import ISO52016
+
+    sim_df = pd.DataFrame(
+        {
+            "T2m": [5.0, 5.0],
+            "WS10m": [0.0, 0.0],
+        },
+        index=pd.to_datetime(["2024-01-01 00:00:00", "2024-01-01 01:00:00"]),
+    )
+
+    monkeypatch.setattr(
+        ISO52016,
+        "Weather_data_bui",
+        lambda self, building_object, path_weather_file=None, weather_source="epw": SimpleNamespace(
+            simulation_df=sim_df
+        ),
+    )
+    monkeypatch.setattr(ISO52016, "_aggregate_surfaces_by_direction", lambda self, bui: bui)
+    monkeypatch.setattr(
+        ISO52016,
+        "Number_of_nodes_element",
+        lambda self, building_object: SimpleNamespace(
+            Rn=5,
+            Pln=np.array([2, 2], dtype=int),
+            PlnSum=np.array([0, 2], dtype=int),
+        ),
+    )
+    monkeypatch.setattr(
+        ISO52016,
+        "Conductance_node_of_element",
+        lambda self, building_object: SimpleNamespace(h_pli_eli=np.array([[2.0, 3.0]], dtype=float)),
+    )
+    monkeypatch.setattr(
+        ISO52016,
+        "Areal_heat_capacity_of_element",
+        lambda self, building_object: SimpleNamespace(kappa_pli_eli=np.zeros((2, 2), dtype=float)),
+    )
+    monkeypatch.setattr(
+        ISO52016,
+        "Solar_absorption_of_element",
+        lambda self, building_object: SimpleNamespace(a_sol_pli_eli=np.zeros((2, 2), dtype=float)),
+    )
+
+    def _zone(name, area):
+        return {
+            "name": name,
+            "net_floor_area": area,
+            "building_type_class": "Residential_apartment",
+            "heating_setpoint": -100.0,
+            "cooling_setpoint": 100.0,
+            "heating_setback": -100.0,
+            "cooling_setback": 100.0,
+        }
+
+    building_object = {
+        "building": {
+            "net_floor_area": 20.0,
+            "building_type_class": "Residential_apartment",
+        },
+        "building_parameters": {
+            "temperature_setpoints": {
+                "heating_setpoint": -100.0,
+                "cooling_setpoint": 100.0,
+                "heating_setback": -100.0,
+                "cooling_setback": 100.0,
+            },
+            "system_capacities": {},
+            "ventilation": {},
+        },
+        "zones": [_zone("Z_ground", 10.0), _zone("Z_first", 10.0)],
+        "building_surface": [
+            {
+                "name": "Roof Z_ground",
+                "type": "opaque",
+                "boundary": "OUTDOORS",
+                "zone": "Z_ground",
+                "area": 10.0,
+                "u_value": 1.0,
+                "thermal_capacity": 0.0,
+                "solar_absorptance": 0.0,
+                "orientation": {"azimuth": 0.0, "tilt": 0.0},
+                "sky_view_factor": 1.0,
+                "convective_heat_transfer_coefficient_internal": 1.0,
+                "radiative_heat_transfer_coefficient_internal": 0.0,
+                "convective_heat_transfer_coefficient_external": 1.0,
+                "radiative_heat_transfer_coefficient_external": 0.0,
+            },
+            {
+                "name": "Floor between",
+                "type": "opaque",
+                "boundary": "INTERNAL",
+                "zone": "Z_ground",
+                "adjacent_zone": "Z_first",
+                "area": 10.0,
+                "u_value": 1.0,
+                "thermal_capacity": 0.0,
+                "solar_absorptance": 0.0,
+                "orientation": {"azimuth": 0.0, "tilt": 0.0},
+                "sky_view_factor": 0.0,
+                "convective_heat_transfer_coefficient_internal": 1.0,
+                "radiative_heat_transfer_coefficient_internal": 0.0,
+                "convective_heat_transfer_coefficient_external": 1.0,
+                "radiative_heat_transfer_coefficient_external": 0.0,
+            },
+        ],
+    }
+
+    out = ISO52016.simulate_envelope_multizone_free_floating(
+        building_object=building_object,
+        path_weather_file="unused.epw",
+        weather_source="epw",
+        include_solar=False,
+        warmup_hours=0,
+        use_profiles=False,
+        include_internal_gains=False,
+        include_ventilation=False,
+        include_thermal_bridges=False,
+    )
+
+    col_ground = "Q_opaque_inside_surface_Floor_between_to_Z_ground"
+    col_first = "Q_opaque_inside_surface_Floor_between_to_Z_first"
+    assert col_ground in out.columns
+    assert col_first in out.columns
+    # The OUTDOORS surface keeps its plain (unsuffixed) column name.
+    assert "Q_opaque_inside_surface_Roof_Z_ground" in out.columns
+
+    q_ground = pd.to_numeric(out[col_ground], errors="coerce")
+    q_first = pd.to_numeric(out[col_first], errors="coerce")
+    assert np.isfinite(q_ground).all()
+    assert np.isfinite(q_first).all()
+    # Only the roof (Z_ground) is exposed to the cold outdoor air, so
+    # Z_ground cools first and heat must flow from Z_first into Z_ground
+    # through the shared floor: positive into Z_ground, negative into Z_first.
+    assert (q_ground > 0.0).all()
+    assert (q_first < 0.0).all()
 
 
 def test_multizone_solver_does_not_cache_global_ventilation_fallbacks_in_zones(monkeypatch):
@@ -2235,6 +2834,223 @@ def test_transmission_heat_transfer_coefficient_uses_geographical_orientation_ma
     assert H_ztu_tot == pytest.approx(100.0)
     assert b_ztu_m == pytest.approx(0.9, abs=1e-3)
     assert F_ztc_ztu_m == pytest.approx(1.0)
+
+
+@pytest.mark.slow
+def test_single_adjacent_zone_unconditioned_path_runs(building_data):
+    """Una sola zona adiacente non riscaldata (adj_zones_present=True) deve
+    attraversare il ramo ISO 52016 senza UnboundLocalError su H_ztu_zones_df."""
+    import pybuildingenergy as pybui
+
+    bui = copy.deepcopy(building_data)
+    bui["building"]["adj_zones_present"] = True
+    bui["building"]["number_adj_zone"] = 1
+    bui["adjacent_zones"] = [bui["adjacent_zones"][0]]
+    for surf in bui["building_surface"]:
+        if surf.get("name_adj_zone") == "adj_2":
+            surf["name_adj_zone"] = None
+            surf["type"] = "opaque"
+
+    bui_checked, issues = pybui.sanitize_and_validate_BUI(bui, fix=True)
+    assert [i for i in issues if i["level"] == "ERROR"] == []
+
+    hourly_sim, _ = pybui.ISO52016.Temperature_and_Energy_needs_calculation(
+        bui_checked, weather_source="pvgis"
+    )
+    assert len(hourly_sim) == 8760
+
+
+def test_cooling_emission_sign_follows_en15316_2():
+    """Raffrescamento: theta_int,inc = theta_int,ini + SUM(delta) con delta negativi
+    (EN 15316-2 eq. 16, Table B.11); la perdita incorporata segue lo stesso segno (eq. 20)."""
+    import pandas as pd
+    from pybuildingenergy.source.emission_15316_2 import EmissionSystemCalculator
+
+    strat, ctr, auto, emb = -1.2, -1.2, -0.5, -0.7
+    cfg = {"demand_unit": "kWh", "cooling": {
+        "stratification_K": strat, "control_K": ctr, "room_automation_K": auto,
+        "embedded_K": emb, "nominal_power_kW": 50.0, "convective_fraction": 0.95}}
+    idx = pd.date_range("2009-07-15 01:00", periods=1, freq="h")
+    df = pd.DataFrame({"T_ext": 30.0, "T_op": 26.0, "Q_H_kWh": 0.0, "Q_C_kWh": 1.0,
+                       "time_step_hours": 1.0}, index=idx)
+    row = EmissionSystemCalculator(cfg).run_timeseries(df).timeseries.iloc[0]
+
+    theta_ini, e_comb = 26.0, 30.0 + 8.0
+    theta_inc = theta_ini + (strat + ctr + auto)
+    assert row["theta_C_int_inc_C"] == pytest.approx(theta_inc)
+    q_inc = 1.0 * (e_comb - theta_inc) / (e_comb - theta_ini)
+    assert row["Q_C_em_out_inc_kWh"] == pytest.approx(q_inc)
+    assert row["Q_C_emb_ls_kWh"] == pytest.approx(q_inc * emb / (theta_inc - e_comb))
+
+
+def test_undersized_emitter_backup_and_unmet_are_explicit():
+    """EN 15316-1 eq. 16: Q_back = Q_exp - Q_act; without a backup the deficit is
+    unmet load and is flagged. EN 15316-2 eq. 22-23 hold literally, so the loss is
+    negative when the emitter is capped and Q_in = Q_out + Q_ls."""
+    import warnings
+    import pandas as pd
+    from pybuildingenergy.source.emission_15316_2 import EmissionSystemCalculator
+
+    idx = pd.date_range("2009-01-15 01:00", periods=1, freq="h")
+    df = pd.DataFrame({"T_ext": 0.0, "T_op": 20.0, "Q_H_kWh": 5.0, "Q_C_kWh": 0.0,
+                       "time_step_hours": 1.0}, index=idx)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        row = EmissionSystemCalculator({"demand_unit": "kWh", "heating": {"nominal_power_kW": 1.0}}).run_timeseries(df).timeseries.iloc[0]
+    assert row["Q_H_em_unmet_kWh"] == pytest.approx(4.0)
+    assert row["Q_H_em_back_out_kWh"] == pytest.approx(0.0)
+    assert row["Q_H_em_ls_kWh"] == pytest.approx(row["Q_H_em_out_inc_kWh"] - row["Q_H_em_out_kWh"] + 0.0)
+    assert row["Q_H_em_in_kWh"] == pytest.approx(row["Q_H_em_out_kWh"] + row["Q_H_em_ls_kWh"])
+    assert any("undersized" in str(x.message) for x in w)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        row = EmissionSystemCalculator({"demand_unit": "kWh", "heating": {"nominal_power_kW": 1.0, "backup_available": True}}).run_timeseries(df).timeseries.iloc[0]
+    assert row["Q_H_em_back_out_kWh"] == pytest.approx(4.0)
+    assert row["Q_H_em_unmet_kWh"] == pytest.approx(0.0)
+    assert row["Q_H_em_in_kWh"] + row["Q_H_em_back_out_kWh"] == pytest.approx(5.0)
+    assert row["Q_H_em_in_kWh"] == pytest.approx(row["Q_H_em_out_kWh"] + row["Q_H_em_ls_kWh"])
+    assert not any("undersized" in str(x.message) for x in w)
+
+
+def test_emission_backup_is_added_to_heating_system_demand():
+    """EN 15316-1 eq. 16: with a declared backup the deficit is supplied through the
+    heating system, so distribution and generation receive emission input + backup."""
+    import warnings
+    import pandas as pd
+    from pybuildingenergy.source.iso_15316_1 import HeatingSystemCalculator
+
+    idx = pd.date_range("2009-01-15 01:00", periods=1, freq="h")
+    df = pd.DataFrame({"Q_H_kWh": [5.0], "T_op": [20.0], "T_ext": [0.0], "time_step_hours": 1.0}, index=idx)
+
+    def make(backup):
+        emm = {"nominal_power_kW": 1.0}
+        if backup:
+            emm["backup_available"] = True
+        return HeatingSystemCalculator({
+            "emitter_type": "Floor heating", "nominal_power": 1.0, "emission_efficiency": 90.0,
+            "selected_emm_cont_circuit": 0, "mixing_valve": False,
+            "flow_temp_control_type": "Type 3 - Constant temperature", "constant_flow_temp": [42.0],
+            "generator_circuit": "independent", "gen_flow_temp_control_type": "Type B",
+            "emission_calculation_mode": "en15316-2",
+            "emission_15316_2_config": {"demand_unit": "kWh", "heating": emm},
+        })
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        calc = make(backup=True)
+        calc._precompute_emission_timeseries(df)
+        assert calc._emission_ts_cache["QH_em_i_in"][0] == pytest.approx(5.0)
+        assert calc._emission_ts_cache["QH_em_back_out_kWh"][0] == pytest.approx(4.0)
+
+        calc = make(backup=False)
+        calc._precompute_emission_timeseries(df)
+        assert calc._emission_ts_cache["QH_em_i_in"][0] == pytest.approx(1.0)
+        assert calc._emission_ts_cache["QH_em_unmet_kWh"][0] == pytest.approx(4.0)
+
+
+def test_emission_inc_shift_and_method_validation():
+    """Set points move by the EN 15316-2 equivalent increase (eq. 16); unknown methods are rejected."""
+    import pybuildingenergy as pybui
+    from pybuildingenergy.source.composer import _shift_setpoints, demo_building
+
+    shifted = _shift_setpoints(demo_building(), 1.5, -2.0)
+    sp = shifted["building_parameters"]["temperature_setpoints"]
+    assert sp["heating_setpoint"] == pytest.approx(21.5)
+    assert sp["cooling_setpoint"] == pytest.approx(24.0)
+    with pytest.raises(ValueError):
+        pybui.simulate_emission_only({"building": {}}, emission_inc="exact")
+
+
+@pytest.mark.slow
+def test_emission_inc_approximate_is_notified():
+    """The approximation runs only on request and raises a notification; recalculation does not."""
+    import warnings
+    import pybuildingenergy as pybui
+    from pybuildingenergy.source.composer import demo_building
+
+    config = {
+        "building": demo_building(),
+        "weather": {"source": "pvgis", "file": None},
+        "emission_system_config": {"demand_unit": "kWh", "heating": {"nominal_power_kW": 50.0}},
+    }
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        res = pybui.simulate_emission_only(config, emission_inc="approximate")
+    assert any("approximated" in str(x.message) for x in w)
+    assert res.emission_inc_method == "approximate"
+
+
+def test_fan_auxiliary_uses_effective_operating_time():
+    """EN 15316-2 eq. 14: fan energy uses the operation time t_h,rL, not the full hour."""
+    import pandas as pd
+    from pybuildingenergy.source.emission_15316_2 import EmissionSystemCalculator
+
+    cfg = {"demand_unit": "kWh", "heating": {"nominal_power_kW": 10.0, "fan_count": 4.0, "fan_power_W": 10.0}}
+    idx = pd.date_range("2009-01-15 01:00", periods=1, freq="h")
+    base = {"T_ext": 0.0, "T_op": 20.0, "Q_H_kWh": 1.0, "Q_C_kWh": 0.0, "time_step_hours": 1.0}
+
+    # load factor 0.1 on a 10 kW emitter -> about 0.1 h of fan operation
+    row = EmissionSystemCalculator(cfg).run_timeseries(pd.DataFrame([base], index=idx)).timeseries.iloc[0]
+    assert row["W_H_em_fan_aux_kWh"] == pytest.approx(4 * 10 * 0.1 / 1000.0, rel=1e-3)
+
+    # explicit operation time overrides the estimate
+    row = EmissionSystemCalculator(cfg).run_timeseries(pd.DataFrame([dict(base, t_h_rl=0.5)], index=idx)).timeseries.iloc[0]
+    assert row["W_H_em_fan_aux_kWh"] == pytest.approx(4 * 10 * 0.5 / 1000.0)
+
+
+def test_standalone_emission_fallback_is_notified():
+    """Without Q_*_em_out_inc the standalone calculator uses the temperature-ratio fallback
+    and must say so; with the modified-set-point output supplied it must stay silent."""
+    import warnings
+    import pandas as pd
+    from pybuildingenergy.source.emission_15316_2 import EmissionSystemCalculator
+
+    idx = pd.date_range("2009-01-15 01:00", periods=1, freq="h")
+    base = {"T_ext": 0.0, "T_op": 20.0, "Q_H_kWh": 1.0, "Q_C_kWh": 0.0, "time_step_hours": 1.0}
+    cfg = {"demand_unit": "kWh", "heating": {"stratification_K": 0.5, "nominal_power_kW": 50.0}}
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        EmissionSystemCalculator(cfg).run_timeseries(pd.DataFrame([base], index=idx))
+    assert any("temperature ratios" in str(x.message) for x in w)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        EmissionSystemCalculator(cfg).run_timeseries(pd.DataFrame([dict(base, Q_H_em_out_inc_kWh=1.04)], index=idx))
+    assert not any("temperature ratios" in str(x.message) for x in w)
+
+
+def test_compute_step_exposes_backup_and_unmet_emission_energy():
+    """The per-step output of the heating-system calculator reports the emission backup
+    and the unmet load explicitly, not only through the demand passed downstream."""
+    import warnings
+    from pybuildingenergy.source.iso_15316_1 import HeatingSystemCalculator
+
+    def make(backup):
+        emm = {"nominal_power_kW": 1.0}
+        if backup:
+            emm["backup_available"] = True
+        return HeatingSystemCalculator({
+            "emitter_type": "Floor heating", "nominal_power": 1.0, "emission_efficiency": 90.0,
+            "selected_emm_cont_circuit": 0, "mixing_valve": False,
+            "flow_temp_control_type": "Type 3 - Constant temperature", "constant_flow_temp": [42.0],
+            "generator_circuit": "independent", "gen_flow_temp_control_type": "Type B",
+            "emission_calculation_mode": "en15316-2",
+            "emission_15316_2_config": {"demand_unit": "kWh", "heating": emm},
+        })
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        out = make(backup=True).compute_step(5.0, 20.0, 0.0)
+        assert out["QH_em_back_out(kWh)"] == pytest.approx(4.0)
+        assert out["QH_em_unmet(kWh)"] == pytest.approx(0.0)
+        step = make(backup=True)._calculate_emission_step(5.0, 20.0, 0.0)
+        assert step["ΦH_em_eff"] == pytest.approx(5.0)
+        out = make(backup=False).compute_step(5.0, 20.0, 0.0)
+        assert out["QH_em_back_out(kWh)"] == pytest.approx(0.0)
+        assert out["QH_em_unmet(kWh)"] == pytest.approx(4.0)
 
 
 @pytest.mark.slow
@@ -2745,6 +3561,37 @@ def test_occupancy_ventilation_uses_zone_area_and_liters_to_m3_conversion():
         type_ventilation="occupancy",
     )
     assert float(h_ve_40) == pytest.approx(expected_80 / 2.0)
+
+
+def test_docs_generation_catalog_reference_json_stay_in_sync():
+    """docs/*.json duplicates the reference catalog composer.py actually reads
+    (src/pybuildingenergy/data/generation_catalog/, via composer.CATALOG_DIR);
+    fail loudly if a future edit to one copy is not mirrored to the other,
+    instead of letting the documentation silently drift out of sync."""
+    from pybuildingenergy.source import composer
+
+    repo_root = Path(__file__).resolve().parent.parent
+    docs_dir = repo_root / "docs"
+    names = [
+        "ahu_system_configuration_reference.json",
+        "distribution_system_configuration_reference.json",
+        "emission_system_configuration_reference.json",
+        "heat_pump_configuration_reference.json",
+        "pv_system_configuration_reference.json",
+    ]
+    mismatched = []
+    for name in names:
+        doc_path = docs_dir / name
+        catalog_path = composer.CATALOG_DIR / name
+        assert doc_path.exists(), f"missing docs copy: {doc_path}"
+        assert catalog_path.exists(), f"missing canonical copy read by composer.py: {catalog_path}"
+        if doc_path.read_text(encoding="utf-8") != catalog_path.read_text(encoding="utf-8"):
+            mismatched.append(name)
+    assert not mismatched, (
+        f"docs/ and generation_catalog/ have drifted apart for: {mismatched}. "
+        "Copy the updated file(s) from src/pybuildingenergy/data/generation_catalog/ "
+        "(what composer.py actually loads) to docs/ (or vice versa) to keep them identical."
+    )
 
 
 # ==============================================================================

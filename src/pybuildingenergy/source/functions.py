@@ -7,11 +7,9 @@
 # Libraries
 import numpy as np
 import pandas as pd
+from importlib.resources import files
 # sklearn imported lazily inside Simple_regeression() -- avoids ~0.6s startup cost
-# from pybuildingenergy.global_inputs import main_directory_
-from pybuildingenergy.global_inputs import main_directory_
 import pickle
-import plotly.graph_objects as go
 
 
 # ===== helper: restituisce (weekday, weekend) di 24 valori dal BUI o dai DEFAULT =====
@@ -379,9 +377,8 @@ def get_buildings_demos():
     """
     Get archetypes and demo buildings
     """
-    # pickle_file_path = main_directory_ + "/pybuildingenergy/pybuildingenergy/data/archetypes.pickle"
-    pickle_file_path = main_directory_ + "/archetypes.pickle"
-    with open(pickle_file_path, "rb") as f:
+    pickle_file = files("pybuildingenergy").joinpath("archetypes.pickle")
+    with pickle_file.open("rb") as f:
         archetypes = pickle.load(f)
 
     return archetypes
@@ -439,7 +436,9 @@ def shading_reduction_factor(
     L_k_ovh_q,             # [m] setback/clear distance (or vertical element)
     elements_shading_type, # str | list[str] | None – types of shading elements
     H_k,                   # [m] window height
-    W_k                    # [m] window width
+    W_k,                   # [m] window width
+    annex_f_shading_objects=None,
+    side_fins=None,        # dict: {"left": {...}, "right": {...}} (ISO 52016-1 F.3.3.1)
 ):
     """
     Calculation of shading reduction factor
@@ -452,16 +451,24 @@ def shading_reduction_factor(
     :param elements_shading_type: types of shading elements
     :param H_k: window height
     :param W_k: window width
+    :param side_fins: side fins of infinite height (ISO 52016-1 Annex F,
+        F.3.3.1), ``{"left": {"depth": D, "distance": L}, "right": {...}}``;
+        left/right as seen looking outwards from the window, ``depth`` measured
+        perpendicular to the façade and ``distance`` the horizontal gap between
+        the window edge and the fin, in m. Either side may be omitted.
 
     :return: (F_sh_dir_k_ts, h_k_sun_t)
       * **F_sh_dir_k_ts** in [0..1]: direct-beam shading reduction factor for the window at time t
       * **h_k_sun_t** [m]: remaining 'sunlit' vertical height on the window at time t
 
     Notes on azimuth convention:
-      - This function is convention-agnostic (geographical N=0/E=90/S=180/W=270
-        or ISO S=0/E=+90/W=-90) as long as `phi_sol_t` and `gamma_k_t` use the
-        same convention.
-      - In this project pipeline, callers should pass geographical azimuth.
+      - Overhangs and obstacles are convention-agnostic (geographical
+        N=0/E=90/S=180/W=270 or ISO S=0/E=+90/W=-90) as long as `phi_sol_t`
+        and `gamma_k_t` use the same convention.
+      - Side fins need the geographical (clockwise) convention, so that a sun
+        azimuth larger than the window azimuth is on the right-hand side
+        looking outwards.
+      - In this project pipeline, callers pass geographical azimuth.
     """
 
     # ---- helper for safe numeric conversion ----
@@ -518,7 +525,7 @@ def shading_reduction_factor(
                 types = {str(elements_shading_type).lower()}
 
     has_overhang  = any(t in types for t in ("horizontal_overhang", "vertical_overhang"))
-    has_obstacles = "obstacles" in types
+    has_obstacles = "obstacles" in types or bool(annex_f_shading_objects)
 
     h_k_sun_t = 0.0
 
@@ -539,23 +546,164 @@ def shading_reduction_factor(
         # remaining sunlit height after overhang shadow
         h_k_sun_t   = max(0.0, H - h_k_ovh_q_t)
 
-    # ---- external obstacles (if you have a model, replace the placeholder) ----
-    if has_obstacles:
-        h_k_obst_p_t = 0.0  # TODO: replace with your obstacle-shadow calculation/parameter
-        h_k_sun_t = max(0.0, H - h_k_obst_p_t)
+    # ---- external obstacles: ISO 52016-1 Annex F, F.3.3/F.3.5.2 ----
+    # For every skyline segment crossed by the sun azimuth, project the top
+    # of the obstacle onto the window plane. The blocked lower height is:
+    #     h_shadow = H_top - L * tan(alpha_sun)
+    # Diffuse radiation is not reduced here; the caller combines the direct
+    # factor with direct and diffuse irradiance as required by Annex F.
+    objects = annex_f_shading_objects or []
+
+    def _azimuth_in_segment(phi_deg, start_deg, end_deg):
+        phi = float(phi_deg) % 360.0
+        start = float(start_deg) % 360.0
+        end = float(end_deg) % 360.0
+        width = (end - start) % 360.0
+        if np.isclose(width, 0.0):
+            return False
+        return ((phi - start) % 360.0) <= width + 1e-9
+
+    matched_object = False
+    if objects and a > 0.0:
+        max_shadow_height = 0.0
+        for obj in objects:
+            if not isinstance(obj, dict):
+                continue
+            kind = str(obj.get("kind", obj.get("type", "obstacle"))).lower()
+            if kind not in {"obstacle", "overhang", "shading_object"}:
+                continue
+            try:
+                start = obj.get("azimuth_start_deg", obj.get("azimuth_start"))
+                end = obj.get("azimuth_end_deg", obj.get("azimuth_end"))
+                distance = float(obj.get("distance_m", obj.get("distance", 0.0)))
+            except (TypeError, ValueError):
+                continue
+            if start is None or end is None or not np.isfinite(distance) or distance <= 0.0:
+                continue
+            if not _azimuth_in_segment(p, start, end):
+                continue
+            matched_object = True
+
+            try:
+                if obj.get("top_height_m") is not None:
+                    top_height = float(obj["top_height_m"])
+                else:
+                    top_height = float(obj.get("base_height_m", 0.0)) + float(
+                        obj.get("height_m", obj.get("height", 0.0))
+                    )
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(top_height):
+                continue
+            try:
+                top_height -= float(obj.get("window_sill_height_m", 0.0))
+            except (TypeError, ValueError):
+                pass
+
+            shadow_height = top_height - distance * np.tan(alpha)
+            max_shadow_height = max(max_shadow_height, shadow_height)
+
+        overhang_shadow_height = max(0.0, H - h_k_sun_t) if has_overhang else 0.0
+        total_shadow_height = max(overhang_shadow_height, max_shadow_height)
+        h_k_sun_t = min(H, max(0.0, H - total_shadow_height))
 
     # if no shading element affected the height, assume fully sunlit height
-    if not (has_overhang or has_obstacles):
+    if not (has_overhang or (has_obstacles and matched_object)):
         h_k_sun_t = H
 
-    # sunlit width: if you do not model horizontal shading extent, use total width
-    w_k_sun_t = W
+    # ---- side fins of infinite height: ISO 52016-1 Annex F, F.5/F.6, F.19-F.21 ----
+    # Only the fin on the sun's side casts a shadow on the window:
+    #     w_fin = D_fin * tan(|phi_sol - gamma_k|) - L_fin
+    w_k_fin_shadow = 0.0
+    if isinstance(side_fins, dict):
+        delta = ((p - g + 180.0) % 360.0) - 180.0  # > 0: sun on the right looking out
+        fin = side_fins.get("right") if delta > 0.0 else side_fins.get("left")
+        if isinstance(fin, dict) and abs(delta) > 0.0:
+            depth = to_float(fin.get("depth"), default=0.0) or 0.0
+            distance = to_float(fin.get("distance"), default=0.0) or 0.0
+            w_fin = depth * np.tan(np.radians(min(abs(delta), 90.0 - 1e-9))) - distance
+            w_k_fin_shadow = min(W, max(0.0, w_fin))
+
+    w_k_sun_t = max(0.0, W - w_k_fin_shadow)
 
     # shading reduction factor based on sunlit area over total area
     F_sh_dir_k_ts = (h_k_sun_t * w_k_sun_t) / (H * W)
     F_sh_dir_k_ts = float(np.clip(F_sh_dir_k_ts, 0.0, 1.0))
 
     return F_sh_dir_k_ts, h_k_sun_t
+
+
+def diffuse_shading_reduction_factors(
+    beta_k_t,              # [deg] window tilt (90 = vertical)
+    H_k,                   # [m] window height
+    W_k,                   # [m] window width
+    D_k_ovh_q=None,        # [m] overhang depth
+    L_k_ovh_q=None,        # [m] vertical distance window top - overhang
+    side_fins=None,        # dict as in shading_reduction_factor
+    obstruction_angle_deg=0.0,  # [deg] elevation of the remote skyline (alpha in F.18)
+    has_overhang=False,
+):
+    """
+    Diffuse and reflected shading reduction factors, ISO 52016-1 Annex F
+    Method 2 as detailed in ISO/TR 52016-2:2017, F.6.3 (eq. F.8-F.18).
+
+    The same factor is used for sky-diffuse and horizon-diffuse radiation
+    (F.6.3).  Of the shading devices present (overhang, side fins) and the
+    remote skyline, the smallest factor is kept.  Geometry: overhang
+    ``P1 = D/H``, ``P2 = L/H``; side fins ``P1 = D_fin/W``, ``P2 = L_fin/W``
+    (the two sides are averaged, a missing side counting as no fin).  Window
+    setbacks are not modelled.
+
+    :return: ``(F_sh_dif, F_sh_ref)`` in [0..1] for the sky/horizon-diffuse and
+        the ground-reflected irradiance.
+    """
+
+    def num(x, default=0.0):
+        try:
+            v = float(x)
+        except (TypeError, ValueError):
+            return default
+        return v if np.isfinite(v) else default
+
+    beta = np.radians(num(beta_k_t, 90.0))
+    alpha = num(obstruction_angle_deg)
+    H = num(H_k)
+    W = num(W_k)
+
+    # F.18 (alpha = skyline elevation seen by the window)
+    f_w_sky = (1.0 - np.sin(np.radians(alpha) + beta - np.pi / 2)) / 2.0
+    k_dif = (1.0 + np.cos(beta)) / 2.0
+    k_ref = (1.0 - np.cos(beta)) / 2.0
+
+    def ratio(numer, denom):
+        return numer / denom if denom > 1e-9 else 1.0
+
+    def f_w_s(p1, p2, coeff):  # F.16 / F.17
+        r = np.hypot(p1, p2)
+        return coeff * (1.0 - p2 / r) if r > 0.0 else 0.0
+
+    # remote skyline alone: no setback, fins or overhang
+    f_dif = [ratio(f_w_sky, k_dif)]
+    f_ref = [ratio(1.0 - f_w_sky, k_ref)]
+
+    if has_overhang and H > 0.0:
+        p1 = num(D_k_ovh_q) / H
+        p2 = num(L_k_ovh_q) / H
+        f_w_o = f_w_s(p1, p2, 0.3282)
+        f_dif.append(ratio(f_w_sky - f_w_o, k_dif))  # F.13
+        f_ref.append(ratio(1.0 - f_w_sky, k_ref))    # F.14
+
+    if isinstance(side_fins, dict) and W > 0.0:
+        sides = [side_fins.get("left"), side_fins.get("right")]
+        f_w_fin = 0.0
+        for fin in sides:
+            if isinstance(fin, dict):
+                f_w_fin += f_w_s(num(fin.get("depth")) / W, num(fin.get("distance")) / W, 0.6514) / 2.0
+        f_dif.append(ratio((1.0 - f_w_fin) * f_w_sky, k_dif))          # F.11
+        f_ref.append(ratio((1.0 - f_w_fin) * (1.0 - f_w_sky), k_ref))  # F.12
+
+    clip = lambda v: float(np.clip(v, 0.0, 1.0))
+    return clip(min(f_dif)), clip(min(f_ref))
 
 
 # ====================================================================================================
@@ -670,6 +818,8 @@ def plot_sankey_building(sankey_data):
     :return: sankey graph
 
     '''
+    import plotly.graph_objects as go
+
     inputs = sankey_data.get("inputs", {})
     outputs = sankey_data.get("outputs", {})
     storage = sankey_data.get("energy_accumulated_zone", 0.0)
