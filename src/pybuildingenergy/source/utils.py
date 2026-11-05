@@ -334,6 +334,52 @@ def _resolve_ventilation_component_profile_multiplier(
     return None
 
 
+def _iwg5_causal_window_fraction(vent_cfg, indoor_previous_c, outdoor_c, hour, occupancy_fraction, wind_m_s=0.0):
+    """Return the *current-timestep* opening fraction from a lagged indoor state.
+
+    Only active when building_parameters.ventilation.dynamic_window_control is set.
+    This is an experimental bounded ACH control, not a wind/stack airflow model.
+    It uses previous-step zone-air temperature, so the current heat-balance step
+    does not depend algebraically on its own solution. Not a humidity/IAQ model.
+    """
+    ctl = vent_cfg.get("dynamic_window_control")
+    if ctl is None:
+        return None
+    if not isinstance(ctl, dict):
+        raise ValueError("dynamic_window_control must be a dictionary")
+    name = str(ctl.get("component_name", "")).strip()
+    if not name:
+        raise ValueError("dynamic_window_control requires component_name")
+    t_on = float(ctl.get("indoor_open_above_C", 25.0))
+    delta = float(ctl.get("indoor_outdoor_delta_min_C", 1.5))
+    t_min = float(ctl.get("outdoor_min_C", 12.0))
+    t_max = float(ctl.get("outdoor_max_C", 29.0))
+    wind_max = float(ctl.get("wind_close_above_m_s", 12.0))
+    occ_min = float(ctl.get("minimum_occupancy_fraction", 0.2))
+    h_begin = int(ctl.get("night_start_hour", 22))
+    h_end = int(ctl.get("night_end_hour", 7))
+    policy = str(ctl.get("access_policy", "night_or_occupied"))
+    if policy not in ("night_or_occupied", "night_only", "occupied_only", "unrestricted"):
+        raise ValueError("Unsupported dynamic window access_policy: "+policy)
+    nums = (t_on, delta, t_min, t_max, wind_max, occ_min, indoor_previous_c, outdoor_c, wind_m_s, occupancy_fraction)
+    if not all(math.isfinite(float(v)) for v in nums):
+        raise ValueError("Non-finite dynamic window control input")
+    if t_min >= t_max or delta < 0 or wind_max <= 0 or not 0 <= occ_min <= 1:
+        raise ValueError("Invalid dynamic window control thresholds")
+    if not 0 <= h_begin <= 23 or not 0 <= h_end <= 23:
+        raise ValueError("Invalid night opening hour")
+    hour = int(hour)
+    if not 0 <= hour <= 23:
+        raise ValueError("Invalid simulation hour")
+    night = (hour >= h_begin or hour < h_end) if h_begin > h_end else (h_begin <= hour < h_end)
+    occupied = occupancy_fraction >= occ_min
+    access = (night or occupied) if policy == "night_or_occupied" else (
+        night if policy == "night_only" else occupied if policy == "occupied_only" else True)
+    thermal = indoor_previous_c >= t_on and outdoor_c <= indoor_previous_c-delta
+    outdoor_ok = t_min <= outdoor_c <= t_max and wind_m_s <= wind_max
+    return (name, 1.0 if (access and thermal and outdoor_ok) else 0.0)
+
+
 def _resolve_single_zone_vent_boundary(
     building_object, T_zone, Tstepi, sim_df, profile_df,
     ahu_outputs_collector=None,
@@ -356,6 +402,20 @@ def _resolve_single_zone_vent_boundary(
     )
     _vent_cfg = building_object.get("building_parameters", {}).get("ventilation", {}) or {}
     _comp_mult: dict = {}
+    if _vent_cfg.get("dynamic_window_control") is not None:
+        # Evaluate once per ISO timestep using the *previous* air-node state.
+        # Do not infer this multiplier from previously computed no-AC traces.
+        _weather_hour = sim_df.index[Tstepi].hour
+        _occ = float(profile_df["occupancy_profile"].iloc[Tstepi])
+        _window_name, _window_fraction = _iwg5_causal_window_fraction(
+            _vent_cfg, float(T_zone), float(sim_df.iloc[Tstepi]["T2m"]),
+            _weather_hour, _occ,
+            float(sim_df.iloc[Tstepi].get("WS10m", 0.0) or 0.0),
+        )
+        _known_names = [str(c.get("name", "")).strip() for c in _vent_cfg.get("components", [])]
+        if _known_names.count(_window_name) != 1:
+            raise ValueError("dynamic_window_control component_name must identify exactly one ventilation component")
+        _comp_mult[_window_name] = _window_fraction
     for _comp in _vent_cfg.get("components", []):
         _cname = str(_comp.get("name", "")).strip()
         if not _cname:
@@ -3283,6 +3343,49 @@ def _safe_load(P_max, T_set, T0, Tupper, clip_factor=2000.0):
     return float(max(pmax, min(0.0, load)))
 
 
+
+
+def _resolve_profile_calendar_settings(building_object, keyword_arguments):
+    """Resolve an explicit reproducible occupancy-calendar setting.
+
+    ``profile_calendar_year`` denotes the JAN-DEC occupancy/holiday year, not
+    the PVGIS TMY source year. HourlyProfileGenerator includes December of the
+    preceding year as a warmup month, hence start_year = calendar_year - 1.
+
+    Existing callers may omit either setting. A supplied ISO country code
+    bypasses reverse geocoding entirely.
+    """
+    explicit_country = keyword_arguments.get("profile_country")
+    if explicit_country is not None:
+        if not isinstance(explicit_country, str):
+            raise ValueError("profile_country must be a two-letter ISO country code")
+        country = explicit_country.strip().upper()
+        if len(country) != 2 or not country.isalpha() or not country.isascii():
+            raise ValueError("profile_country must be a two-letter ISO country code")
+    else:
+        from .generate_profile import get_country_code_from_latlon
+        try:
+            country = get_country_code_from_latlon(
+                building_object["building"]["latitude"],
+                building_object["building"]["longitude"],
+            )
+        except Exception:
+            country = "IT"
+
+    requested_year = keyword_arguments.get("profile_calendar_year")
+    if requested_year is None:
+        return {"country": country, "start_year": None}
+    if isinstance(requested_year, bool):
+        raise ValueError("profile_calendar_year must be an integer year")
+    try:
+        year = int(requested_year)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("profile_calendar_year must be an integer year") from exc
+    if year < 1901 or year > 2099 or str(requested_year).strip() != str(year):
+        raise ValueError("profile_calendar_year must be an integer in 1901..2099")
+    return {"country": country, "start_year": year - 1}
+
+
 class ISO52016:
 
     or_tilt_azim_dic = {
@@ -4690,6 +4793,8 @@ class ISO52016:
         progress_log_every_steps=None,
         progress_logger=None,
         c_int_per_A_us=10000.0,
+        profile_country=None,
+        profile_calendar_year=None,
     ):
         """
         Multizone envelope simulation with coupled internal partitions and ideal HVAC.
@@ -4928,13 +5033,10 @@ class ISO52016:
             return aligned
 
         if use_profiles:
-            try:
-                country_calendar = get_country_code_from_latlon(
-                    building_object["building"]["latitude"],
-                    building_object["building"]["longitude"],
-                )
-            except Exception:
-                country_calendar = "IT"
+            calendar_settings = _resolve_profile_calendar_settings(
+                building_object,
+                {"profile_country": profile_country, "profile_calendar_year": profile_calendar_year},
+            )
 
             for zone_obj in zones_for_profiles:
                 zname = str(zone_obj.get("name", "main"))
@@ -4955,9 +5057,9 @@ class ISO52016:
                         lighting_schedule_weekend,
                     )
                     gen = HourlyProfileGenerator(
-                        country=country_calendar,
                         num_months=13,
                         category_profiles=category_profiles,
+                        **calendar_settings,
                     )
                     profile_raw = gen.generate()
                     aligned = _align_profile_raw_to_weather(profile_raw)
@@ -7477,6 +7579,10 @@ class ISO52016:
         Useful keyword arguments:
 
         * ``weather_source`` ("pvgis" | "epw") and ``path_weather_file``.
+        * ``profile_country`` (ISO two-letter national holiday calendar) and
+          ``profile_calendar_year`` (January-December schedule year, e.g. 2025).
+          Both are optional for backward compatibility; the calendar year is
+          independent of the historical years composing an EPW/PVGIS TMY.
         * ``hvac_control_variable``: "operative" (default, ISO 52016-1) or "air"
           (zone air temperature thermostat, as required by ASHRAE 140).
         * ``internal_convection_model``: "table" (default) or "tarp".
@@ -8035,14 +8141,10 @@ class ISO52016:
             lighting_schedule_workdays,
             lighting_schedule_weekend,
             )
-        try:
-            country_calendar = get_country_code_from_latlon(
-                building_object["building"]["latitude"],
-                building_object["building"]["longitude"],
-            )
-        except Exception:
-            country_calendar = "IT"
-        gen = HourlyProfileGenerator(country=country_calendar, num_months=13, category_profiles=category_profiles)
+        calendar_settings = _resolve_profile_calendar_settings(building_object, kwargs)
+        gen = HourlyProfileGenerator(
+            num_months=13, category_profiles=category_profiles, **calendar_settings
+        )
         profile_df = gen.generate()
 
         def _has_energy(arrlike):
@@ -9679,14 +9781,10 @@ class ISO52016:
             lighting_schedule_workdays,
             lighting_schedule_weekend,
             )
-        try:
-            country_calendar = get_country_code_from_latlon(
-                building_object["building"]["latitude"],
-                building_object["building"]["longitude"],
-            )
-        except Exception:
-            country_calendar = "IT"
-        gen = HourlyProfileGenerator(country=country_calendar, num_months=13, category_profiles=category_profiles)
+        calendar_settings = _resolve_profile_calendar_settings(building_object, kwargs)
+        gen = HourlyProfileGenerator(
+            num_months=13, category_profiles=category_profiles, **calendar_settings
+        )
         profile_df = gen.generate()
 
         def _has_energy(arrlike):
