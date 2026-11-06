@@ -3801,13 +3801,11 @@ class ISO52016:
             # mass concentrated at external side
             # OPAQUE: kpl1 = km_eli ; kpl2=kpl3=kpl4=kpl5=0
             # GROUND: kpl3 = km_eli ; kpl4=kpl5=0
-            node = 0
             for i in idx_class_e:
                 if el_type[i] == "OP" or el_type[i] == "ADJ":
-                    kappa_pli_eli_[node, i] = list_kappa_el[i]
+                    kappa_pli_eli_[0, i] = list_kappa_el[i]
                 elif el_type[i] == "GR":
-                    node = 2
-                    kappa_pli_eli_[node, i] = list_kappa_el[i]
+                    kappa_pli_eli_[2, i] = list_kappa_el[i]
 
         idx_class_ie = [i for i in range(len(el_type)) if surf_class[i] == "class_ie"]
         if idx_class_ie:
@@ -3859,13 +3857,11 @@ class ISO52016:
             # mass concentrated inside
             # OPAQUE: kpl1=kpl2=kpl4=kpl5=0; kpl3= km_eli
             # GROUND: kpl4=km_eli; kpl3=kpl5=0
-            node = 2
             for i in idx_class_m:
                 if el_type[i] == "OP" or el_type[i] == "ADJ":
-                    kappa_pli_eli_[node, i] = list_kappa_el[i]
+                    kappa_pli_eli_[2, i] = list_kappa_el[i]
                 if el_type[i] == "GR":
-                    node = 3
-                    kappa_pli_eli_[node, i] = list_kappa_el[i]
+                    kappa_pli_eli_[3, i] = list_kappa_el[i]
 
         # Fixed ground layer, for all classes (eq. 50f): kpl2 = kgr, kpl1 = kgr;vi = 0.
         # kgr should come from ISO 13370/13789 (0.5 m ground layer); 1e6 J/(m2 K) is a

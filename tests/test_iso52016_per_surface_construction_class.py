@@ -172,3 +172,27 @@ def test_ground_floor_node_capacities_follow_eq_50(cls, expected_shares):
     expected[1] = KAPPA_GR  # eq. 50f: kpl2 = kgr for all classes
     assert kappa == pytest.approx(expected)
     assert kappa[0] == 0.0  # kpl1 = kgr;vi = 0
+
+
+@pytest.mark.parametrize("cls, wall_node, floor_node", [("class_e", 0, 2), ("class_m", 2, 3)])
+@pytest.mark.parametrize("order", [("OP", "GR"), ("GR", "OP")])
+def test_class_e_and_m_do_not_depend_on_surface_order(cls, wall_node, floor_node, order):
+    """A ground floor processed before an opaque element must not shift the
+    opaque element's node (the node index used to leak between surfaces)."""
+    km = 1000.0
+    building_object = {
+        "building": {"construction_class": cls},
+        "building_surface": [
+            {"name": t, "ISO52016_type_string": t, "thermal_capacity": km} for t in order
+        ],
+    }
+    kappa = ISO52016.Areal_heat_capacity_of_element(building_object).kappa_pli_eli
+    by_type = {t: kappa[:, i] for i, t in enumerate(order)}
+
+    wall = [0.0] * 5
+    wall[wall_node] = km
+    floor = [0.0] * 5
+    floor[floor_node] = km
+    floor[1] = KAPPA_GR
+    assert by_type["OP"] == pytest.approx(wall)
+    assert by_type["GR"] == pytest.approx(floor)

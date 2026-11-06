@@ -1,3 +1,16 @@
+2.1.3 (2026-11-06)
+------------------
+
+Engine
+~~~~~~
+
+* Fix: ``Areal_heat_capacity_of_element`` shared one node index between the surfaces of
+  the ``class_e`` and ``class_m`` branches, so an opaque element listed after a ground
+  floor took the ground floor's node (EN ISO 52016-1 eq. 45, 47b, 50b, 50e) and the
+  result depended on the order of the surfaces.  The nodes are now fixed per element
+  type.  Result-changing for ``class_e`` / ``class_m`` buildings with a ground floor
+  listed before an opaque element (present since 2.1.0, also in 2.1.2).
+
 2.1.2 (2026-11-06)
 ------------------
 

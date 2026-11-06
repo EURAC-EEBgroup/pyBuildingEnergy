@@ -10,7 +10,7 @@ from importlib import import_module
 
 __author__ = "Daniele Antonucci, Ulrich Filippi Oberegger, Olga Somova"
 __email__ = "daniele.antonucci@eurac.edu"
-__version__ = "2.1.2"
+__version__ = "2.1.3"
 
 
 _PUBLIC_IMPORTS = {
