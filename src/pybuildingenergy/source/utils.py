@@ -3780,6 +3780,14 @@ class ISO52016:
             for surf in building_object["building_surface"]
         ]
 
+        valid_classes = {"class_i", "class_e", "class_ie", "class_d", "class_m"}
+        for i, construction_class in enumerate(surf_class):
+            if construction_class not in valid_classes:
+                raise ValueError(
+                    f"building_surface[{i}]: unknown construction_class "
+                    f"{construction_class!r}; expected one of {sorted(valid_classes)}"
+                )
+
         # Initialization of heat capacity of nodes
         kappa_pli_eli_ = np.zeros((5, len(el_type)))
 
