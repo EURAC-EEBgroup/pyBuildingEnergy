@@ -3807,8 +3807,7 @@ class ISO52016:
                 if el_type[i] == "OP" or el_type[i] == "ADJ":
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
                 elif el_type[i] == "GR":
-                    node = 2
-                    kappa_pli_eli_[node, i] = list_kappa_el[i]
+                    kappa_pli_eli_[2, i] = list_kappa_el[i]
 
         idx_class_ie = [i for i in range(len(el_type)) if surf_class[i] == "class_ie"]
         if idx_class_ie:
@@ -3865,8 +3864,7 @@ class ISO52016:
                 if el_type[i] == "OP" or el_type[i] == "ADJ":
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
                 if el_type[i] == "GR":
-                    node = 3
-                    kappa_pli_eli_[node, i] = list_kappa_el[i]
+                    kappa_pli_eli_[3, i] = list_kappa_el[i]
 
         return aeral_heat_capacity(kappa_pli_eli=kappa_pli_eli_)
 
