@@ -380,6 +380,64 @@ def _iwg5_causal_window_fraction(vent_cfg, indoor_previous_c, outdoor_c, hour, o
     return (name, 1.0 if (access and thermal and outdoor_ok) else 0.0)
 
 
+
+def _iwg5_geometry_window_fraction(building_object, ctl, zone_temp_c, outdoor_temp_c, wind_m_s, zone_volume_m3, max_ach):
+    """Return the fraction of a capped ACH component delivered by window wind/stack.
+
+    Catalogue transparent surfaces are grouped glazing per facade, not actual
+    individual sash geometry. Restrict the one-sided airflow model to the
+    selected facade and reconcile its opening area to the catalogue area.
+    The stack height remains a rough proxy from the supplied window heights.
+    """
+    if not (math.isfinite(float(max_ach)) and math.isfinite(float(zone_volume_m3))):
+        raise ValueError('Window ACH cap and zone volume must be finite')
+    if max_ach <= 0 or zone_volume_m3 <= 0:
+        raise ValueError('Window ACH cap and zone volume must be positive')
+    a_open = float(ctl['effective_opening_area_m2'])
+    azimuth = float(ctl.get('openable_azimuth_deg', 270.0)) % 360
+    azimuth_tolerance = float(ctl.get('azimuth_tolerance_deg', 20.0))
+    if not math.isfinite(a_open) or not 0 < a_open <= 20:
+        raise ValueError('effective_opening_area_m2 must be in (0,20]')
+    if not math.isfinite(azimuth_tolerance) or not 0 < azimuth_tolerance < 60:
+        raise ValueError('azimuth_tolerance_deg must be in (0,60)')
+    surfaces = [s for s in building_object.get('building_surface', [])
+                if s.get('type') == 'transparent']
+    eligible = []
+    available = 0.0
+    for surf in surfaces:
+        facing = float(surf.get('orientation', {}).get('azimuth', -999))
+        if abs(((facing-azimuth+180)%360)-180) > azimuth_tolerance:
+            continue
+        area = float(surf.get('area', 0.0))
+        height = float(surf.get('height', 0.0))
+        if not (math.isfinite(area) and math.isfinite(height) and area > 0 and height > 0):
+            raise ValueError('Selected facade opening needs positive finite area and height')
+        # The engine uses height*width, which need not equal the aggregated
+        # surface area. Use an equivalent aggregate width, not source width.
+        copied = dict(surf)
+        copied['width'] = area / height
+        eligible.append(copied)
+        available += area
+    if not eligible:
+        raise ValueError('No windows on selected opening facade')
+    if a_open > available + 1e-9:
+        raise ValueError('Free opening exceeds selected facade glazing')
+    frac = min(1.0, a_open / available)
+    # Crucial: closed facades must not contribute to the wind/stack geometry.
+    # It also avoids the engine's fallback to opening ALL facades when a
+    # closed transparent surface lacks usable height or width metadata.
+    single_facade = dict(building_object)
+    single_facade['building_surface'] = eligible
+    H = VentilationInternalGains.heat_transfer_coefficient_by_ventilation(
+        single_facade, float(zone_temp_c), float(outdoor_temp_c), float(wind_m_s),
+        Rw_arg_i=[frac] * len(eligible), type_ventilation='temp_wind')
+    H = float(np.asarray(H).reshape(-1)[0])
+    H_cap = (1.204 * 1006.0) * float(zone_volume_m3) * float(max_ach) / 3600.0
+    if not math.isfinite(H) or H < 0:
+        raise ValueError('Nonphysical wind/stack ventilation coefficient')
+    return min(1.0, max(0.0, H / H_cap))
+
+
 def _resolve_single_zone_vent_boundary(
     building_object, T_zone, Tstepi, sim_df, profile_df,
     ahu_outputs_collector=None,
@@ -415,6 +473,21 @@ def _resolve_single_zone_vent_boundary(
         _known_names = [str(c.get("name", "")).strip() for c in _vent_cfg.get("components", [])]
         if _known_names.count(_window_name) != 1:
             raise ValueError("dynamic_window_control component_name must identify exactly one ventilation component")
+        # The pre-existing dynamic controller supplies the opening decision.
+        # When requested, wind and stack effects determine the actual air flow.
+        _ctl = _vent_cfg['dynamic_window_control']
+        _flow_mode = str(_ctl.get('flow_model', 'constant_ach_cap'))
+        if _flow_mode == 'existing_temp_wind_single_sided' and _window_fraction > 0:
+            _window_comp = next(c for c in _vent_cfg['components']
+                                if str(c.get('name','')).strip() == _window_name)
+            if _window_comp.get('ventilation_type') != 'constant_ach':
+                raise ValueError('Geometry-controlled window needs constant_ach cap component')
+            _window_fraction *= _iwg5_geometry_window_fraction(
+                building_object, _ctl, float(T_zone), float(sim_df.iloc[Tstepi]['T2m']),
+                float(sim_df.iloc[Tstepi].get('WS10m', 0.0) or 0.0), _zone_vol,
+                float(_window_comp['air_changes_per_hour']))
+        elif _flow_mode not in ('existing_temp_wind_single_sided', 'constant_ach_cap'):
+            raise ValueError('Unknown dynamic window flow_model: '+_flow_mode)
         _comp_mult[_window_name] = _window_fraction
     for _comp in _vent_cfg.get("components", []):
         _cname = str(_comp.get("name", "")).strip()
