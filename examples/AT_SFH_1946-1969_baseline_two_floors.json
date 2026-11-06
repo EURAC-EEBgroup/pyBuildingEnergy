@@ -1,0 +1,361 @@
+{
+  "$schema": "pybuildingenergy-system-config-v2",
+  "weather": {
+    "source": "pvgis",
+    "file": null
+  },
+  "building": {
+    "building": {
+      "name": "AT_SFH_1946-1969_baseline_two_floors",
+      "azimuth_relative_to_true_north": 0,
+      "latitude": 48.2082,
+      "longitude": 16.3738,
+      "exposed_perimeter": 39.4,
+      "height": 6.32,
+      "wall_thickness": 0.3,
+      "n_floors": 2,
+      "building_type_class": "Residential_detached_house",
+      "adj_zones_present": false,
+      "number_adj_zone": 0,
+      "net_floor_area": 165.4,
+      "construction_class": "class_iii",
+      "construction_year": "1946-1969",
+      "country": "Austria",
+      "note_net_floor_area": "Derived as 82.7 m2 footprint x 2 floors because the source archetype specifies net_floor_area=0.0."
+    },
+    "adjacent_zones": [],
+    "building_surface": [
+      {
+        "name": "Roof to unheated attic",
+        "type": "opaque",
+        "area": 82.7,
+        "sky_view_factor": 0.01,
+        "u_value": 0.583,
+        "solar_absorptance": 0.6,
+        "thermal_capacity": 744000.0,
+        "orientation": {
+          "azimuth": 0,
+          "tilt": 0
+        },
+        "name_adj_zone": null
+      },
+      {
+        "name": "Opaque north wall",
+        "type": "opaque",
+        "area": 53.225,
+        "sky_view_factor": 0.5,
+        "u_value": 0.986,
+        "solar_absorptance": 0.6,
+        "thermal_capacity": 2501575.0,
+        "orientation": {
+          "azimuth": 0,
+          "tilt": 90
+        },
+        "name_adj_zone": null
+      },
+      {
+        "name": "Opaque east wall",
+        "type": "opaque",
+        "area": 53.225,
+        "sky_view_factor": 0.5,
+        "u_value": 0.986,
+        "solar_absorptance": 0.6,
+        "thermal_capacity": 2501575.0,
+        "orientation": {
+          "azimuth": 90,
+          "tilt": 90
+        },
+        "name_adj_zone": null
+      },
+      {
+        "name": "Opaque south wall",
+        "type": "opaque",
+        "area": 53.225,
+        "sky_view_factor": 0.5,
+        "u_value": 0.986,
+        "solar_absorptance": 0.6,
+        "thermal_capacity": 2501575.0,
+        "orientation": {
+          "azimuth": 180,
+          "tilt": 90
+        },
+        "name_adj_zone": null
+      },
+      {
+        "name": "Opaque west wall",
+        "type": "opaque",
+        "area": 53.225,
+        "sky_view_factor": 0.5,
+        "u_value": 0.986,
+        "solar_absorptance": 0.6,
+        "thermal_capacity": 2501575.0,
+        "orientation": {
+          "azimuth": 270,
+          "tilt": 90
+        },
+        "name_adj_zone": null
+      },
+      {
+        "name": "Slab to ground",
+        "type": "opaque",
+        "boundary": "GROUND",
+        "area": 82.7,
+        "sky_view_factor": 0,
+        "u_value": 0.84,
+        "solar_absorptance": 0.0,
+        "thermal_capacity": 408000.0,
+        "orientation": {
+          "azimuth": 0,
+          "tilt": 0
+        },
+        "name_adj_zone": null
+      },
+      {
+        "name": "Window north",
+        "type": "transparent",
+        "area": 9.05,
+        "sky_view_factor": 0.5,
+        "u_value": 1.582,
+        "solar_absorptance": 0.6,
+        "thermal_capacity": 0,
+        "orientation": {
+          "azimuth": 0,
+          "tilt": 90
+        },
+        "name_adj_zone": null,
+        "height": 1.5,
+        "g_value": 0.65,
+        "width": 6.0333333333,
+        "parapet": 1.1,
+        "shading": false,
+        "shading_type": "horizontal_overhang",
+        "width_or_distance_of_shading_elements": 0.5,
+        "overhang_proprieties": {
+          "width_of_horizontal_overhangs": 1.0
+        }
+      },
+      {
+        "name": "Window east",
+        "type": "transparent",
+        "area": 9.05,
+        "sky_view_factor": 0.5,
+        "u_value": 1.582,
+        "solar_absorptance": 0.6,
+        "thermal_capacity": 0,
+        "orientation": {
+          "azimuth": 90,
+          "tilt": 90
+        },
+        "name_adj_zone": null,
+        "height": 1.5,
+        "g_value": 0.65,
+        "width": 6.0333333333,
+        "parapet": 1.1,
+        "shading": false,
+        "shading_type": "horizontal_overhang",
+        "width_or_distance_of_shading_elements": 0.5,
+        "overhang_proprieties": {
+          "width_of_horizontal_overhangs": 1.0
+        }
+      },
+      {
+        "name": "Window south",
+        "type": "transparent",
+        "area": 9.05,
+        "sky_view_factor": 0.5,
+        "u_value": 1.582,
+        "solar_absorptance": 0.6,
+        "thermal_capacity": 0,
+        "orientation": {
+          "azimuth": 180,
+          "tilt": 90
+        },
+        "name_adj_zone": null,
+        "height": 1.5,
+        "g_value": 0.65,
+        "width": 6.0333333333,
+        "parapet": 1.1,
+        "shading": false,
+        "shading_type": "horizontal_overhang",
+        "width_or_distance_of_shading_elements": 0.5,
+        "overhang_proprieties": {
+          "width_of_horizontal_overhangs": 1.0
+        }
+      },
+      {
+        "name": "Window west",
+        "type": "transparent",
+        "area": 9.05,
+        "sky_view_factor": 0.5,
+        "u_value": 1.582,
+        "solar_absorptance": 0.6,
+        "thermal_capacity": 0,
+        "orientation": {
+          "azimuth": 270,
+          "tilt": 90
+        },
+        "name_adj_zone": null,
+        "height": 1.5,
+        "g_value": 0.65,
+        "width": 6.0333333333,
+        "parapet": 1.1,
+        "shading": false,
+        "shading_type": "horizontal_overhang",
+        "width_or_distance_of_shading_elements": 0.5,
+        "overhang_proprieties": {
+          "width_of_horizontal_overhangs": 1.0
+        }
+      }
+    ],
+    "units": {
+      "area": "m²",
+      "u_value": "W/m²K",
+      "thermal_capacity": "J/kgK",
+      "azimuth": "degrees (0=N, 90=E, 180=S, 270=W)",
+      "tilt": "degrees (0=horizontal, 90=vertical)",
+      "internal_gain": "W/m²",
+      "internal_gain_profile": "Normalized to 0-1",
+      "HVAC_profile": "0: off, 1: on"
+    },
+    "building_parameters": {
+      "temperature_setpoints": {
+        "heating_setpoint": 20,
+        "heating_setback": 18,
+        "cooling_setpoint": 25,
+        "cooling_setback": 30,
+        "units": "°C"
+      },
+      "system_capacities": {
+        "heating_capacity": 20000,
+        "cooling_capacity": 0,
+        "units": "W"
+      },
+      "ventilation": {
+        "ventilation_type": "occupancy",
+        "flow_rate_per_person": 0.3,
+        "units": "l/(s m2)",
+        "custom_heat_transfer_coefficient_ventilation": null
+      },
+      "internal_gains": [
+        {
+          "name": "occupants",
+          "full_load": 13,
+          "weekday": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+          "weekend": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+        },
+        {
+          "name": "appliances",
+          "full_load": 0,
+          "weekday": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.7, 0.7, 0.5, 0.5, 0.6, 0.6, 0.6, 0.6, 0.5, 0.5, 0.7, 0.7, 0.8, 0.8, 0.8, 0.6, 0.6],
+          "weekend": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.7, 0.7, 0.5, 0.5, 0.6, 0.6, 0.6, 0.6, 0.5, 0.5, 0.7, 0.7, 0.8, 0.8, 0.8, 0.6, 0.6]
+        },
+        {
+          "name": "lighting",
+          "full_load": 0,
+          "weekday": [0, 0, 0, 0, 0, 0, 0.15, 0.15, 0.15, 0.15, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.15, 0.15],
+          "weekend": [0, 0, 0, 0, 0, 0, 0.15, 0.15, 0.15, 0.15, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.15, 0.15]
+        }
+      ],
+      "construction": {
+        "wall_thickness": 0.3,
+        "units": "wall_thickness [m]; thermal_bridge_length_m [m]; thermal_bridge_psi_W_mK [W/(m K)] -> H_tb = length*psi [W/K]",
+        "thermal_bridge_length_m": 157.6,
+        "thermal_bridge_psi_W_mK": 0.2
+      },
+      "climate_parameters": {
+        "coldest_month": 1,
+        "units": "1-12 (January-December)"
+      },
+      "heating_profile": {
+        "weekday": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+        "weekend": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+      },
+      "cooling_profile": {
+        "weekday": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        "weekend": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      },
+      "ventilation_profile": {
+        "weekday": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+        "weekend": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+      }
+    }
+  },
+  "systems": {
+    "emission": {
+      "enabled": true,
+      "emitter_type": "Floor heating",
+      "config": {
+        "demand_unit": "kWh",
+        "heating": {
+          "stratification_K": 0.0,
+          "control_K": 1.2,
+          "hydraulic_balancing_K": 0.0,
+          "room_automation_K": -0.5,
+          "nominal_power_kW": 20,
+          "fan_power_W": 0,
+          "fan_count": 0,
+          "control_power_W": 0,
+          "control_count": 0,
+          "convective_fraction": 0.5,
+          "radiation_K": 0.0,
+          "embedded_K": 0.25
+        },
+        "cooling": {
+          "stratification_K": 0.0,
+          "control_K": 0.0,
+          "hydraulic_balancing_K": 0.0,
+          "room_automation_K": 0.0,
+          "nominal_power_kW": 0.0,
+          "fan_power_W": 0,
+          "fan_count": 0,
+          "control_power_W": 0,
+          "control_count": 0,
+          "convective_fraction": 0.7
+        }
+      }
+    },
+    "distribution": {
+      "enabled": false
+    },
+    "control": {
+      "enabled": false
+    },
+    "generation": {
+      "enabled": false
+    },
+    "dhw": {
+      "enabled": false
+    },
+    "pv": {
+      "enabled": false
+    },
+    "ahu": {
+      "enabled": false
+    }
+  },
+  "options": {
+    "envelope_only": true
+  },
+  "source_archetype": {
+    "id": "AT_SFH_1946-1969",
+    "category": "Single Family House",
+    "country": "Austria",
+    "roof_area_m2": 82.7,
+    "roof_u_W_m2K": 0.583,
+    "roof_thermal_capacity": 744000.0,
+    "wall_area_m2": 212.9,
+    "wall_u_W_m2K": 0.986,
+    "wall_thermal_capacity": 10006300.0,
+    "slab_area_m2": 82.7,
+    "slab_u_W_m2K": 0.84,
+    "slab_thermal_capacity": 408000.0,
+    "window_area_m2": 36.2,
+    "window_u_W_m2K": 1.582,
+    "window_height_m": 1.5,
+    "window_width_total_m": 24.13,
+    "heating_eta_generation": 0.75,
+    "cooling_cop_generation": 2.5,
+    "dhw_eta_generation": 0.58,
+    "fp_electric": 2.42
+  }
+}

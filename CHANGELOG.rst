@@ -1,5 +1,5 @@
-Unreleased
-----------
+2.1.2 (2026-11-06)
+------------------
 
 Engine
 ~~~~~~
@@ -26,6 +26,36 @@ Engine
   the final energy and the primary energy; new summary keys ``E_lighting_kWh``,
   ``LENI_kWh_m2a`` and an ``E_lighting_kWh`` hourly column.  The lighting heat is not
   fed back to the zone, whose gains stay those of the building JSON.
+
+* Ground floor mass classes (EN ISO 52016-1 6.5.7.3): the fixed-ground heat capacity
+  ``kgr`` is now put on node pl2 for every mass-position class (eq. 50f), not only for
+  ``class_i``, and the ``class_ie`` ground floor splits ``km`` over nodes pl3 and pl5
+  (eq. 50c) instead of pl1 and pl5.  ``kgr`` stays at the placeholder 1e6 J/(m2 K)
+  (``KAPPA_GR_FIXED_GROUND``) until it is taken from ISO 13370/13789.
+* Result-changing: slab-on-ground floors that are not ``class_i`` (e.g. ASHRAE 140
+  Case 900) now include the ground heat capacity.
+
+Primary energy
+~~~~~~~~~~~~~~
+
+* ``PrimaryEnergyAccountingCalculator`` now follows EN ISO 52000-1:2017: the exported
+  energy is weighted with Step A (resources used to produce it) and Step B (resources
+  avoided by the grid), ``E_exp = E_A + k_exp (E_B - E_A)`` (eq. 20-28, option ``k_exp``,
+  Table B.17); the on-site renewable production (PV, wind, solar thermal, environment
+  heat, columns ``E_onsite_*_kWh``) counts as delivered renewable energy (Table B.30);
+  new outputs ``RER`` (eq. 17, perimeters of Table B.24, option ``perimeters``),
+  ``PE_net_ren_kWh`` and greenhouse gas emissions ``CO2_net_kg`` (9.6.3, factor key
+  ``co2`` in kg/kWh); ``factor_set="iso_52000_1_b16"`` selects the Table B.16 defaults;
+  ``allow_negative`` lifts the clip at 0 (eq. 2 allows a negative balance).  Without
+  on-site columns and with ``k_exp = 1`` the result is unchanged.
+* Composer: the PV generation and the heat pump environment heat are passed as on-site
+  renewable energy, the exported CHP electricity gets a Step A factor from the
+  fuel allocated to the electricity (eq. 4-7, energy allocation).  New options
+  ``pe_k_exp``, ``pe_factor_set``, ``pe_allow_negative``; new summary keys
+  ``PE_net_ren_kWh``, ``RER``, ``CO2_net_kg``, ``E_onsite_renewable_kWh``.
+* Result-changing: with a PV system or a heat pump the renewable primary energy
+  (``PE_net_ren_kWh``, ``PE_net_total_kWh``) now includes the on-site renewable
+  energy; the non-renewable figures are unchanged.
 
 2.1.1 (2026-10-21)
 ------------------

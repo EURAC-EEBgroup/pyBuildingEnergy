@@ -110,6 +110,9 @@ DEFAULT_SCENARIO: dict[str, Any] = {
         "fallback_cooling_eer": None,       # ideal chiller for cooling the chosen generator cannot serve
         "baseline_electricity_kWh_per_year": 0.0,   # other electric loads (flat profile) seen by the PV
         "primary_energy_factors": None,     # override of PrimaryEnergyAccountingCalculator factors
+        "pe_factor_set": "default",         # 'default' (STREPIN) | 'iso_52000_1_b16' (EN ISO 52000-1 Table B.16)
+        "pe_k_exp": 1.0,                    # EN ISO 52000-1 Table B.17: share of the export credited (0 = export ignored)
+        "pe_allow_negative": False,         # EN ISO 52000-1 Formula (2) allows a negative balance; False clips it at 0
         "ahu_flow_ach": 0.5,                # AHU supply flow = ach x zone volume (None keeps supply_flow_m3_h of the JSON option)
         "ahu_infiltration_ach": None,       # infiltration kept alongside the AHU (None = building airflow_rates.infiltration_rate)
         "pe_balance": "monthly",            # 'annual' | 'monthly' | 'hourly': period over which export credit offsets deliveries
@@ -687,6 +690,7 @@ class CompositionResult:
             f"Grid electricity: import {s['E_grid_import_kWh']:.0f}  export {s['E_export_kWh']:.0f} kWh",
             f"Primary energy ({s['PE_balance']} balance): delivered nren {s['PE_delivered_nonren_kWh']:.0f} - export credit {s['PE_export_credit_nonren_kWh']:.0f}"
             f" -> net nren {s['PE_net_nonren_kWh']:.0f}, total {s['PE_net_total_kWh']:.0f} kWh ({s['PE_net_total_kWh'] / area:.1f} kWh/m2a)",
+            f"EN ISO 52000-1: EP_ren {s['PE_net_ren_kWh']:.0f} kWh | RER {s['RER']:.2f} | CO2 {s['CO2_net_kg']:.0f} kg | k_exp {s['PE_k_exp']:.2f}",
             f"Overall system efficiency (need / final energy): {s['system_efficiency']:.2f}",
         ]
         if self.notes:
@@ -1040,17 +1044,51 @@ def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> Comp
         "E_delivered_district_heat_kWh": weights * carriers["district_heat_kWh"],
         "E_delivered_district_cooling_kWh": weights * carriers["district_cooling_kWh"],
     }, index=idx)
-    pe_cfg = {"primary_energy_factors": opt["primary_energy_factors"]} if opt["primary_energy_factors"] else {}
+    pe_cfg = {"factor_set": opt["pe_factor_set"], "k_exp": opt["pe_k_exp"], "allow_negative": opt["pe_allow_negative"]}
+    if opt["primary_energy_factors"]:
+        pe_cfg["primary_energy_factors"] = opt["primary_energy_factors"]
     pe_calc = PrimaryEnergyAccountingCalculator(pe_cfg)
+
+    # On-site renewable energy counted as delivered (EN ISO 52000-1 Table B.30)
+    if pv_ts is not None:
+        pe_hourly["E_onsite_pv_kWh"] = pv_ts["E_PV_gen_kWh"].astype(float)
+    if kind == "heat_pump" and float(gs.get("QHW_environment_in_kWh", 0.0)) > 0:
+        hw = (q_h_gen + q_w_gen).clip(lower=0.0)
+        pe_hourly["E_onsite_environment_heat_kWh"] = (hw / hw.sum() if hw.sum() > 0 else hw) * float(gs["QHW_environment_in_kWh"])
+    # Step A weighting of the exported cogenerated electricity (Formulas 4-7, energy allocation of the
+    # fuel to electricity and heat), averaged with the PV export (Formula 8)
+    chp_export = gr_timeseries["E_chp_el_export_kWh"].astype(float) if kind == "cogeneration" and gr_timeseries is not None and "E_chp_el_export_kWh" in gr_timeseries.columns else None
+    if chp_export is not None and float(chp_export.sum()) > 0:
+        chp_out = float(gs.get("E_chp_el_generated_kWh", 0.0)) + float(gs.get("QHW_chp_out_kWh", 0.0))
+        fuel_share = float(gs.get("E_chp_fuel_in_kWh", 0.0)) / chp_out if chp_out > 0 else 1.0
+        f_gas, f_pv = pe_calc.factors("natural_gas"), pe_calc.onsite_factors["pv"]
+        pv_exp = export_h - chp_export
+        for key, fkey in (("nonren", "nonrenewable"), ("ren", "renewable"), ("co2", "co2")):
+            f_chp = f_gas[fkey] * fuel_share
+            pv_part = pv_exp * f_pv[fkey] if "E_onsite_pv_kWh" in pe_hourly else 0.0
+            pe_hourly[f"fA_electricity_{key}"] = ((pv_part + chp_export * f_chp) / export_h.where(export_h > 1e-12)).fillna(f_chp)
+
+    def _aggregate(df: pd.DataFrame, rule: str | None) -> pd.DataFrame:
+        """Sum energies over the balance period; the Step A factors are averaged weighted by the export."""
+        fa_cols = [c for c in df.columns if c.startswith("fA_")]
+        work = df.drop(columns=fa_cols)
+        for c in fa_cols:
+            work[c] = df[c] * df["E_exported_electricity_kWh"]
+        agg = work.resample(rule).sum() if rule else work.sum().to_frame().T
+        exp_sum = agg["E_exported_electricity_kWh"].where(agg["E_exported_electricity_kWh"] > 1e-12)
+        for c in fa_cols:
+            agg[c] = (agg[c] / exp_sum).fillna(df[c].mean())
+        return agg
+
     balance = str(opt["pe_balance"]).lower()
     if balance == "hourly":
         pe = pe_calc.run_timeseries(pe_hourly).summary
     elif balance == "monthly":
         shifted = pe_hourly.copy()
         shifted.index = shifted.index - pd.Timedelta(hours=dt)
-        pe = pe_calc.run_timeseries(shifted.resample("MS").sum()).summary
+        pe = pe_calc.run_timeseries(_aggregate(shifted, "MS")).summary
     elif balance == "annual":
-        pe = pe_calc.run_annual(pe_hourly.sum().to_dict()).summary
+        pe = pe_calc.run_timeseries(_aggregate(pe_hourly, None)).summary
     else:
         raise ValueError("options.pe_balance must be 'annual', 'monthly' or 'hourly'")
     if pe["PE_export_credit_nonren_kWh"] > pe["PE_delivered_nonren_kWh"] + 1e-9:
@@ -1073,6 +1111,9 @@ def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> Comp
         "final_energy_by_carrier_kWh": final_by_carrier,
         "E_grid_import_kWh": grid_import, "E_export_kWh": export_total,
         "PE_net_nonren_kWh": float(pe["PE_net_nonren_kWh"]), "PE_net_total_kWh": float(pe["PE_net_total_kWh"]),
+        "PE_net_ren_kWh": float(pe["PE_net_ren_kWh"]), "PE_k_exp": float(pe["k_exp"]),
+        "E_onsite_renewable_kWh": float(pe["E_onsite_total_kWh"]),
+        "RER": float(pe["RER"]), "CO2_net_kg": float(pe["CO2_net_kg"]),
         "system_efficiency": need_total / max(final_total + float(w_em.sum() + w_dis.sum() + ahu_fan.sum()), 1e-9),
         "peak_H_kW": peak_h, "peak_C_kW": peak_c,
     }

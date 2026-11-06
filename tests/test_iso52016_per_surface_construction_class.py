@@ -136,3 +136,39 @@ def test_aggregation_without_construction_class_keeps_building_default():
     aggregated = ISO52016._aggregate_surfaces_by_direction(building_object)["building_surface"][0]
     assert "construction_class" not in aggregated
     assert aggregated["area"] == pytest.approx(20.0)
+
+
+KAPPA_GR = 1.0e6  # placeholder for the fixed-ground layer capacity until ISO 13370/13789 is applied
+
+
+@pytest.mark.parametrize(
+    "cls, expected_shares",
+    [
+        # EN ISO 52016-1 eq. 50a-50e: share of km on nodes pl1..pl5 of a ground floor
+        # (node 2 is replaced by the fixed ground capacity, node 1 stays 0)
+        ("class_i", [0.0, 0.0, 0.0, 0.0, 1.0]),
+        ("class_e", [0.0, 0.0, 1.0, 0.0, 0.0]),
+        ("class_ie", [0.0, 0.0, 0.5, 0.0, 0.5]),
+        ("class_d", [0.0, 0.0, 0.25, 0.5, 0.25]),
+        ("class_m", [0.0, 0.0, 0.0, 1.0, 0.0]),
+    ],
+)
+def test_ground_floor_node_capacities_follow_eq_50(cls, expected_shares):
+    km = 200000.0
+    building_object = {
+        "building": {"construction_class": "class_d"},
+        "building_surface": [
+            {
+                "name": "floor",
+                "ISO52016_type_string": "GR",
+                "thermal_capacity": km,
+                "construction_class": cls,
+            },
+        ],
+    }
+    kappa = ISO52016.Areal_heat_capacity_of_element(building_object).kappa_pli_eli[:, 0]
+
+    expected = [km * share for share in expected_shares]
+    expected[1] = KAPPA_GR  # eq. 50f: kpl2 = kgr for all classes
+    assert kappa == pytest.approx(expected)
+    assert kappa[0] == 0.0  # kpl1 = kgr;vi = 0

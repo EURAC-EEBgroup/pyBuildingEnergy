@@ -41,6 +41,9 @@ ISO52016_CA_J_KG_K = 1006.0      # specific heat of air
 ISO52016_RHO_A_KG_M3 = 1.204     # air density at 20 degC
 ISO52016_HWE_J_KG = 2.466e6      # latent heat of vaporisation of water (Table 20 prints "2 466 x 10^3")
 ISO52016_P_ATM_PA = 101325.0
+# areal heat capacity of the fixed ground layer kgr (EN ISO 52016-1 eq. 50f), J/(m2 K);
+# placeholder until the value is taken from ISO 13370/13789
+KAPPA_GR_FIXED_GROUND = 1.0e6
 # default humidity set-points: the EN 16798-1 category limits already tabulated in
 # table_iso_16798_1.py (min/max relative humidity 25 / 60 %); ISO 52016-1 takes them
 # from module M1-6 and gives no default of its own
@@ -3788,10 +3791,6 @@ class ISO52016:
             # Mass concentrated at internal side
             # OPAQUE: kpl5 = km_eli ; kpl1=kpl2=kpl3=kpl4=0
             # GROUND: kpl5 = km_eli ; kpl3=kpl4=0
-            node = 1
-            for i in idx_class_i:
-                if el_type[i] == "GR":
-                    kappa_pli_eli_[node, i] = 1e6  # heat capacity of the ground
             node = 4
             for i in idx_class_i:
                 if el_type[i] != "W":
@@ -3814,13 +3813,13 @@ class ISO52016:
         if idx_class_ie:
             # mass divided over internal and external side)
             # OPAQUE: kpl1 = kpl5 = km_eli/2 ; kpl2=kpl3=kpl4=0
-            # GROUND: kpl1 = kp5 =km_eli/2; kpl4=0
+            # GROUND: kpl3 = kpl5 = km_eli/2; kpl4=0 (eq. 50c)
             node = 0
             for i in idx_class_ie:
                 if el_type[i] == "OP" or el_type[i] == "ADJ":
                     kappa_pli_eli_[node, i] = list_kappa_el[i] / 2
                 elif el_type[i] == "GR":
-                    kappa_pli_eli_[node, i] = list_kappa_el[i] / 2
+                    kappa_pli_eli_[2, i] = list_kappa_el[i] / 2
             node = 4
             for i in idx_class_ie:
                 if el_type[i] == "OP" or el_type[i] == "ADJ":
@@ -3867,6 +3866,13 @@ class ISO52016:
                 if el_type[i] == "GR":
                     node = 3
                     kappa_pli_eli_[node, i] = list_kappa_el[i]
+
+        # Fixed ground layer, for all classes (eq. 50f): kpl2 = kgr, kpl1 = kgr;vi = 0.
+        # kgr should come from ISO 13370/13789 (0.5 m ground layer); 1e6 J/(m2 K) is a
+        # placeholder kept until those standards are applied.
+        for i in range(len(el_type)):
+            if el_type[i] == "GR":
+                kappa_pli_eli_[1, i] = KAPPA_GR_FIXED_GROUND
 
         return aeral_heat_capacity(kappa_pli_eli=kappa_pli_eli_)
 
