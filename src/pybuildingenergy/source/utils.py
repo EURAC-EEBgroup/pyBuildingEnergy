@@ -3665,6 +3665,16 @@ class ISO52016:
                     )
                     R_c_eli[i] = 1 / U_eli[i] - r_si - r_se
 
+        for i, resistance in enumerate(R_c_eli):
+            if el_type[i] != "AD" and (
+                not np.isfinite(resistance) or resistance <= 0.0
+            ):
+                raise ValueError(
+                    f"building_surface[{i}]: u_value={U_eli[i]!r} gives "
+                    f"non-positive or non-finite core resistance {resistance!r}; "
+                    "check the U-value and surface heat transfer coefficients."
+                )
+
         # layer = 1
         layer_no = 0
         for i in range(len(el_type)):
