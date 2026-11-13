@@ -138,3 +138,61 @@ m2K/W, the value of Table 7-32. Table 7-28 differs by 0.010 m2K/W.
 **What the implementation does:** the floor resistance is built from the
 layers of Table 7-27 (25.246 m2K/W), in `examples/ashrae140_bestest/`.
 
+## EN ISO 52016-3:2023 + A1:2025, Formula (3) vs Table 33 note a - glare limit
+
+**Location:** Table 29 (Method AC1) and Table 33 note a, p. 34 and p. 41 of the
+document on file (`Standards/DIN EN ISO 52016-3_2026-05-00_EN_3691255.pdf`).
+
+**What the standard prints:** Formula (3) is
+`P_dglare = 0,25 x 6,22.10^-5 x E_V;e;w + 0,184` with the limit
+`P_dglare;limGY = 0,45`; note a of Table 33 says that this limit "corresponds
+with E_V;e;w = 4 500 lx".
+
+**The inconsistency:** with the factor 0,25 the limit 0,45 is reached at
+17 100 lx, not 4 500 lx. 4 500 lx is (approximately) what the formula gives
+without the factor 0,25 (4 276 lx).
+
+**Cross-check:** the EPB Center spreadsheet (sheet AdaptW) uses
+`E_V;e;w;limGY = 17 250 lx`, i.e. it follows the formula with the factor 0,25
+(rounded), not 4 500 lx.
+
+**What the implementation does:** it follows the formula as printed (factor
+0,25, limit 0,45 -> 17 106 lx on the element plane), in
+`source/adaptive_envelope_52016_3.py` (`GLARE_SLOPE`).
+
+## EN ISO 52016-3:2023 + A1:2025, Formula (1) - sign of the hysteresis term
+
+**Location:** 6.7, Formula (1), p. 26.
+
+**What the standard prints:** the property of an environmentally activated
+chromogenic glazing is
+`Y = (X_t - X_min + (+-dX_hyst / 2)) / (X_min - X_max) . (Y_min - Y_max) + Y_min`,
+with `+-dX_hyst = +dX_hyst` when X rises and `-dX_hyst` when X falls.
+
+**Observation:** with `+dX/2` on a rising X the transition happens at a
+*lower* X than on a falling X, the opposite of the usual hysteresis loop of
+thermochromic and photochromic glazing (transition delayed in the direction of
+change). Figure 1 of the standard was not used to decide this.
+
+**What the implementation does:** the literal text, in
+`AdaptiveEnvelopeController._environmental`.
+
+## EN ISO 52016-3:2026-05, Table C.4 - manual control, night states 19-23
+
+**Location:** Table C.4 (external or integrated venetian blinds, residential
+space), manual control columns, states 19 to 23, p. 52.
+
+**What the standard prints (2026-05):** fraction extended by rule 0,00 with a
+correction of +0,10, i.e. 10 % extended at night.
+
+**What the other sources say:** the EPB Center spreadsheet (Annex C of
+EN ISO 52016-3:2023 + proposed amendment 2023) has 1,00 / 0,00 for these five
+states, and the case study report (6.2.2.1.4) states "states 19-22: 100 %
+extended, slats 80 deg". Table C.3 (shutters) and Table C.6 (internal venetian
+blinds, 1,00 / -0,20) also close the element at night. The other 317 of the 322
+manual/automated rows of Tables C.2-C.8 are identical in the spreadsheet and in the 2026 text.
+
+**What the implementation does:** the 2026 text by default; the 2023 values
+with `adaptive_envelope.control.annex_c_edition = "2023"`
+(`_ANNEX_C_2023_DIFFERENCES` in `source/adaptive_envelope_52016_3.py`).
+

@@ -1,3 +1,69 @@
+2.2.0 (2026-11-13)
+------------------
+
+EN ISO 52016-3:2023 + A1:2025 - adaptive building envelope elements
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Transparent elements whose U-value, g-value and daylight transmittance change during the
+year (dynamic solar shading and chromogenic glazing) are now part of the hourly
+EN ISO 52016-1 balance of the single-zone engines.
+
+* New ``adaptive_envelope`` input on a transparent surface (module
+  ``source/adaptive_envelope_52016_3.py``): ``type`` (roller blind, venetian blind, shutter,
+  chromogenic), ``position`` (external, internal, integrated), ``control_type`` (manual,
+  motorized, automated, environmental), ``space_category`` (residential, office), ``system``
+  (heating, heating and cooling) and the properties of the retracted and extended state
+  (venetian blind: one set per slat position).  It is a simplified element in the sense of
+  6.4.3: the properties of each state are inputs.
+* Actively controlled elements follow the reference control scenarios of 6.8 and Annex C:
+  the modes DAY, HC, TINT, RAD, OCC, GLARE and DAYL (Table 22) are identified with the default
+  methods of Tables 24-31, the radiation limits of Table C.1 and the parameters of Table 33,
+  the state (1 to 23) is read from Tables C.2-C.8, and the occupant correction of 6.8.6
+  (approach 1) is applied.  The U-value and g-value of the window are the area-weighted mix of
+  the retracted state and of the extended state of the scenario.
+* Environmentally activated chromogenic glazing: continuous linear transition with hysteresis
+  (6.7, Formula 1) or discrete states (``states.discrete``).  ``state_min.x`` must be lower
+  than ``state_max.x``.
+* Options of the control (``adaptive_envelope.control``): ``hc_method`` (AM1, AM2),
+  ``annex_c_edition`` (``"2026"`` default, ``"2023"`` as used by the EPB Center case study:
+  five values of Table C.4 differ), ``glare_policy`` (``"formula"``: Formula 3, 17 106 lx,
+  default; ``"table_33_note"``: 4 500 lx) or ``glare_limit_lx``, ``daylight`` (Formula 4:
+  ``a_dayl``, ``b_dayl``, ``H_gl_1m``), ``sleeping_hours``, ``daytime_hours``.
+* Results: the hourly state of each adaptive window is returned in the columns
+  ``adaptive_<window>_modes``, ``_state``, ``_fraction``, ``_ext_state``, ``_g``, ``_u``,
+  ``_tau_v`` and ``_I_sol``.
+* Post-processing (6.10, clause 8): ``compare_adaptive_with_reference``
+  (``source/adaptive_envelope_workflow_52016_3.py``) runs the building with and without the
+  adaptive element and returns the annual and monthly indicators of Table 6 (differences of
+  heating and cooling needs and of under/over-temperature, mean U, g and tau_V per window),
+  the use of the states and the conformity report with the selected methods and options.
+* Limits: single-zone engines only (the multizone engine raises an error for a window with
+  ``adaptive_envelope``).  Not implemented: detailed elements (6.4.4, 6.5.2) and actively
+  ventilated cavities (6.4.3.3), which need ISO 15099; the methods the standard does not work
+  out (RAD-MODE AC2, GLARE-MODE AC2/AC3, HFLOW-MODE, control type ``CNTRL_INTEGR``,
+  user-behaviour approaches 2 and 3).
+
+Verification
+~~~~~~~~~~~~
+
+* Hour-by-hour comparison with the EPB Center spreadsheet for EN ISO 52016-3 (case office,
+  Athens, external venetian blind, automated control, 9 504 h): 9 501 states equal, U, g and
+  tau_V identical on the hours with equal state.  The three differences are at the glare limit
+  (the spreadsheet rounds it to 17 250 lx).  The previous-day window of HC-MODE and TINT-MODE
+  agree on all hours.
+* The state tables of Annex C (322 manual/automated rows) agree with the spreadsheet except the
+  five values of Table C.4 (night, manual control) listed in ``docs/standards_errata.md``,
+  together with the glare limit of Formula (3) versus Table 33 note a and the sign of the
+  hysteresis term of Formula (1).
+* Engine check on ASHRAE 140 Case 600 (south window as external roller blind, automated, office
+  with heating and cooling): with extended state equal to retracted state the result equals
+  the fixed window (4 417 kWh heating, 6 251 kWh cooling); with the blind (g 0.10 when extended)
+  heating 4 999 kWh and cooling 1 682 kWh.
+* New tests: ``tests/test_adaptive_envelope_52016_3.py`` (logic),
+  ``tests/test_adaptive_envelope_52016_3_epb_case_study.py`` (spreadsheet and case study report,
+  data in ``tests/data/``) and ``tests/test_adaptive_envelope_52016_3_engine.py`` (engine and
+  workflow).
+
 2.1.3 (2026-11-06)
 ------------------
 

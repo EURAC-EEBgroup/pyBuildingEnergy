@@ -30,6 +30,7 @@ from .ventilation import (
     resolve_ventilation_boundary,
 )
 from .functions import *
+from .adaptive_envelope_52016_3 import AdaptiveEnvelopeContext, has_adaptive_envelope
 # generate_profile imported lazily -- avoids ~0.8s startup cost
 from .table_iso_16798_1 import * 
 from . import table_iso_16798_1 as iso16798_profiles
@@ -3541,7 +3542,43 @@ class ISO52016:
         ori = str(surface.get("ISO52016_orientation_string", "SV"))
         col = f"I_sol_tot_{ori}"
         irradiance = float(sim_df[col].iloc[tstep]) if col in sim_df.columns else 0.0
+        if surface.get("adaptive_envelope") is not None:
+            ctx = sim_df.attrs.get("adaptive_envelope_ctx")
+            if ctx is None or str(surface.get("name", "")) not in ctx.controllers:
+                raise ValueError(
+                    f"Window '{surface.get('name', '')}': adaptive_envelope (EN ISO 52016-3) "
+                    "is supported by the single-zone engines only"
+                )
+            return ctx.properties(surface, tstep, irradiance)
         return cls._movable_shading_properties(surface, sim_df.index[tstep], irradiance)
+
+    @staticmethod
+    def _has_dynamic_window_state(surface) -> bool:
+        """True if the window has hour-dependent U/g (Annex G or EN ISO 52016-3)."""
+        return (
+            surface.get("movable_shading") is not None
+            or surface.get("adaptive_envelope") is not None
+        )
+
+    @staticmethod
+    def _attach_adaptive_envelope(building_object, sim_df, profile_df):
+        """Create the EN ISO 52016-3 context of the zone, if any window needs it."""
+        if not isinstance(building_object, dict):
+            return None
+        surfaces = building_object.get("building_surface") or []
+        if not any(has_adaptive_envelope(s) for s in surfaces):
+            sim_df.attrs.pop("adaptive_envelope_ctx", None)
+            return None
+        occupancy = (
+            pd.to_numeric(profile_df["occupancy_profile"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+            if profile_df is not None and "occupancy_profile" in profile_df.columns else None
+        )
+        ctx = AdaptiveEnvelopeContext(
+            surfaces, sim_df, occupancy=occupancy,
+            dt_h=_infer_timestep_hours_from_index(sim_df.index, default=1.0),
+        )
+        sim_df.attrs["adaptive_envelope_ctx"] = ctx
+        return ctx
 
     @staticmethod
     def _corrected_window_g_value(surface, g_value_normal):
@@ -4348,7 +4385,9 @@ class ISO52016:
             # (Annex G).  Do not merge it with another window: otherwise a
             # south-facing blind and shutter with different controls would be
             # incorrectly represented by one averaged control.
-            movable_key = s.get("name", "surface") if s.get("movable_shading") is not None else None
+            movable_key = s.get("name", "surface") if (
+                s.get("movable_shading") is not None or s.get("adaptive_envelope") is not None
+            ) else None
             fw_key = (
                 float(s.get("solar_transmittance_correction_factor", 0.90))
                 if s.get("type") == "transparent"
@@ -4388,6 +4427,8 @@ class ISO52016:
                 b["orientation"] = copy.deepcopy(s["orientation"])
             if b.get("movable_shading") is None and s.get("movable_shading") is not None:
                 b["movable_shading"] = copy.deepcopy(s["movable_shading"])
+            if b.get("adaptive_envelope") is None and s.get("adaptive_envelope") is not None:
+                b["adaptive_envelope"] = copy.deepcopy(s["adaptive_envelope"])
             if b.get("solar_transmittance_correction_factor") is None and s.get("type") == "transparent":
                 b["solar_transmittance_correction_factor"] = fw_key
             if b.get("construction_class") is None and construction_class_key is not None:
@@ -4472,6 +4513,8 @@ class ISO52016:
                 agg["name_adj_zone"] = b["name_adj_zone"]
             if b.get("movable_shading") is not None:
                 agg["movable_shading"] = b["movable_shading"]
+            if b.get("adaptive_envelope") is not None:
+                agg["adaptive_envelope"] = b["adaptive_envelope"]
 
             # Preserve the first valid orientation seen in the bucket.
             if isinstance(b["orientation"], dict):
@@ -5982,7 +6025,7 @@ class ISO52016:
                         if (
                             surf.get("ISO52016_type_string") == "W"
                             and Pli == 0
-                            and surf.get("movable_shading") is not None
+                            and cls._has_dynamic_window_state(surf)
                         ):
                             _, _, u_now = cls._window_movable_shading_properties(surf, sim_df, tstep)
                             r_si = 1.0 / (h_ci + _get(
@@ -8217,6 +8260,7 @@ class ISO52016:
                 )
         # -----------------------------------------------------------
 
+        _adaptive_ctx = cls._attach_adaptive_envelope(building_object, sim_df, profile_df)
         with tqdm(total=Tstepn) as pbar:
             n_w = 0
             for Tstepi in range(start_idx, Tstepn):
@@ -8705,7 +8749,7 @@ class ISO52016:
                                     and Type_eli[Eli] == "EXT"
                                     and building_object["building_surface"][Eli].get("ISO52016_type_string") == "W"
                                     and Pli == 0
-                                    and building_object["building_surface"][Eli].get("movable_shading") is not None
+                                    and cls._has_dynamic_window_state(building_object["building_surface"][Eli])
                                 ):
                                     _, _, u_now = cls._window_movable_shading_properties(
                                         building_object["building_surface"][Eli], sim_df, Tstepi
@@ -8972,6 +9016,8 @@ class ISO52016:
                     print(f"[t={Tstepi}] T_op0={Theta_int_op[Tstepi,0]:.2f}  Phi_HC={Phi_HC_nd_act[Tstepi]:.1f}  "
                         f"int_gains={float(int_gains):.1f}  Phi_solar={float(Phi_sol_dir_zt_t):.1f}  "
                         f"H_ve_nat={float(H_ve_nat):.3f}")
+                if _adaptive_ctx is not None:
+                    _adaptive_ctx.record(Tstepi, Theta_op_act[Tstepi], Phi_HC_nd_act[Tstepi])
                 pbar.update(1)
             n_w=n_w+1
 
@@ -9059,6 +9105,10 @@ class ISO52016:
             index=sim_df_act.index,
             columns=["Q_HC", "T_op", "T_ext"],
         )
+        if _adaptive_ctx is not None:
+            _adaptive_log = _adaptive_ctx.to_dataframe()
+            for _col in _adaptive_log.columns:
+                hourly_results[_col] = _adaptive_log[_col].reindex(hourly_results.index)
 
         # Zone air and ventilation diagnostics
         _h_ve_arr = np.array(H_ve_nat_all[1:Tstepn + 1], dtype=float)[act_slice]
@@ -9866,6 +9916,7 @@ class ISO52016:
                 )
         # -----------------------------------------------------------
 
+        _adaptive_ctx = cls._attach_adaptive_envelope(building_object, sim_df, profile_df)
         with tqdm(total=Tstepn) as pbar:
             n_w = 0
             for Tstepi in range(start_idx, Tstepn):
@@ -10393,7 +10444,7 @@ class ISO52016:
                                     and Type_eli[Eli] == "EXT"
                                     and building_object["building_surface"][Eli].get("ISO52016_type_string") == "W"
                                     and Pli == 0
-                                    and building_object["building_surface"][Eli].get("movable_shading") is not None
+                                    and cls._has_dynamic_window_state(building_object["building_surface"][Eli])
                                 ):
                                     _, _, u_now = cls._window_movable_shading_properties(
                                         building_object["building_surface"][Eli], sim_df, Tstepi
@@ -10693,6 +10744,8 @@ class ISO52016:
                 theta_air_prev_causal = float(Theta_int_air[Tstepi, colB_act])
                 theta_op_prev_causal = float(Theta_int_op[Tstepi, colB_act])
                 theta_rad_prev_causal = float(Theta_int_r_mn[Tstepi, colB_act])
+                if _adaptive_ctx is not None:
+                    _adaptive_ctx.record(Tstepi, Theta_op_act[Tstepi], Phi_HC_nd_act[Tstepi])
                 pbar.update(1)
             n_w=n_w+1
 
@@ -10780,6 +10833,10 @@ class ISO52016:
             index=sim_df_act.index,
             columns=["Q_HC", "T_op", "T_ext"],
         )
+        if _adaptive_ctx is not None:
+            _adaptive_log = _adaptive_ctx.to_dataframe()
+            for _col in _adaptive_log.columns:
+                hourly_results[_col] = _adaptive_log[_col].reindex(hourly_results.index)
         hourly_results["T_air"] = Theta_int_air[act_slice, 0]
         hourly_results["T_rad"] = Theta_int_r_mn[act_slice, 0]
 

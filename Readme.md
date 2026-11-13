@@ -772,6 +772,7 @@ The DHW calculation was developed with data and methods from the EPB Center spre
 - EN ISO 52000-1:2017 - Energy performance of buildings: overarching EPB assessment (delivered/exported and primary energy)
 - EN ISO 52010-1:2017 - External climatic conditions: conversion of climatic data for energy calculations
 - EN ISO 52016-1:2017 - Energy needs for heating and cooling, internal temperatures and sensible and latent heat loads (hourly method, Annex F shading, Annex G dynamic transparent elements, Section 7.2 verification cases)
+- EN ISO 52016-3:2023 + A1:2025 - Calculation procedures regarding adaptive building envelope elements (dynamic solar shading and chromogenic glazing: reference control scenarios of Annex C, environmentally activated glazing, adaptive-versus-reference indicators)
 - CEN ISO/TR 52016-2:2017 - Explanation and justification of ISO 52016-1 and ISO 52017-1
 - ISO 13370:2017 - Heat transfer via the ground (ground model of the ISO 52016-1 engine)
 - ISO 13789:2017 - Transmission and ventilation heat transfer coefficients (surface heat-transfer coefficients)
