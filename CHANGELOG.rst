@@ -1,3 +1,47 @@
+2.2.1 (2026-11-13)
+------------------
+
+EN ISO 52000-1 weighted balance
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Checked against ISO/TR 52000-2:2017 (worked examples of 9.7.4, Tables 9-12 and 16, Figure 15);
+the balance (Formulae 2, 19, 20, 23-28, 39) reproduces them.  Three of the changes below alter
+results (interval clipping, RER numerator, carriers without factors):
+
+* New: perimeters of the RER are configurable (``pe_perimeters``, ``pe_rer_perimeters_ren``,
+  ``pe_rer_perimeters_tot``; Table B.24 defaults), time-dependent delivered and export factors
+  (``pe_time_factors``; columns ``f_delivered_*`` / ``f_exported_*``) and the on-site electricity
+  used by non-EPB services as a separate export flow (``non_epb_electricity_kWh_per_year``,
+  Formulae 24 and 27).
+
+* Fix: the balance is no longer clipped at 0 in each calculation interval.  Formula (2) is an
+  annual balance and ISO/TR 52000-2 11.6.2.3 states that a negative result is valid (Table 15:
+  -103 kWh non-renewable).  An interval of net export now offsets the deliveries of the other
+  intervals.  ``allow_negative`` defaults to ``True`` (composer option ``pe_allow_negative``);
+  ``False`` floors only the total of the balance at 0.  Present since the clipping option was
+  introduced; affects hourly and monthly balances with export (``pe_balance``) and buildings
+  with a net export.
+* Fix: the export credit (Step A + ``k_exp`` x (B - A)) is attributed to the distant perimeter
+  in the RER (Formula 17).  With the Table B.24 defaults the renewable numerator now counts the
+  on-site and nearby production in full, as in ISO/TR 52000-2 Tables 12 and 16 (20,1 % instead of
+  18,1 % in the 9.7.4 example, 0,105 instead of 0,098 for the office of Table 12); the RER with
+  the distant perimeter selected is unchanged.
+* Fix: an energy carrier without a weighting factor is rejected (``MissingWeightingFactors``, a
+  ``ValueError``) instead of being weighted silently with 1.0 non-renewable and 0 CO2; the
+  factors are input data (Table A.16).  Result-changing only for custom carriers that relied on
+  the silent default.  The ``iso_52000_1_b16`` set now covers all the classes of Table B.16
+  (``coal``/``fossil_solid``, ``oil``/``fossil_liquid``, ``fossil_gaseous``, ``biofuel_solid``,
+  ``biofuel_liquid``, ``biofuel_gaseous``/``biogas``).  Time-dependent factors given as columns
+  can replace the static ones (the export defaults to the delivered columns).
+* New: the exported energy that is not valorised in the performance, ``E_exp;el;avl`` =
+  exported x ``(1 - k_exp)``, and the weighted resources used to produce it (Step A) are
+  reported (Formulae 21-22): ``E_exp_avl_total_kWh``, ``E_exp_avl_<carrier>_kWh``,
+  ``PE_exp_avl_nonren_kWh``, ``PE_exp_avl_ren_kWh``, ``PE_exp_avl_total_kWh``,
+  ``CO2_exp_avl_kg`` (hourly columns and summary); the composer adds ``E_exp_avl_kWh``,
+  ``PE_exp_avl_nonren_kWh`` and ``PE_exp_avl_ren_kWh`` to its summary.  Zero for ``k_exp = 1``.
+* Open: Table B.30 treats exported wind electricity under Step A only; the calculator applies
+  Step B to every exported electricity (informative default of Annex B, national choice).
+
 2.2.0 (2026-11-13)
 ------------------
 

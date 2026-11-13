@@ -23,8 +23,12 @@ def test_onsite_pv_and_step_a_b_with_k_exp_one():
     assert s["PE_net_nonren_kWh"] == pytest.approx(16.1)
     assert s["PE_net_ren_kWh"] == pytest.approx(9.4)
     assert s["PE_export_credit_ren_kWh"] == pytest.approx(0.6)
-    # RER (Formula 17, Table B.24): on-site renewable minus the exported part / total
-    assert s["RER"] == pytest.approx((8.0 - 0.6) / 25.5)
+    # RER (Formula 17, Table B.24): the on-site renewable production counts in full (the export
+    # credit belongs to the distant perimeter, ISO/TR 52000-2 9.7.2) / total primary energy
+    assert s["PE_RER_ren_kWh"] == pytest.approx(8.0)
+    assert s["RER"] == pytest.approx(8.0 / 25.5)
+    with_distant = _run(rer_perimeters_ren=["onsite", "nearby", "distant"])
+    assert with_distant["PE_RER_ren_kWh"] == pytest.approx(0.2 * 10 + 8.0 - 0.6)
     assert s["CO2_net_kg"] == pytest.approx(0.42 * 7.0)
 
 
@@ -42,10 +46,24 @@ def test_k_exp_scales_the_step_b_term_without_onsite_columns():
     assert _run(row, k_exp=0.5)["PE_net_nonren_kWh"] == pytest.approx(2.3 * 8)
 
 
-def test_negative_balance_is_clipped_unless_allowed():
+def test_negative_balance_is_valid_and_only_the_total_can_be_floored():
+    # ISO/TR 52000-2 11.6.2.3: a negative result with k_exp = 1 is "not a wrong value"
     row = {"E_delivered_electricity_kWh": 1.0, "E_exported_electricity_kWh": 4.0}
-    assert _run(row)["PE_net_nonren_kWh"] == 0.0
-    assert _run(row, allow_negative=True)["PE_net_nonren_kWh"] == pytest.approx(2.3 * (1 - 4))
+    assert _run(row)["PE_net_nonren_kWh"] == pytest.approx(2.3 * (1 - 4))
+    assert _run(row, allow_negative=False)["PE_net_nonren_kWh"] == 0.0
+
+
+def test_intervals_are_never_clipped_so_export_offsets_imports_over_the_balance():
+    # Formula (2) is annual: 100 kWh imported in one interval, 100 kWh exported in another
+    rows = pd.DataFrame({"E_delivered_electricity_kWh": [100.0, 0.0], "E_exported_electricity_kWh": [0.0, 100.0]})
+    calc = pybui.PrimaryEnergyAccountingCalculator({"carriers": ["electricity"], "primary_energy_factors": FACTORS})
+    result = calc.run_timeseries(rows)
+    assert result.summary["PE_net_nonren_kWh"] == pytest.approx(0.0)
+    assert list(result.timeseries["PE_net_nonren_kWh"]) == pytest.approx([230.0, -230.0])
+    floored = pybui.PrimaryEnergyAccountingCalculator(
+        {"carriers": ["electricity"], "primary_energy_factors": FACTORS, "allow_negative": False}
+    ).run_timeseries(rows).summary
+    assert floored["PE_net_nonren_kWh"] == pytest.approx(0.0)
 
 
 def test_nearby_district_heat_counts_in_the_rer_numerator_distant_does_not():
@@ -77,6 +95,63 @@ def test_per_row_step_a_columns_override_the_onsite_default():
     s = pybui.PrimaryEnergyAccountingCalculator(
         {"carriers": ["electricity"], "primary_energy_factors": FACTORS, "k_exp": 0.0}).run_timeseries(row).summary
     assert s["PE_export_credit_nonren_kWh"] == pytest.approx(2.0)   # A only, k_exp = 0
+
+
+def test_configurable_rer_perimeters_apply_to_numerator_and_denominator():
+    row = {
+        "E_delivered_district_heat_kWh": 10.0,
+        "E_delivered_electricity_kWh": 10.0,
+    }
+    base = {
+        "carriers": ["district_heat", "electricity"],
+        "primary_energy_factors": {
+            "district_heat": {"nonrenewable": 0.5, "renewable": 0.5},
+            "electricity": {"nonrenewable": 2.0, "renewable": 0.0},
+        },
+    }
+    default = pybui.PrimaryEnergyAccountingCalculator(base).run_annual(row).summary
+    nearby_only = pybui.PrimaryEnergyAccountingCalculator({
+        **base, "rer_perimeters_ren": ["nearby"], "rer_perimeters_tot": ["nearby"],
+    }).run_annual(row).summary
+    assert default["PE_RER_tot_kWh"] == pytest.approx(30.0)
+    assert nearby_only["PE_RER_ren_kWh"] == pytest.approx(5.0)
+    assert nearby_only["PE_RER_tot_kWh"] == pytest.approx(10.0)
+    assert nearby_only["RER"] == pytest.approx(0.5)
+
+
+def test_time_dependent_delivered_and_export_factors_are_used():
+    row = pd.DataFrame({
+        "E_delivered_electricity_kWh": [1.0, 1.0],
+        "E_exported_electricity_kWh": [0.0, 1.0],
+        "f_delivered_electricity_nonren": [1.0, 3.0],
+        "f_exported_electricity_nonren": [2.0, 4.0],
+    })
+    s = pybui.PrimaryEnergyAccountingCalculator({
+        "carriers": ["electricity"],
+        "primary_energy_factors": {"electricity": {"nonrenewable": 9.0, "renewable": 0.0}},
+        "k_exp": 1.0,
+        # Keep the two rows in the same assessment balance for this factor test.
+        "allow_negative": True,
+    }).run_timeseries(row).summary
+    assert s["PE_delivered_nonren_kWh"] == pytest.approx(4.0)
+    assert s["PE_export_credit_nonren_kWh"] == pytest.approx(4.0)
+    assert s["PE_net_nonren_kWh"] == pytest.approx(0.0)
+
+
+def test_non_epb_onsite_use_is_a_separate_export_flow():
+    s = pybui.PrimaryEnergyAccountingCalculator({
+        "carriers": ["electricity"],
+        "primary_energy_factors": FACTORS,
+        "k_exp": 1.0,
+    }).run_annual({
+        "E_delivered_electricity_kWh": 10.0,
+        "E_exported_electricity_to_grid_kWh": 2.0,
+        "E_exported_electricity_to_non_epb_kWh": 3.0,
+    }).summary
+    assert s["E_exported_electricity_kWh"] == pytest.approx(5.0)
+    assert s["E_exported_electricity_grid_kWh"] == pytest.approx(2.0)
+    assert s["E_exported_electricity_non_epb_kWh"] == pytest.approx(3.0)
+    assert s["PE_net_nonren_kWh"] == pytest.approx(2.3 * 5.0)
 
 
 @pytest.fixture(scope="module")

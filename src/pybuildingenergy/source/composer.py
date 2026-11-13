@@ -110,12 +110,18 @@ DEFAULT_SCENARIO: dict[str, Any] = {
         "fallback_cooling_eer": None,       # ideal chiller for cooling the chosen generator cannot serve
         "baseline_electricity_kWh_per_year": 0.0,   # other electric loads (flat profile) seen by the PV
         "primary_energy_factors": None,     # override of PrimaryEnergyAccountingCalculator factors
+        "export_primary_energy_factors": None,  # Step-B factors for exported energy; defaults to delivered factors
+        "pe_perimeters": None,               # carrier -> onsite|nearby|distant, for RER
+        "pe_rer_perimeters_ren": None,       # e.g. ["onsite", "nearby"] (Table B.24 default)
+        "pe_rer_perimeters_tot": None,       # e.g. ["onsite", "nearby", "distant"]
+        "pe_time_factors": None,             # delivered/exported time-series factors, see PrimaryEnergyAccountingCalculator
         "pe_factor_set": "default",         # 'default' (STREPIN) | 'iso_52000_1_b16' (EN ISO 52000-1 Table B.16)
         "pe_k_exp": 1.0,                    # EN ISO 52000-1 Table B.17: share of the export credited (0 = export ignored)
-        "pe_allow_negative": False,         # EN ISO 52000-1 Formula (2) allows a negative balance; False clips it at 0
+        "pe_allow_negative": True,          # EN ISO 52000-1 Formula (2): a negative annual balance is valid (ISO/TR 52000-2 11.6.2.3); False floors the total at 0
         "ahu_flow_ach": 0.5,                # AHU supply flow = ach x zone volume (None keeps supply_flow_m3_h of the JSON option)
         "ahu_infiltration_ach": None,       # infiltration kept alongside the AHU (None = building airflow_rates.infiltration_rate)
         "pe_balance": "monthly",            # 'annual' | 'monthly' | 'hourly': period over which export credit offsets deliveries
+        "non_epb_electricity_kWh_per_year": 0.0,  # on-site surplus used by non-EPB services (Formulae 24/27)
         "hourly_cache_dir": None,           # reuse the ISO 52016 result when only the systems change
     },
 }
@@ -1035,10 +1041,35 @@ def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> Comp
     if kind == "cogeneration" and gr_timeseries is not None and "E_chp_el_export_kWh" in gr_timeseries.columns:
         export_h = export_h + gr_timeseries["E_chp_el_export_kWh"].astype(float)
 
+    # Electricity from on-site generation used by non-EPB services is outside the
+    # EPB delivered-energy demand but is an exported flow in EN ISO 52000-1
+    # Formulae (24)/(27). It can only consume actual residual on-site export;
+    # any requested amount beyond that remains outside this assessment boundary.
+    non_epb_annual = float(opt.get("non_epb_electricity_kWh_per_year", 0.0) or 0.0)
+    if non_epb_annual < 0.0:
+        raise ValueError("options.non_epb_electricity_kWh_per_year must be >= 0.")
+    if non_epb_annual > 0.0:
+        non_epb_requested_h = pd.Series(non_epb_annual / max(len(idx), 1), index=idx)
+        non_epb_export_h = pd.concat([export_h, non_epb_requested_h], axis=1).min(axis=1)
+        if float(non_epb_export_h.sum()) + 1e-9 < non_epb_annual:
+            warnings.append(
+                "non-EPB electricity demand exceeds available on-site export; only the available "
+                "surplus is reported as non-EPB export."
+            )
+    else:
+        non_epb_export_h = pd.Series(0.0, index=idx)
+    grid_export_h = (export_h - non_epb_export_h).clip(lower=0.0)
+
     # The accounting calculator clips the net primary energy at 0 PER ROW it receives, so
     # the balance period decides how far export credit offsets deliveries.
     pe_hourly = pd.DataFrame({
-        "E_delivered_electricity_kWh": grid_h, "E_exported_electricity_kWh": export_h,
+        "E_delivered_electricity_kWh": grid_h,
+        # Keep the total stream too: it is the aggregation weight for the
+        # export factors, whereas the two destination streams preserve the
+        # EN ISO 52000-1 reporting boundary.
+        "E_exported_electricity_kWh": export_h,
+        "E_exported_electricity_to_grid_kWh": grid_export_h,
+        "E_exported_electricity_to_non_epb_kWh": non_epb_export_h,
         "E_delivered_natural_gas_kWh": weights * carriers["natural_gas_kWh"],
         "E_biomass_delivered_kWh": weights * carriers["biomass_kWh"],
         "E_delivered_district_heat_kWh": weights * carriers["district_heat_kWh"],
@@ -1047,6 +1078,39 @@ def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> Comp
     pe_cfg = {"factor_set": opt["pe_factor_set"], "k_exp": opt["pe_k_exp"], "allow_negative": opt["pe_allow_negative"]}
     if opt["primary_energy_factors"]:
         pe_cfg["primary_energy_factors"] = opt["primary_energy_factors"]
+    if opt.get("export_primary_energy_factors"):
+        pe_cfg["export_primary_energy_factors"] = opt["export_primary_energy_factors"]
+    if opt.get("pe_perimeters"):
+        pe_cfg["perimeters"] = opt["pe_perimeters"]
+    if opt.get("pe_rer_perimeters_ren") is not None:
+        pe_cfg["rer_perimeters_ren"] = opt["pe_rer_perimeters_ren"]
+    if opt.get("pe_rer_perimeters_tot") is not None:
+        pe_cfg["rer_perimeters_tot"] = opt["pe_rer_perimeters_tot"]
+
+    time_factors = opt.get("pe_time_factors")
+    if time_factors:
+        if not isinstance(time_factors, dict):
+            raise TypeError("options.pe_time_factors must be a mapping with 'delivered' and/or 'exported' keys.")
+        for direction, prefix in (("delivered", "f_delivered"), ("exported", "f_exported")):
+            by_carrier = time_factors.get(direction, {})
+            if not isinstance(by_carrier, dict):
+                raise TypeError(f"options.pe_time_factors.{direction} must be a carrier mapping.")
+            for carrier, factors in by_carrier.items():
+                if not isinstance(factors, dict):
+                    raise TypeError(f"time factors for carrier {carrier!r} must be a mapping.")
+                for key, value in factors.items():
+                    suffix = {"nonrenewable": "nonren", "renewable": "ren"}.get(key, key)
+                    if suffix not in {"nonren", "ren", "co2"}:
+                        raise ValueError(f"Unknown primary-energy factor component {key!r}.")
+                    if np.isscalar(value):
+                        pe_hourly[f"{prefix}_{carrier}_{suffix}"] = float(value)
+                    else:
+                        series = pd.Series(value, index=idx, dtype=float)
+                        if len(series) != len(idx):
+                            raise ValueError(
+                                f"time factors for {carrier!r}/{key!r} must have {len(idx)} values."
+                            )
+                        pe_hourly[f"{prefix}_{carrier}_{suffix}"] = series.to_numpy()
     pe_calc = PrimaryEnergyAccountingCalculator(pe_cfg)
 
     # On-site renewable energy counted as delivered (EN ISO 52000-1 Table B.30)
@@ -1062,22 +1126,45 @@ def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> Comp
         chp_out = float(gs.get("E_chp_el_generated_kWh", 0.0)) + float(gs.get("QHW_chp_out_kWh", 0.0))
         fuel_share = float(gs.get("E_chp_fuel_in_kWh", 0.0)) / chp_out if chp_out > 0 else 1.0
         f_gas, f_pv = pe_calc.factors("natural_gas"), pe_calc.onsite_factors["pv"]
-        pv_exp = export_h - chp_export
+        pv_exp = grid_export_h + non_epb_export_h - chp_export
         for key, fkey in (("nonren", "nonrenewable"), ("ren", "renewable"), ("co2", "co2")):
             f_chp = f_gas[fkey] * fuel_share
             pv_part = pv_exp * f_pv[fkey] if "E_onsite_pv_kWh" in pe_hourly else 0.0
             pe_hourly[f"fA_electricity_{key}"] = ((pv_part + chp_export * f_chp) / export_h.where(export_h > 1e-12)).fillna(f_chp)
 
     def _aggregate(df: pd.DataFrame, rule: str | None) -> pd.DataFrame:
-        """Sum energies over the balance period; the Step A factors are averaged weighted by the export."""
-        fa_cols = [c for c in df.columns if c.startswith("fA_")]
-        work = df.drop(columns=fa_cols)
-        for c in fa_cols:
-            work[c] = df[c] * df["E_exported_electricity_kWh"]
+        """Sum energies and average factors with their applicable energy stream."""
+        factor_cols = [
+            c for c in df.columns
+            if c.startswith(("fA_", "f_delivered_", "f_exported_"))
+        ]
+
+        def _carrier(column: str) -> str:
+            prefix = next(p for p in ("fA_", "f_delivered_", "f_exported_") if column.startswith(p))
+            return column[len(prefix):].rsplit("_", 1)[0]
+
+        def _exported(carrier: str) -> pd.Series:
+            total = f"E_exported_{carrier}_kWh"
+            if total in df:
+                return df[total]
+            destinations = [c for c in df if c.startswith(f"E_exported_{carrier}_to_") and c.endswith("_kWh")]
+            return df[destinations].sum(axis=1) if destinations else pd.Series(0.0, index=df.index)
+
+        weights: dict[str, pd.Series] = {}
+        work = df.drop(columns=factor_cols)
+        for c in factor_cols:
+            carrier = _carrier(c)
+            if c.startswith("f_delivered_"):
+                weight = df.get(f"E_delivered_{carrier}_kWh", pd.Series(0.0, index=df.index))
+            else:
+                weight = _exported(carrier)
+            weights[c] = weight
+            work[c] = df[c] * weight
         agg = work.resample(rule).sum() if rule else work.sum().to_frame().T
-        exp_sum = agg["E_exported_electricity_kWh"].where(agg["E_exported_electricity_kWh"] > 1e-12)
-        for c in fa_cols:
-            agg[c] = (agg[c] / exp_sum).fillna(df[c].mean())
+        for c, weight in weights.items():
+            denominator = weight.resample(rule).sum() if rule else pd.Series([weight.sum()], index=agg.index)
+            denominator = denominator.where(denominator > 1e-12)
+            agg[c] = (agg[c] / denominator).fillna(df[c].mean())
         return agg
 
     balance = str(opt["pe_balance"]).lower()
@@ -1091,9 +1178,11 @@ def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> Comp
         pe = pe_calc.run_timeseries(_aggregate(pe_hourly, None)).summary
     else:
         raise ValueError("options.pe_balance must be 'annual', 'monthly' or 'hourly'")
-    if pe["PE_export_credit_nonren_kWh"] > pe["PE_delivered_nonren_kWh"] + 1e-9:
-        notes.append(f"export credit ({pe['PE_export_credit_nonren_kWh']:.0f} kWh non-renewable PE) exceeds the deliveries of the {balance} balance: the net is clipped at 0 by the accounting method.")
+    if not opt["pe_allow_negative"] and pe["PE_export_credit_nonren_kWh"] > pe["PE_delivered_nonren_kWh"] + 1e-9:
+        notes.append(f"export credit ({pe['PE_export_credit_nonren_kWh']:.0f} kWh non-renewable PE) exceeds the deliveries of the {balance} balance: the total is floored at 0 (pe_allow_negative=False).")
     grid_import, export_total = float(pe["E_delivered_electricity_kWh"]), float(pe["E_exported_electricity_kWh"])
+    export_grid = float(pe["E_exported_electricity_grid_kWh"])
+    export_non_epb = float(pe["E_exported_electricity_non_epb_kWh"])
 
     need_total = float(q_h.sum() + q_c.sum() + q_w.sum())
     final_total = sum(carriers.values())
@@ -1110,8 +1199,11 @@ def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> Comp
         "PE_balance": balance, "PE_delivered_nonren_kWh": float(pe["PE_delivered_nonren_kWh"]), "PE_export_credit_nonren_kWh": float(pe["PE_export_credit_nonren_kWh"]),
         "final_energy_by_carrier_kWh": final_by_carrier,
         "E_grid_import_kWh": grid_import, "E_export_kWh": export_total,
+        "E_export_grid_kWh": export_grid, "E_export_non_epb_kWh": export_non_epb,
         "PE_net_nonren_kWh": float(pe["PE_net_nonren_kWh"]), "PE_net_total_kWh": float(pe["PE_net_total_kWh"]),
         "PE_net_ren_kWh": float(pe["PE_net_ren_kWh"]), "PE_k_exp": float(pe["k_exp"]),
+        "E_exp_avl_kWh": float(pe["E_exp_avl_total_kWh"]), "PE_exp_avl_nonren_kWh": float(pe["PE_exp_avl_nonren_kWh"]),
+        "PE_exp_avl_ren_kWh": float(pe["PE_exp_avl_ren_kWh"]),
         "E_onsite_renewable_kWh": float(pe["E_onsite_total_kWh"]),
         "RER": float(pe["RER"]), "CO2_net_kg": float(pe["CO2_net_kg"]),
         "system_efficiency": need_total / max(final_total + float(w_em.sum() + w_dis.sum() + ahu_fan.sum()), 1e-9),
@@ -1137,6 +1229,8 @@ def simulate(config: dict[str, Any], hourly: pd.DataFrame | None = None) -> Comp
         for col in ("E_PV_gen_kWh", "E_PV_self_consumed_kWh", "E_PV_export_kWh", "E_grid_after_PV_kWh", "E_battery_state_of_charge_kWh"):
             if col in pv_ts.columns:
                 hourly_out[col] = pv_ts[col]
+    hourly_out["E_exported_electricity_to_grid_kWh"] = grid_export_h
+    hourly_out["E_exported_electricity_to_non_epb_kWh"] = non_epb_export_h
 
     return CompositionResult(config=config, hourly=hourly_out, summary=summary, warnings=warnings, notes=notes)
 
