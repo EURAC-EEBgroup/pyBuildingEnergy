@@ -127,7 +127,7 @@ def _make_sfh_envelope(
                 "shading": False,
                 "shading_type": "horizontal_overhang",
                 "width_or_distance_of_shading_elements": 0.5,
-                "overhang_proprieties": {"width_of_horizontal_overhangs": 0.8},
+                "overhang_properties": {"width_of_horizontal_overhangs": 0.8},
                 "name_adj_zone": None,
             },
             {
@@ -144,7 +144,7 @@ def _make_sfh_envelope(
                 "shading": False,
                 "shading_type": "horizontal_overhang",
                 "width_or_distance_of_shading_elements": 0.5,
-                "overhang_proprieties": {"width_of_horizontal_overhangs": 0.8},
+                "overhang_properties": {"width_of_horizontal_overhangs": 0.8},
                 "name_adj_zone": None,
             },
             {
@@ -161,7 +161,7 @@ def _make_sfh_envelope(
                 "shading": False,
                 "shading_type": "horizontal_overhang",
                 "width_or_distance_of_shading_elements": 0.5,
-                "overhang_proprieties": {"width_of_horizontal_overhangs": 0.8},
+                "overhang_properties": {"width_of_horizontal_overhangs": 0.8},
                 "name_adj_zone": None,
             },
             {
@@ -178,7 +178,7 @@ def _make_sfh_envelope(
                 "shading": False,
                 "shading_type": "horizontal_overhang",
                 "width_or_distance_of_shading_elements": 0.5,
-                "overhang_proprieties": {"width_of_horizontal_overhangs": 0.8},
+                "overhang_properties": {"width_of_horizontal_overhangs": 0.8},
                 "name_adj_zone": None,
             },
         ],
@@ -492,7 +492,7 @@ def _make_extended_building(
                 "shading": False,
                 "shading_type": "horizontal_overhang",
                 "width_or_distance_of_shading_elements": 0.5,
-                "overhang_proprieties": {"width_of_horizontal_overhangs": 0.8},
+                "overhang_properties": {"width_of_horizontal_overhangs": 0.8},
                 "name_adj_zone": None,
             },
             {
@@ -509,7 +509,7 @@ def _make_extended_building(
                 "shading": False,
                 "shading_type": "horizontal_overhang",
                 "width_or_distance_of_shading_elements": 0.5,
-                "overhang_proprieties": {"width_of_horizontal_overhangs": 0.8},
+                "overhang_properties": {"width_of_horizontal_overhangs": 0.8},
                 "name_adj_zone": None,
             },
             {
@@ -526,7 +526,7 @@ def _make_extended_building(
                 "shading": False,
                 "shading_type": "horizontal_overhang",
                 "width_or_distance_of_shading_elements": 0.5,
-                "overhang_proprieties": {"width_of_horizontal_overhangs": 0.8},
+                "overhang_properties": {"width_of_horizontal_overhangs": 0.8},
                 "name_adj_zone": None,
             },
             {
@@ -543,7 +543,7 @@ def _make_extended_building(
                 "shading": False,
                 "shading_type": "horizontal_overhang",
                 "width_or_distance_of_shading_elements": 0.5,
-                "overhang_proprieties": {"width_of_horizontal_overhangs": 0.8},
+                "overhang_properties": {"width_of_horizontal_overhangs": 0.8},
                 "name_adj_zone": None,
             },
         ],

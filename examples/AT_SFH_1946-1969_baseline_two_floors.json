@@ -130,7 +130,7 @@
         "shading": false,
         "shading_type": "horizontal_overhang",
         "width_or_distance_of_shading_elements": 0.5,
-        "overhang_proprieties": {
+        "overhang_properties": {
           "width_of_horizontal_overhangs": 1.0
         }
       },
@@ -154,7 +154,7 @@
         "shading": false,
         "shading_type": "horizontal_overhang",
         "width_or_distance_of_shading_elements": 0.5,
-        "overhang_proprieties": {
+        "overhang_properties": {
           "width_of_horizontal_overhangs": 1.0
         }
       },
@@ -178,7 +178,7 @@
         "shading": false,
         "shading_type": "horizontal_overhang",
         "width_or_distance_of_shading_elements": 0.5,
-        "overhang_proprieties": {
+        "overhang_properties": {
           "width_of_horizontal_overhangs": 1.0
         }
       },
@@ -202,7 +202,7 @@
         "shading": false,
         "shading_type": "horizontal_overhang",
         "width_or_distance_of_shading_elements": 0.5,
-        "overhang_proprieties": {
+        "overhang_properties": {
           "width_of_horizontal_overhangs": 1.0
         }
       }

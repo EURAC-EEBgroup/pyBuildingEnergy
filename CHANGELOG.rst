@@ -1,3 +1,37 @@
+2.1.5 (2026-11-17)
+------------------
+
+Solar shading (EN ISO 52016-1 Annex F)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Result-changing fixes found by checking the shading of windows against Annex F.
+
+* Fix: the single-zone engines lost the overhang, side fins and obstacles of windows aggregated by
+  orientation.  Two or more windows of the same orientation were merged into one element named
+  ``"A + B"`` whose shading column ``W_A + B`` does not exist, so the factor stayed 1.0 (Case 600,
+  south window split in two with a 2 m overhang: heating/cooling and solar gains equal to the case
+  without overhang).  The factor of the element is now the average of the factors of its windows
+  weighted by ``g * A * (1 - F_fr)`` (Formula 69 is linear in the factor, so the gain is exact).
+* Fix: the shadow of the overhangs and the shadow of the obstacles are added (F.16-F.18); the maximum
+  of the two was used.  Each family is capped by the window height.
+* Fix: ``annex_f_shading_objects`` with ``kind: "overhang"`` use F.11 (``lowest_height_m``, sill
+  ``window_sill_height_m``) instead of the obstacle formula F.10.
+* Fix: a window without shading elements is never blocked by a missing height or width (the direct
+  sun was set to zero silently).  A window with an overhang or side fins needs a positive height and
+  width (F.3.3.1), an obstacle-only window the height only; ``ValueError`` otherwise.  Overhang depth
+  ``D``, distance ``L`` and side fin depth/distance must be >= 0 (Table 15).
+* Fix: the key ``overhang_proprieties`` (spelled so in ``examples/building_archetypes.json``,
+  ``building_examples.py`` and other examples) was ignored and switched the overhang off.  The
+  examples are corrected; the misspelled key is accepted with a warning by the engine and renamed by
+  ``sanitize_and_validate_BUI``, which also reports an overhang without depth and rejects missing
+  window geometry for windows with overhang or fins.  Results of the corrected examples change
+  because their overhangs are now active.
+* Documentation of the input fields in ``examples/new_building_input_en.md``: ``width_or_distance_of_shading_elements``
+  is the vertical distance L, ``width_of_horizontal_overhangs`` the depth D.
+* Not changed: the orientation of the window is still rounded to 45 degrees for the hourly shading
+  (Annex F rounds only in the monthly method); several overhangs or fins per window are not supported.
+* New tests: ``tests/test_iso52016_shading_annex_f.py``.
+
 2.1.4 (2026-11-13)
 ------------------
 

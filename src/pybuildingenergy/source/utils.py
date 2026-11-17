@@ -2643,6 +2643,33 @@ class ISO52010:
             longitude=longitude_,
         )
 
+    @staticmethod
+    def _overhang_properties_of_window(window):
+        """``overhang_properties`` of a window (depth D of the overhang, ISO 52016-1 F.3.3.1).
+
+        The misspelled key ``overhang_proprieties`` used by older example files is accepted with a
+        warning (it was silently ignored, which switched the overhang off).  A window declared with an
+        overhang but without depth is reported: without depth the overhang casts no shadow.
+        """
+        props = window.get("overhang_properties")
+        if props is None and window.get("overhang_proprieties") is not None:
+            warnings.warn(
+                f"Window '{window.get('name', '')}': 'overhang_proprieties' is a misspelling of "
+                "'overhang_properties' and is accepted for now; rename the key.",
+                UserWarning, stacklevel=3,
+            )
+            props = window.get("overhang_proprieties")
+        props = props if isinstance(props, dict) else {}
+        types = window.get("shading_type") or []
+        types = {str(t).lower() for t in ([types] if isinstance(types, str) else types)}
+        if types & {"horizontal_overhang", "vertical_overhang"} and props.get("width_of_horizontal_overhangs") is None:
+            warnings.warn(
+                f"Window '{window.get('name', '')}': shading_type declares an overhang but "
+                "overhang_properties.width_of_horizontal_overhangs (depth D) is missing: no overhang shadow is calculated.",
+                UserWarning, stacklevel=3,
+            )
+        return props
+
     @classmethod
     def Shading_reduction_factor_window(
         cls,
@@ -2736,6 +2763,7 @@ class ISO52010:
         for window in filtered_windows:
             F_sh_dir_k_ts_hour = pd.Series(np.zeros(n_timesteps), index=calendar.index, dtype=float)
             h_k_sun_t_hour     = pd.Series(np.zeros(n_timesteps), index=calendar.index, dtype=float)
+            overhang_properties = cls._overhang_properties_of_window(window)
 
             for i in range(n_timesteps):
                 # Protect from NaN in angle values
@@ -2748,7 +2776,6 @@ class ISO52010:
                 else:
                     phi_deg = 0.0
 
-                overhang_properties = window.get("overhang_properties", {}) or {}
                 F_sh_dir_k_t = shading_reduction_factor(
                     alpha_sol_t=alpha_deg,
                     phi_sol_t=phi_deg,
@@ -3353,6 +3380,34 @@ class ISO52016:
             A_matrix[R_i, R_i] += A_i_f * h_ri_eq
             for (R_k, A_k_f, _) in valid_faces:
                 A_matrix[R_i, R_k] -= A_i_f * (A_k_f / area_tot) * h_ri_eq
+
+    @staticmethod
+    def _window_shading_series(sim_df, surface):
+        """Hourly F_sh;obst of a window element as an array, or ``None`` if there is no shading data.
+
+        EN ISO 52016-1 evaluates the shading per window (Formula 69, Annex F).  An element made
+        of several windows (``_aggregate_surfaces_by_direction``) gets the average of the factors
+        of its windows weighted by g * A * (1 - F_fr), which keeps the solar gain exact because
+        the gain is linear in the factor.  A window without a ``W_<name>`` column is unshaded.
+        """
+        components = surface.get("window_components")
+        if not components:
+            name = surface.get("name")
+            components = [{"name": name, "weight": 1.0}] if name else []
+        columns, weights = [], []
+        for comp in components:
+            col = f"W_{comp['name']}"
+            if col in sim_df.columns:
+                columns.append(pd.to_numeric(sim_df[col], errors="coerce").fillna(1.0).to_numpy(dtype=float))
+            else:
+                columns.append(np.ones(len(sim_df), dtype=float))
+            weights.append(float(comp.get("weight", 1.0)))
+        if not columns or not any(f"W_{c['name']}" in sim_df.columns for c in components):
+            return None
+        w = np.asarray(weights, dtype=float)
+        if not np.isfinite(w).all() or w.sum() <= 0.0:
+            w = np.ones(len(columns), dtype=float)
+        return np.column_stack(columns) @ w / w.sum()
 
     @staticmethod
     def _surface_shading_factor_from_timeseries(
@@ -4373,6 +4428,7 @@ class ISO52016:
             "parapetA": 0.0,
             "ffrA": 0.0,          # frame_area_fraction * A (windows only)
             "has_ffr": False,
+            "components": [],     # original windows: shading is evaluated per window (Formula 69)
         })
 
         for s in building_object["building_surface"]:
@@ -4448,6 +4504,11 @@ class ISO52016:
             b["height_sum"] += height_
             b["parapet_sum"] += parapet_
             if b["type"] == "transparent":
+                # Formula (69): the solar gain of window wi weighs g * A * (1 - F_fr)
+                b["components"].append({
+                    "name": s.get("name", "surface"),
+                    "weight": max(0.0, g * A * (1.0 - _surface_frame_area_fraction(s))),
+                })
                 b["parapetA"] += parapet_ * A
                 b["ffrA"] += _surface_frame_area_fraction(s) * A
                 b["has_ffr"] = b["has_ffr"] or ("frame_area_fraction" in s)
@@ -4499,6 +4560,8 @@ class ISO52016:
                 "height": height_equiv,
                 "parapet": parapet_equiv,
             }
+            if b["type"] == "transparent":
+                agg["window_components"] = list(b["components"])
             if b["type"] == "transparent" and b["has_ffr"]:
                 agg["frame_area_fraction"] = b["ffrA"] / A
             if b["type"] == "transparent":
@@ -8253,11 +8316,10 @@ class ISO52016:
                 I_sol_tot_el[:, _c2_Eli] = (
                     pd.to_numeric(sim_df[_c2_tot], errors="coerce").fillna(0.0).to_numpy(dtype=float)
                 )
-            _c2_wincol = win_col_for_index.get(_c2_Eli)
-            if _c2_wincol and _c2_wincol in sim_df.columns:
-                F_sh_el[:, _c2_Eli] = (
-                    pd.to_numeric(sim_df[_c2_wincol], errors="coerce").fillna(1.0).to_numpy(dtype=float)
-                )
+            if _c2_Eli in win_col_for_index:
+                _c2_series = cls._window_shading_series(sim_df, building_object["building_surface"][_c2_Eli])
+                if _c2_series is not None:
+                    F_sh_el[:, _c2_Eli] = _c2_series
         # -----------------------------------------------------------
 
         _adaptive_ctx = cls._attach_adaptive_envelope(building_object, sim_df, profile_df)
@@ -9909,11 +9971,10 @@ class ISO52016:
                 I_sol_tot_el[:, _c2_Eli] = (
                     pd.to_numeric(sim_df[_c2_tot], errors="coerce").fillna(0.0).to_numpy(dtype=float)
                 )
-            _c2_wincol = win_col_for_index.get(_c2_Eli)
-            if _c2_wincol and _c2_wincol in sim_df.columns:
-                F_sh_el[:, _c2_Eli] = (
-                    pd.to_numeric(sim_df[_c2_wincol], errors="coerce").fillna(1.0).to_numpy(dtype=float)
-                )
+            if _c2_Eli in win_col_for_index:
+                _c2_series = cls._window_shading_series(sim_df, building_object["building_surface"][_c2_Eli])
+                if _c2_series is not None:
+                    F_sh_el[:, _c2_Eli] = _c2_series
         # -----------------------------------------------------------
 
         _adaptive_ctx = cls._attach_adaptive_envelope(building_object, sim_df, profile_df)

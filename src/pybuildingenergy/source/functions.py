@@ -485,12 +485,11 @@ def shading_reduction_factor(
         """
         return abs(((a1 - a2 + 180.0) % 360.0) - 180.0)
 
-    # ---- minimal validation for window dimensions ----
+    # ---- window dimensions (F.3.3.1): needed as soon as something shades the window ----
     H = to_float(H_k, default=None)
     W = to_float(W_k, default=None)
-    if H is None or W is None or H <= 0 or W <= 0:
-        # without valid window dimensions the calculation is not meaningful
-        return 0.0, 0.0
+    H = H if (H is not None and np.isfinite(H) and H > 0.0) else None
+    W = W if (W is not None and np.isfinite(W) and W > 0.0) else None
 
     # ---- angle checks in degrees (as in your original logic) ----
     a = to_float(alpha_sol_t, default=None)
@@ -499,19 +498,6 @@ def shading_reduction_factor(
     g = to_float(gamma_k_t,   default=None)
     if None in (a, p, b, g):
         return 0.0, 0.0
-
-    # normalize azimuths to a common branch to keep behavior explicit and stable
-    p = p % 360.0
-    g = g % 360.0
-
-    # if sun is far from the window normal/tilt, no direct sun on the pane
-    if angle_distance_deg(g, p) > 90 or abs(b - a) > 90:
-        return 0.0, 0.0
-
-    # ---- convert to radians for trigonometric functions ----
-    alpha = np.radians(a)
-    phi   = np.radians(p)
-    gamma = np.radians(g)
 
     # ---- normalize shading types: str/list -> lowercase set ----
     types = set()
@@ -526,32 +512,63 @@ def shading_reduction_factor(
 
     has_overhang  = any(t in types for t in ("horizontal_overhang", "vertical_overhang"))
     has_obstacles = "obstacles" in types or bool(annex_f_shading_objects)
+    has_fins = isinstance(side_fins, dict) and any(isinstance(v, dict) for v in side_fins.values())
 
-    h_k_sun_t = 0.0
+    # Annex F.3.3.1: the height is needed by every shading element; the real width by overhangs
+    # and side fins (for obstacles and hanging overhangs, F.3.3.2, it may be set to 1 m).
+    no_shading = False
+    if has_overhang or has_obstacles or has_fins:
+        if H is None or ((has_overhang or has_fins) and W is None):
+            raise ValueError(
+                "shading_reduction_factor: a window with overhang, side fins or obstacles needs a "
+                f"positive height and, for overhangs and side fins, width (ISO 52016-1 F.3.3.1); got H={H_k!r}, W={W_k!r}"
+            )
+        if W is None:
+            W = 1.0
+    else:
+        no_shading = True
 
-    # ---- overhangs (horizontal/vertical projections) ----
+    # normalize azimuths to a common branch to keep behavior explicit and stable
+    p = p % 360.0
+    g = g % 360.0
+
+    # if sun is far from the window normal/tilt, no direct sun on the pane
+    if angle_distance_deg(g, p) > 90 or abs(b - a) > 90:
+        return 0.0, 0.0
+
+    if no_shading:  # nothing shades the window: only the field of view of the sun matters
+        return 1.0, (H if H is not None else 0.0)
+
+    # ---- convert to radians for trigonometric functions ----
+    alpha = np.radians(a)
+    phi   = np.radians(p)
+    gamma = np.radians(g)
+
+    # ---- overhangs: simple overhang (F.4) and hanging objects (F.11), obstacles (F.10) ----
+    # The shadow height of the overhangs and the one of the obstacles come from opposite sides of the
+    # window and add up: h_sun = max(0, H - (h_obst + h_ovh)) (F.16-F.18).
+    shade_ovh = 0.0
     if has_overhang:
         D = to_float(D_k_ovh_q, default=0.0)
         L = to_float(L_k_ovh_q, default=0.0)
+        if D is None or L is None or not np.isfinite(D) or not np.isfinite(L) or D < 0.0 or L < 0.0:
+            raise ValueError(
+                f"shading_reduction_factor: overhang depth D and distance L must be >= 0 (ISO 52016-1 Table 15); got D={D_k_ovh_q!r}, L={L_k_ovh_q!r}"
+            )
 
         # projection denominator; protect against ~0 to avoid division by zero
         denom = np.cos(phi - gamma)
         if abs(denom) < 1e-12:
             denom = 1e-12 * np.sign(denom if denom != 0 else 1.0)
 
-        # geometric projection of the overhang shadow height on the window
-        h_k_ovh_q_t = D * np.tan(alpha) / denom - L
-        h_k_ovh_q_t = max(0.0, h_k_ovh_q_t)
+        # F.4: shadow height of the overhang on the window
+        shade_ovh = max(0.0, D * np.tan(alpha) / denom - L)
 
-        # remaining sunlit height after overhang shadow
-        h_k_sun_t   = max(0.0, H - h_k_ovh_q_t)
-
-    # ---- external obstacles: ISO 52016-1 Annex F, F.3.3/F.3.5.2 ----
-    # For every skyline segment crossed by the sun azimuth, project the top
-    # of the obstacle onto the window plane. The blocked lower height is:
-    #     h_shadow = H_top - L * tan(alpha_sun)
-    # Diffuse radiation is not reduced here; the caller combines the direct
-    # factor with direct and diffuse irradiance as required by Annex F.
+    # ---- external objects: ISO 52016-1 Annex F, F.3.3.2 / F.3.5.2 ----
+    # Obstacle p (F.10):  h = max(0, H_obst - H_0 - L * tan(alpha_sun))
+    # Overhang q (F.11):  h = max(0, H_k + H_0 - H_ovh + L * tan(alpha_sun))
+    # with H_0 the sill height of the window.  Diffuse radiation is not reduced here; the caller
+    # combines the direct factor with direct and diffuse irradiance (F.1).
     objects = annex_f_shading_objects or []
 
     def _azimuth_in_segment(phi_deg, start_deg, end_deg):
@@ -563,9 +580,8 @@ def shading_reduction_factor(
             return False
         return ((phi - start) % 360.0) <= width + 1e-9
 
-    matched_object = False
+    shade_obst = 0.0
     if objects and a > 0.0:
-        max_shadow_height = 0.0
         for obj in objects:
             if not isinstance(obj, dict):
                 continue
@@ -582,34 +598,39 @@ def shading_reduction_factor(
                 continue
             if not _azimuth_in_segment(p, start, end):
                 continue
-            matched_object = True
-
             try:
-                if obj.get("top_height_m") is not None:
-                    top_height = float(obj["top_height_m"])
-                else:
-                    top_height = float(obj.get("base_height_m", 0.0)) + float(
-                        obj.get("height_m", obj.get("height", 0.0))
-                    )
+                sill = float(obj.get("window_sill_height_m", 0.0))
             except (TypeError, ValueError):
-                continue
-            if not np.isfinite(top_height):
-                continue
-            try:
-                top_height -= float(obj.get("window_sill_height_m", 0.0))
-            except (TypeError, ValueError):
-                pass
+                sill = 0.0
 
-            shadow_height = top_height - distance * np.tan(alpha)
-            max_shadow_height = max(max_shadow_height, shadow_height)
+            if kind == "overhang":
+                # lowest height of the hanging object above the ground (H_ovh;q;i)
+                lowest = obj.get("lowest_height_m", obj.get("base_height_m"))
+                try:
+                    lowest = float(lowest)
+                except (TypeError, ValueError):
+                    continue
+                if not np.isfinite(lowest):
+                    continue
+                shade_ovh = max(shade_ovh, H + sill - lowest + distance * np.tan(alpha))
+            else:
+                try:
+                    if obj.get("top_height_m") is not None:
+                        top_height = float(obj["top_height_m"])
+                    else:
+                        top_height = float(obj.get("base_height_m", 0.0)) + float(
+                            obj.get("height_m", obj.get("height", 0.0))
+                        )
+                except (TypeError, ValueError):
+                    continue
+                if not np.isfinite(top_height):
+                    continue
+                shade_obst = max(shade_obst, top_height - sill - distance * np.tan(alpha))
 
-        overhang_shadow_height = max(0.0, H - h_k_sun_t) if has_overhang else 0.0
-        total_shadow_height = max(overhang_shadow_height, max_shadow_height)
-        h_k_sun_t = min(H, max(0.0, H - total_shadow_height))
-
-    # if no shading element affected the height, assume fully sunlit height
-    if not (has_overhang or (has_obstacles and matched_object)):
-        h_k_sun_t = H
+    # F.16, F.17: each family is capped by the window height; F.18: the two shadows add up
+    shade_obst = min(H, max(0.0, shade_obst))
+    shade_ovh = min(H, max(0.0, shade_ovh))
+    h_k_sun_t = max(0.0, H - (shade_obst + shade_ovh))
 
     # ---- side fins of infinite height: ISO 52016-1 Annex F, F.5/F.6, F.19-F.21 ----
     # Only the fin on the sun's side casts a shadow on the window:
@@ -621,6 +642,10 @@ def shading_reduction_factor(
         if isinstance(fin, dict) and abs(delta) > 0.0:
             depth = to_float(fin.get("depth"), default=0.0) or 0.0
             distance = to_float(fin.get("distance"), default=0.0) or 0.0
+            if depth < 0.0 or distance < 0.0:
+                raise ValueError(
+                    f"shading_reduction_factor: side fin depth and distance must be >= 0 (ISO 52016-1 Table 15); got {depth}, {distance}"
+                )
             w_fin = depth * np.tan(np.radians(min(abs(delta), 90.0 - 1e-9))) - distance
             w_k_fin_shadow = min(W, max(0.0, w_fin))
 

@@ -262,14 +262,44 @@ def sanitize_and_validate_BUI(bui: dict,
             # window dimensions
             h = s.get("height", None)
             w = s.get("width", None)
-            if not (isinstance(h, (int, float)) and h > 0):
+            shading_types = s.get("shading_type") or []
+            shading_types = {str(x).lower() for x in ([shading_types] if isinstance(shading_types, str) else shading_types)}
+            has_overhang = bool(shading_types & {"horizontal_overhang", "vertical_overhang"})
+            # overhangs and side fins need the real window size (ISO 52016-1 F.3.3.1): a default
+            # would invent the shading geometry, so it is an error and is not fixed
+            needs_geometry = has_overhang or isinstance(s.get("side_fins"), dict)
+
+            # misspelled key of the overhang data, silently ignored by the engine in older versions
+            if "overhang_proprieties" in s and "overhang_properties" not in s:
                 if fix:
+                    s["overhang_properties"] = s.pop("overhang_proprieties")
+                    add_issue("WARN", f"{path}.overhang_proprieties",
+                              "misspelled key renamed to overhang_properties", fixed=True)
+                else:
+                    add_issue("ERROR", f"{path}.overhang_proprieties",
+                              "misspelled key: use overhang_properties", fixed=False)
+            if has_overhang:
+                props = s.get("overhang_properties") or {}
+                depth = props.get("width_of_horizontal_overhangs") if isinstance(props, dict) else None
+                if depth is None:
+                    add_issue("WARN", f"{path}.overhang_properties.width_of_horizontal_overhangs",
+                              "overhang declared without depth D: no overhang shadow is calculated", fixed=False)
+                elif not (isinstance(depth, (int, float)) and depth >= 0):
+                    add_issue("ERROR", f"{path}.overhang_properties.width_of_horizontal_overhangs",
+                              f"overhang depth D should be >= 0; value={depth}", fixed=False)
+                dist = s.get("width_or_distance_of_shading_elements", 0.0)
+                if not (isinstance(dist, (int, float)) and dist >= 0):
+                    add_issue("ERROR", f"{path}.width_or_distance_of_shading_elements",
+                              f"vertical distance L between window and overhang should be >= 0; value={dist}", fixed=False)
+
+            if not (isinstance(h, (int, float)) and h > 0):
+                if fix and not needs_geometry:
                     s["height"] = 1.0
                     add_issue("WARN", f"{path}.height", f"height not valid ({h}); set to 1.0", fixed=True)
                 else:
                     add_issue("ERROR", f"{path}.height", f"height should be > 0; value={h}", fixed=False)
             if not (isinstance(w, (int, float)) and w > 0):
-                if fix:
+                if fix and not needs_geometry:
                     s["width"] = 1.0
                     add_issue("WARN", f"{path}.width", f"width not valid ({w}); set to 1.0", fixed=True)
                 else:

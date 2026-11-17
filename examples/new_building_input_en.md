@@ -66,13 +66,13 @@ Transparent surfaces additionally use:
 | Input | Unit | Meaning |
 |---|---:|---|
 | `g_value` | — | Total solar energy transmittance of the window in its normal/open state. |
-| `height`, `width` | m | Window geometry used by the shading calculation. |
+| `height`, `width` | m | Window height H and width W (ISO 52016-1 F.3.3.1). Required, and > 0, when the window has an overhang or side fins; an obstacle-only window needs the height only. The solar gain is evaluated per window; windows of the same orientation are combined with the average of their shading factors weighted by g·A·(1−F_fr). |
 | `parapet` | m | Height of the lower window edge above the reference level. |
-| `shading` | boolean | Enables the configured fixed shading calculation. |
+| `shading` | boolean | Not read by the calculation (the shading is active when `shading_type`, `side_fins` or `annex_f_shading_objects` are given). |
 | `shading_type` | — | Fixed-shading geometry type, such as `horizontal_overhang`. |
-| `width_or_distance_of_shading_elements` | m | Geometric input for the fixed shading object. |
-| `overhang_properties.width_of_horizontal_overhangs` | m | Projection width of a horizontal overhang. |
-| `annex_f_shading_objects` | list | Optional ISO 52016-1 Annex F skyline elements. Each element contains `azimuth_start_deg`, `azimuth_end_deg`, `distance_m`, and either `top_height_m` or `base_height_m` + `height_m`; angles use N=0, E=90, S=180, W=270. |
+| `width_or_distance_of_shading_elements` | m | Overhang distance L (F.3.3.1): the **vertical** distance between the top edge of the window and the overhang, ≥ 0. |
+| `overhang_properties.width_of_horizontal_overhangs` | m | Overhang depth D (F.3.3.1): projection measured horizontally from the façade plane, ≥ 0. The overhang is assumed of infinite length. The misspelled key `overhang_proprieties` is accepted with a warning. Without D no shadow is calculated. |
+| `annex_f_shading_objects` | list | Optional ISO 52016-1 Annex F skyline elements. Each element contains `azimuth_start_deg`, `azimuth_end_deg`, `distance_m`, and either `top_height_m` or `base_height_m` + `height_m` (obstacle, F.10, `kind: "obstacle"`), or for a hanging overhang (F.11, `kind: "overhang"`) `lowest_height_m` (lowest height above the ground); `window_sill_height_m` is the sill height H0; the shadows of overhangs and obstacles add up (F.18); angles use N=0, E=90, S=180, W=270. |
 
 Example Annex F obstacle input:
 
