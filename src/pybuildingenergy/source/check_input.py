@@ -358,6 +358,20 @@ def sanitize_and_validate_BUI(bui: dict,
         if lengths and len(set(lengths)) != 1:
             add_issue("ERROR", path, f"Array lengths are inconsistent: {[ (k, None if v is None else len(v)) for k,v in arrs.items() ]}", fixed=False)
 
+        # ISO 52016-1 6.4.5 / E.3 options of an adjacent thermally unconditioned zone
+        ztu_type = str(az.get("type", az.get("ztu_type", "external"))).strip().lower()
+        if ztu_type not in ("external", "internal"):
+            add_issue("ERROR", f"{path}.type", f"type must be 'external' or 'internal'; value={ztu_type!r}", fixed=False)
+        b_def = az.get("b_ztu", None)
+        if b_def is not None and not (isinstance(b_def, (int, float)) and 0.0 <= b_def <= 1.0):
+            add_issue("ERROR", f"{path}.b_ztu", f"b_ztu must be in [0, 1]; value={b_def}", fixed=False)
+        if ztu_type == "internal" and isinstance(b_def, (int, float)) and b_def >= 1.0:
+            add_issue("ERROR", f"{path}.b_ztu", "b_ztu must be < 1 for an internal zone (Formula 54)", fixed=False)
+        for key, lo, hi in (("c_ztu_ve", 0.0, None), ("c_ztu_h_max", 0.0, None), ("g_value", 0.0, 1.0)):
+            v = az.get(key, None)
+            if v is not None and not (isinstance(v, (int, float)) and v >= lo and (hi is None or v <= hi)):
+                add_issue("ERROR", f"{path}.{key}", f"{key} out of range; value={v}", fixed=False)
+
         # U elementi > 0
         U = arrs.get("transmittance_U_elements")
         if isinstance(U, (list, np.ndarray)):

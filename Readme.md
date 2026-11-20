@@ -594,6 +594,19 @@ For space heating, applicable standards include EN 15316-1, EN 15316-2-1, EN 153
 
 ## Single zone and Multiple Zones **(New)**
 
+Implemented as described in ISO 52016-1 (6.4.2, 6.4.5-6.4.7, Annex D); see the
+"Unreleased" section of `CHANGELOG.rst` for the details and the known deviations:
+
+- adjacent thermally unconditioned zones (external and internal type, Formulae 2-6, 54, 58-59, 62,
+  65, 68, E.5-E.6) in the single-zone engines;
+- coupled zones through `INTERNAL` partitions, optional air flow between zones
+  (`interzone_airflows`) and `free_floating` zones in the multizone engine, solved together in each
+  hour (documented deviation from the previous-hour boundary of D.2);
+- input validation, the quantitative zoning criteria of 6.4.2 and a report of the partitioning
+  (`multizone_report`, `MultizoneResult.coupling_report()`);
+- 6.4.6 Option B (spatial average set-point) with `building_parameters.spatial_setpoint_adjustment`.
+
+
 ### EN ISO 52016 - Multi-zone Calculation and Adjacent Zones
 
 **EN ISO 52016 defines that:**  

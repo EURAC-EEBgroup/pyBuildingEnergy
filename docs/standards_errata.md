@@ -196,3 +196,20 @@ manual/automated rows of Tables C.2-C.8 are identical in the spreadsheet and in 
 with `adaptive_envelope.control.annex_c_edition = "2023"`
 (`_ANNEX_C_2023_DIFFERENCES` in `source/adaptive_envelope_52016_3.py`).
 
+
+## ISO/TR 52016-2:2017, 6.5.9 - coefficient c_ztu,h;max
+
+**Location:** ISO/TR 52016-2:2017, 6.5.9, against EN ISO 52016-1:2017, Formula (59) and Table B.16.
+
+**What the standard prints:** Formula (59) limits the temperature of an external unconditioned
+zone to `theta_e + c_ztu,h;max (theta_int,op - theta_e)`; Table B.16 gives `c = 1,0`.  The TR says
+"if the coefficient is, for example, set to zero, there is no maximum.  If the coefficient is set
+to 1 the temperature will not exceed the temperature of the adjacent thermally conditioned
+zone(s)".
+
+**The inconsistency:** with the formula, `c = 0` caps the temperature at the outdoor temperature,
+the opposite of "no maximum".  The statement for `c = 1` agrees with the formula.
+
+**What the implementation does:** the formula for every number (`c = 0` caps at the outdoor
+temperature); the limit is disabled with `c_ztu_h_max: null` (`None`).  The German national annex
+(DIN EN ISO 52016-1, Table NA.16) gives "not applicable" for the coefficient.

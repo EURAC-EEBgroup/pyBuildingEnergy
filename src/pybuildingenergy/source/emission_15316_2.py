@@ -264,18 +264,35 @@ class EmissionSystemCalculator:
         q_inc = q_inc.replace([np.inf, -np.inf], np.nan).fillna(q_out).clip(lower=0.0)
 
         nominal_power = float(opts["nominal_power_kW"])
-        if np.isfinite(nominal_power) and nominal_power > 0:
-            q_inc = np.minimum(q_inc, nominal_power * hours)
+        if np.isnan(nominal_power) or nominal_power < 0.0:
+            raise ValueError(
+                f"EN 15316-2 {service}: nominal_power_kW must be >= 0 (0 = no emitter for this "
+                f"service, omit it for unlimited power); got {opts['nominal_power_kW']!r}."
+            )
+        if nominal_power == 0.0 and bool((q_out > _KWH_EPS).any()):
+            warnings.warn(
+                f"EN 15316-2 {service}: nominal_power_kW = 0 (no emitter for this service) but the "
+                f"zone has a need in {int((q_out > _KWH_EPS).sum())} step(s); the whole need is "
+                "reported as backup/unmet energy.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
-        # EN 15316-1 eq. 16: when the emitter cannot deliver the expected output,
-        # the difference is backup energy (or unmet load if no backup exists).
-        q_act = np.minimum(q_out, q_inc)
-        q_deficit = (q_out - q_act).clip(lower=0.0)
+        # The emitter has to deliver the need at the modified set point (q_inc, M2-2).
+        # Only the part above its capacity P_n * t is a deficit (EN 15316-1 eq. 16).  A
+        # recalculated need lower than the base need is not a deficit: the two simulations
+        # differ also through neighbouring zones or adaptive controls.
+        q_required = q_inc
+        if np.isfinite(nominal_power):
+            q_inc = np.minimum(q_required, nominal_power * hours)
+        q_deficit = (q_required - q_inc).clip(lower=0.0)
         backup = bool(opts["backup_available"])
         q_back = q_deficit if backup else q_deficit * 0.0
         q_unmet = q_deficit * 0.0 if backup else q_deficit
-        undersized = (q_deficit > float(opts["undersize_tolerance"]) * q_out) & (q_out > _KWH_EPS)
-        if not backup and bool(undersized.any()):
+        undersized = (q_deficit > float(opts["undersize_tolerance"]) * q_required) & (
+            q_required > _KWH_EPS
+        )
+        if not backup and nominal_power > 0.0 and bool(undersized.any()):
             warnings.warn(
                 f"EN 15316-2 {service}: emitter undersized in {int(undersized.sum())} hour(s); "
                 f"largest unmet load {float(q_deficit.max()):.3f} kWh with no backup or supplementary "

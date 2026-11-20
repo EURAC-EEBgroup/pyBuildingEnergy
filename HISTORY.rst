@@ -32,3 +32,24 @@ History
 2.0.1 and 2.0.2 (2025-11-24)
 ------------------
 * Update information regarding authors, license, etc.
+
+2.1.6 (2026-11-20)
+------------------
+* Multizone (EN ISO 52016-1) checked against ISO/TR 52016-2:
+  * thermally unconditioned adjacent zones (6.4.5) with Formulae 54, 58-59, 65 and 68,
+    in the single-zone and multizone engines;
+  * air flows between zones, zoning checks, Option B, free-floating zones;
+  * latent (moisture) balance per zone.
+* Adaptive windows (EN ISO 52016-3) in the multizone engine:
+  * one control context per zone, shading applied per window;
+  * comparison of the adaptive building with its reference per zone;
+  * daylight and artificial light per control state.
+* EN 15316-2 emission per zone:
+  * equivalent set-points recalculated together for all zones;
+  * emitter capacity included in the thermal balance;
+  * zones without an emitter run free-floating.
+* System topologies for multizone buildings: central, per zone, and combined
+  heating/cooling/DHW with a storage tank. Shared generator power is split between the
+  zones hour by hour.
+* EN 16798-1 comfort categories and capacity-shortage indicators.
+* Details in CHANGELOG.rst.

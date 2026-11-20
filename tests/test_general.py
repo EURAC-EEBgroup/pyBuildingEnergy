@@ -1887,10 +1887,15 @@ def test_multizone_surface_shading_factor_area_weighted_by_zone_orientation():
     shading_groups = {
         ("zone_a", "EV"): [("win_1", 1.0), ("win_2", 3.0)],
     }
+    # The element carries its own windows (set by _aggregate_surfaces_by_direction);
+    # the zone/orientation groups are no longer used (they averaged unrelated windows).
     surf = {
         "name": "win_1 + win_2",
         "zone": "zone_a",
         "ISO52016_orientation_string": "EV",
+        "window_components": [
+            {"name": "win_1", "weight": 1.0}, {"name": "win_2", "weight": 3.0},
+        ],
     }
 
     f_sh = ISO52016._surface_shading_factor_from_timeseries(

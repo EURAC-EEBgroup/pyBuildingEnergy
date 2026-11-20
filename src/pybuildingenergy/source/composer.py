@@ -1402,12 +1402,21 @@ class MultizoneResult:
     hourly: pd.DataFrame
     annual: pd.DataFrame
 
+    def coupling_report(self) -> str:
+        """Partitioning and input data of the coupled-zone calculation (ISO 52016-1 Annex D)."""
+        from .multizone_52016_1 import format_multizone_report, multizone_report
+
+        return format_multizone_report(
+            multizone_report(self.config["building"], self.hourly, self.annual)
+        )
+
     def report(self) -> str:
         lines = ["=" * 60, f"{'Zone':12s} {'Q_H [kWh]':>12s} {'Q_C [kWh]':>12s}"]
-        for _, row in self.annual.iterrows():
+        zones_only = self.annual[self.annual["zone"] != "TOTAL"]
+        for _, row in zones_only.iterrows():
             lines.append(f"{row['zone']:12s} {row['Q_H_annual_kWh']:12.0f} {row['Q_C_annual_kWh']:12.0f}")
-        total_h = float(self.annual["Q_H_annual_kWh"].sum())
-        total_c = float(self.annual["Q_C_annual_kWh"].sum())
+        total_h = float(zones_only["Q_H_annual_kWh"].sum())
+        total_c = float(zones_only["Q_C_annual_kWh"].sum())
         lines.append("-" * 60)
         lines.append(f"{'Total':12s} {total_h:12.0f} {total_c:12.0f}")
         lines.append("=" * 60)
@@ -1448,3 +1457,306 @@ def simulate_multizone(config: dict[str, Any], **kwargs: Any) -> MultizoneResult
         building_object=building_object, **params
     )
     return MultizoneResult(config=config, hourly=hourly, annual=annual)
+
+
+# --------------------------------------------------------------------------------------
+# Multizone + EN 15316-2 emission per zone
+# --------------------------------------------------------------------------------------
+
+_ZONE_SETPOINT_DEFAULTS = {
+    "heating_setpoint": 20.0, "heating_setback": 16.0,
+    "cooling_setpoint": 26.0, "cooling_setback": 30.0,
+}
+
+
+def _shift_zone_setpoints(building: dict[str, Any], deltas: dict[str, tuple]) -> dict[str, Any]:
+    """Copy of a multizone building with the set-points of each zone moved by its EN 15316-2
+    equivalent temperature increase ``(dH, dC)`` (eq. 16; cooling deltas are negative).
+
+    The value moved is the one the engine would use: zone value, else
+    ``building_parameters.temperature_setpoints``, else the engine default.
+    """
+    shifted = copy.deepcopy(building)
+    global_sp = (shifted.get("building_parameters") or {}).get("temperature_setpoints") or {}
+    for zone in shifted["zones"]:
+        d_h, d_c = deltas.get(str(zone["name"]), (0.0, 0.0))
+        if d_h == 0.0 and d_c == 0.0:
+            continue
+        for key, default in _ZONE_SETPOINT_DEFAULTS.items():
+            base = zone.get(key)
+            if base is None:
+                base = global_sp.get(key, default)
+            zone[key] = float(base) + (d_h if key.startswith("heating") else d_c)
+    return shifted
+
+
+def _apply_emitter_capacities(
+    building: dict[str, Any], emission_by_zone: dict[str, dict[str, Any]]
+) -> tuple[dict[str, Any], dict[str, dict[str, float]]]:
+    """Copy of a multizone building whose zone ``heating_capacity`` / ``cooling_capacity`` [W]
+    are limited by the emitter ``nominal_power_kW`` of the zone, so the thermal solver (and
+    the adaptive-facade control that follows it) sees the emitter limit.
+
+    The capacity used is min(zone capacity, global capacity, P_n * 1000).  A missing
+    ``nominal_power_kW`` leaves the zone capacity unchanged.  Returns the building and the
+    capacities applied per zone.
+    """
+    out = copy.deepcopy(building)
+    global_caps = (out.get("building_parameters") or {}).get("system_capacities") or {}
+    applied: dict[str, dict[str, float]] = {}
+    for zone in out.get("zones") or []:
+        em_cfg = emission_by_zone.get(str(zone["name"]))
+        if not em_cfg:
+            continue
+        for svc, key in (("heating", "heating_capacity"), ("cooling", "cooling_capacity")):
+            p_kw = (em_cfg.get(svc) or {}).get("nominal_power_kW")
+            if p_kw is None:
+                continue
+            p_w = max(0.0, float(p_kw)) * 1000.0
+            current = zone.get(key, global_caps.get(key))
+            cap = p_w if current is None else min(float(current), p_w)
+            zone[key] = cap
+            applied.setdefault(str(zone["name"]), {})[key] = cap
+    return out, applied
+
+
+@dataclass
+class MultizoneEmissionResult:
+    """Multizone need with an EN 15316-2 emission system per zone."""
+
+    config: dict[str, Any]
+    hourly: pd.DataFrame                    # need at the nominal set-points
+    hourly_inc: pd.DataFrame | None         # need at the equivalent set-points (recalculate)
+    annual: pd.DataFrame                    # one row per zone (+ TOTAL)
+    emission: dict[str, Any]                # zone -> EmissionSimulationResult
+    delta_theta_K: dict[str, tuple]         # zone -> (dH, dC)
+    emission_inc_method: str
+    hydraulic: Any = None                   # MultiZoneHeatingSystemCalculator result, if requested
+    applied_capacities: dict = field(default_factory=dict)  # zone -> {capacity key: W}
+    free_floating_zones: list = field(default_factory=list)  # zones run without HVAC
+
+    def comfort(self, method: str = "adaptive", run: str = "base", **kwargs) -> pd.DataFrame:
+        """EN 16798-1 comfort categories and capacity-shortage indicators per zone.
+
+        ``run="base"``: run at the nominal set-points (the temperatures the occupants get);
+        ``run="inc"``: run at the equivalent set-points (the one used for the energy).
+        With ``couple_emitter_capacity=True`` an undersized emitter shows here as hours with
+        the capacity limit, degree-hours off the set-point and energy not delivered.
+        """
+        from .comfort_16798_1 import multizone_comfort_table
+
+        hourly = self.hourly if run == "base" or self.hourly_inc is None else self.hourly_inc
+        zones = [z for z in self.annual["zone"] if z != "TOTAL"]
+        return multizone_comfort_table(hourly, zones, method=method, **kwargs)
+
+    def report(self) -> str:
+        z = self.annual[self.annual["zone"] != "TOTAL"]
+        lines = ["=" * 92,
+                 f"{'Zone':12s} {'dH[K]':>6s} {'Q_H need':>10s} {'Q_H inc':>10s} {'Q_H em in':>10s} "
+                 f"{'Q_C need':>10s} {'Q_C inc':>10s} {'Q_C em in':>10s}"]
+        for _, r in z.iterrows():
+            lines.append(
+                f"{r['zone']:12s} {r['delta_theta_H_K']:6.2f} {r['Q_H_need_kWh']:10.0f} "
+                f"{r['Q_H_need_inc_kWh']:10.0f} {r.get('QH_em_in_kWh', float('nan')):10.0f} "
+                f"{r['Q_C_need_kWh']:10.0f} {r['Q_C_need_inc_kWh']:10.0f} "
+                f"{r.get('QC_em_in_kWh', float('nan')):10.0f}"
+            )
+        lines.append("=" * 92)
+        return "\n".join(lines)
+
+
+def simulate_multizone_emission(
+    config: dict[str, Any],
+    emission_by_zone: dict[str, dict[str, Any]],
+    emission_inc: str = "recalculate",
+    hydraulic_systems: dict[str, dict[str, Any]] | None = None,
+    couple_emitter_capacity: bool = True,
+    unlisted_zones: str = "free_floating",
+    **kwargs: Any,
+) -> MultizoneEmissionResult:
+    """Multizone ISO 52016 need -> EN 15316-2 emission per zone.
+
+    ``emission_by_zone`` maps a zone name to the ``EmissionSystemCalculator`` input of that
+    zone (as ``systems.emission.config`` of the single-zone schema).  A zone without an entry
+    has no emitter (no set-point shift, no emission results).
+
+    ``emission_inc="recalculate"`` (default, EN 15316-2 / M2-2): a second multizone run with
+    the set-points of *all* zones moved together by their own equivalent temperature
+    increase.  With coupled zones the shift of one zone also changes the need of its
+    neighbours through the partitions, which only this recalculation captures.
+    ``"approximate"``: temperature-ratio approximation of the emission module, zone by zone
+    (coupling ignored).
+
+    ``hydraulic_systems`` (optional): ``HeatingSystemCalculator`` inputs per zone, run with
+    ``MultiZoneHeatingSystemCalculator`` (EN 15316-1 Annex C, common node at the highest
+    required flow temperature).  For a zone with an emitter the circuit is forced to the
+    EN 15316-2 mode with the same emitter configuration, so it reuses the emission result.
+
+    ``couple_emitter_capacity=True`` (default): the emitter ``nominal_power_kW`` limits the
+    zone ``heating_capacity`` / ``cooling_capacity`` in both thermal runs, so a power
+    shortage shows up as a zone temperature off the set-point, which the adaptive-facade
+    control then sees.  The shortage is then a temperature deviation, not unmet energy:
+    the need delivered never exceeds P_n * t.  With ``False`` the capacity is checked only
+    after the thermal simulation; the emission module reports unmet energy and the zone
+    temperature is unaffected.  ``result.applied_capacities`` lists the limits used [W].
+
+    Limits:
+
+    ``unlisted_zones`` sets what happens to a zone missing from ``emission_by_zone``:
+    ``"free_floating"`` (default) runs it without heating or cooling (``free_floating: true``,
+    6.4.2.3), so it does not take an ideal load that no emitter delivers; ``"ideal"`` keeps
+    the ideal system of the thermal solver (need without emission results).  A zone with an
+    explicit ``free_floating`` key keeps its own setting.  The zones made free-floating are
+    in ``result.free_floating_zones``.
+
+    Limits:
+
+    * a free-floating zone is still coupled to its neighbours through the partitions;
+    * ``nominal_power_kW = 0`` means no emitter for that service: the whole need is
+      backup/unmet energy.
+    """
+    if emission_inc not in EMISSION_INC_METHODS:
+        raise ValueError(f"emission_inc must be one of {EMISSION_INC_METHODS}, got {emission_inc!r}")
+    building = config["building"]
+    zone_names = [str(z["name"]) for z in building.get("zones") or []]
+    unknown = sorted(set(emission_by_zone) - set(zone_names))
+    if unknown:
+        raise ValueError(f"emission_by_zone has unknown zones: {unknown}")
+
+    if unlisted_zones not in ("free_floating", "ideal"):
+        raise ValueError(f"unlisted_zones must be 'free_floating' or 'ideal', got {unlisted_zones!r}")
+    unlisted = [zn for zn in zone_names if zn not in emission_by_zone]
+    free_floated: list[str] = []
+    if unlisted and unlisted_zones == "free_floating":
+        config = dict(config)
+        building = copy.deepcopy(building)
+        for zone in building["zones"]:
+            # a zone the user marked explicitly (free_floating true/false) keeps its choice
+            if str(zone["name"]) in unlisted and "free_floating" not in zone:
+                zone["free_floating"] = True
+                free_floated.append(str(zone["name"]))
+        config["building"] = building
+        if free_floated:
+            warnings.warn(
+                f"Multizone emission: zones without an emitter {free_floated} are free-floating "
+                "(no heating or cooling); pass unlisted_zones='ideal' to condition them with "
+                "the ideal system, or set 'free_floating': false on the zone.",
+                UserWarning, stacklevel=2,
+            )
+
+    applied_capacities: dict[str, dict[str, float]] = {}
+    if couple_emitter_capacity:
+        config = dict(config)
+        config["building"], applied_capacities = _apply_emitter_capacities(building, emission_by_zone)
+        building = config["building"]
+
+    base = simulate_multizone(config, include_total=False, **kwargs)
+    hourly = base.hourly
+    dt = float(pd.Series(hourly.index).diff().dt.total_seconds().median() / 3600.0)
+
+    calcs = {}
+    deltas = {}
+    for zn, em_cfg in emission_by_zone.items():
+        cfg = copy.deepcopy(em_cfg)
+        if emission_inc == "approximate":
+            for svc in ("heating", "cooling"):
+                cfg.setdefault(svc, {})["notify_inc_fallback"] = False
+        calc = EmissionSystemCalculator(cfg)
+        calcs[zn] = calc
+        deltas[zn] = (calc.temperature_increase_K("H"), calc.temperature_increase_K("C"))
+
+    hourly_inc = None
+    if emission_inc == "recalculate" and any(d != (0.0, 0.0) for d in deltas.values()):
+        shifted_cfg = dict(config)
+        shifted_cfg["building"] = _shift_zone_setpoints(building, deltas)
+        hourly_inc = simulate_multizone(shifted_cfg, include_total=False, **kwargs).hourly
+    elif emission_inc == "approximate":
+        warnings.warn(
+            "Multizone emission: the output at the modified set point is approximated zone by zone; "
+            "the coupling between zones through the partitions is ignored.",
+            UserWarning, stacklevel=2,
+        )
+
+    def _need(df, zn):
+        q = pd.to_numeric(df[f"Q_HVAC_{zn}"], errors="coerce").fillna(0.0)
+        return q.clip(lower=0.0) / 1000.0 * dt, (-q.clip(upper=0.0)) / 1000.0 * dt
+
+    emission = {}
+    rows = []
+    for zn in zone_names:
+        q_h, q_c = _need(hourly, zn)
+        if hourly_inc is not None:
+            q_h_inc, q_c_inc = _need(hourly_inc.reindex(hourly.index), zn)
+        else:
+            q_h_inc, q_c_inc = q_h, q_c
+        row = {
+            "zone": zn,
+            "delta_theta_H_K": deltas.get(zn, (0.0, 0.0))[0],
+            "delta_theta_C_K": deltas.get(zn, (0.0, 0.0))[1],
+            "Q_H_need_kWh": float(q_h.sum()),
+            "Q_C_need_kWh": float(q_c.sum()),
+            "Q_H_need_inc_kWh": float(q_h_inc.sum()),
+            "Q_C_need_inc_kWh": float(q_c_inc.sum()),
+        }
+        if zn in calcs:
+            em_input = pd.DataFrame({
+                "T_ext": hourly["T_ext"], "T_op": hourly[f"T_op_{zn}"],
+                "Q_H_kWh": q_h, "Q_C_kWh": q_c, "time_step_hours": dt,
+            }, index=hourly.index)
+            if hourly_inc is not None:
+                em_input["Q_H_em_out_inc_kWh"] = q_h_inc.to_numpy()
+                em_input["Q_C_em_out_inc_kWh"] = q_c_inc.to_numpy()
+            res = calcs[zn].run_timeseries(em_input)
+            emission[zn] = res
+            row.update({k: v for k, v in res.summary.items() if isinstance(v, (int, float))})
+        rows.append(row)
+    annual = pd.DataFrame(rows)
+    tot = {"zone": "TOTAL"}
+    for col in annual.columns:
+        if col == "zone":
+            continue
+        if col.startswith(("Q", "W")) and col.endswith("kWh"):
+            tot[col] = float(annual[col].sum())
+    annual = pd.concat([annual, pd.DataFrame([tot])], ignore_index=True)
+
+    hydraulic = None
+    if hydraulic_systems:
+        from .iso_15316_1 import MultiZoneHeatingSystemCalculator
+
+        # One emission calculation for both passes: a zone with an emitter runs its hydraulic
+        # circuit in EN 15316-2 mode with the same emitter configuration, the base need and the
+        # recalculated need, so the circuit receives exactly the emission input computed above
+        # (no second, different emission correction).  A zone without an emitter keeps its own
+        # emission assumptions and receives the need at its unchanged set-point.
+        hyd_cfgs = {}
+        series = {}
+        for zn, hcfg in hydraulic_systems.items():
+            hcfg = copy.deepcopy(hcfg)
+            q_h = _need(hourly, zn)[0]
+            df_zn = pd.DataFrame({
+                "Q_H_kWh": q_h, "T_op": hourly[f"T_op_{zn}"], "T_ext": hourly["T_ext"],
+                "time_step_hours": dt,
+            }, index=hourly.index)
+            if zn in calcs:
+                hcfg["emission_calculation_mode"] = "en15316-2"
+                hcfg["emission_15316_2_config"] = copy.deepcopy(emission_by_zone[zn])
+                hcfg["emission_time_step_hours"] = dt
+                if emission_inc == "approximate":
+                    hcfg["emission_15316_2_config"].setdefault("heating", {})["notify_inc_fallback"] = False
+                if hourly_inc is not None:
+                    df_zn["Q_H_em_out_inc_kWh"] = _need(hourly_inc.reindex(hourly.index), zn)[0].to_numpy()
+            else:
+                warnings.warn(
+                    f"Multizone emission: zone {zn!r} has a hydraulic system but no emitter in "
+                    "emission_by_zone; its circuit uses its own emission assumptions.",
+                    UserWarning, stacklevel=2,
+                )
+            hyd_cfgs[zn] = hcfg
+            series[zn] = df_zn
+        hydraulic = MultiZoneHeatingSystemCalculator(hyd_cfgs).run_timeseries(series)
+
+    return MultizoneEmissionResult(
+        config=config, hourly=hourly, hourly_inc=hourly_inc, annual=annual, emission=emission,
+        delta_theta_K=deltas, emission_inc_method=emission_inc, hydraulic=hydraulic,
+        applied_capacities=applied_capacities, free_floating_zones=free_floated,
+    )

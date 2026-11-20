@@ -31,6 +31,13 @@ from .ventilation import (
 )
 from .functions import *
 from .adaptive_envelope_52016_3 import AdaptiveEnvelopeContext, has_adaptive_envelope
+from .daylight_control import lighting_step
+from . import multizone_52016_1 as _mz52016
+from .unconditioned_zone_52016_1 import (
+    UnconditionedZoneSet,
+    corrected_thermal_resistance,
+    legacy_iso13789_coefficients,
+)
 # generate_profile imported lazily -- avoids ~0.8s startup cost
 from .table_iso_16798_1 import * 
 from . import table_iso_16798_1 as iso16798_profiles
@@ -338,9 +345,14 @@ def _resolve_ventilation_component_profile_multiplier(
     return None
 
 
+# Initial operative temperature assumed for the first hour of the adjacent-zone model (6.5.9).
+_ZTU_INITIAL_OPERATIVE_C = 20.0
+
+
 def _resolve_single_zone_vent_boundary(
     building_object, T_zone, Tstepi, sim_df, profile_df,
     ahu_outputs_collector=None,
+    adjacent_zone_state=None,
 ):
     """Build the affine ventilation boundary for legacy and causal single-zone solvers.
 
@@ -382,6 +394,7 @@ def _resolve_single_zone_vent_boundary(
         component_multipliers=_comp_mult if _comp_mult else None,
         zone_volume_m3=_zone_vol if _zone_vol > 0.0 else None,
         ahu_outputs_collector=ahu_outputs_collector,
+        adjacent_zone_state=adjacent_zone_state,
     )
 
 
@@ -3406,6 +3419,8 @@ class ISO52016:
             return None
         w = np.asarray(weights, dtype=float)
         if not np.isfinite(w).all() or w.sum() <= 0.0:
+            w = np.asarray([float(c.get("area_weight", 1.0)) for c in components], dtype=float)
+        if not np.isfinite(w).all() or w.sum() <= 0.0:
             w = np.ones(len(columns), dtype=float)
         return np.column_stack(columns) @ w / w.sum()
 
@@ -3418,14 +3433,19 @@ class ISO52016:
         default_zone: str = "main",
     ) -> float:
         """
-        Return shading reduction factor [0..1] for a (possibly aggregated) window surface.
+        Return the shading reduction factor [0..1] of one window element (Formula 69, Annex F).
 
-        Priority:
-        1) area-weighted average from original window columns W_<name> grouped by (zone, orientation)
-        2) direct column W_<surface_name> (non-aggregated case)
-        3) fallback 1.0 (no shading data available)
+        * an element made of several windows (``window_components``, set by
+          ``_aggregate_surfaces_by_direction``): average of the factors of *its* windows,
+          weighted by g * A * (1 - F_fr), so the solar gain stays exact;
+        * a single window (including a movable/adaptive window kept as its own element):
+          its own column ``W_<name>``;
+        * no shading data: 1.0.
+
+        ``shading_components_by_zone_orientation`` is no longer used: averaging over all the
+        windows of a zone and orientation gave every window the same factor (two windows with
+        factors 0 and 1 both received 0.5).  The argument is kept for compatibility.
         """
-
         def _column_value(col_name: str):
             if not col_name or col_name not in sim_df.columns:
                 return None
@@ -3439,30 +3459,27 @@ class ISO52016:
                 return None
             return float(np.clip(np.mean(arr), 0.0, 1.0))
 
-        zname = surface.get("zone", default_zone)
-        if zname is None:
-            zname = default_zone
-        ori = str(surface.get("ISO52016_orientation_string", "SV")).upper()
-        key = (zname, ori)
-
-        components = shading_components_by_zone_orientation.get(key, [])
+        components = surface.get("window_components") or []
         if components:
-            num = 0.0
-            den = 0.0
-            for win_name, win_area in components:
-                try:
-                    area_f = float(win_area)
-                except Exception:
-                    continue
-                if not np.isfinite(area_f) or area_f <= 0.0:
-                    continue
-                f_val = _column_value(f"W_{win_name}")
+            values, found = [], False
+            for comp in components:
+                f_val = _column_value(f"W_{comp.get('name')}")
                 if f_val is None:
-                    continue
-                num += area_f * f_val
-                den += area_f
-            if den > 0.0:
-                return float(np.clip(num / den, 0.0, 1.0))
+                    f_val = 1.0          # window without shading data: unshaded
+                else:
+                    found = True
+                values.append(f_val)
+            if found:
+                # weights g*A*(1-F_fr); if they all vanish (base g = 0, e.g. an adaptive
+                # window whose later state has g > 0) fall back to A*(1-F_fr), then equal
+                for key in ("weight", "area_weight", None):
+                    w = np.array(
+                        [float(c.get(key, 1.0)) if key else 1.0 for c in components],
+                        dtype=float,
+                    )
+                    w = np.where(np.isfinite(w) & (w > 0.0), w, 0.0)
+                    if w.sum() > 0.0:
+                        return float(np.clip(np.dot(w, values) / w.sum(), 0.0, 1.0))
 
         surface_name = str(surface.get("name", "")).strip()
         f_direct = _column_value(f"W_{surface_name}")
@@ -3598,11 +3615,13 @@ class ISO52016:
         col = f"I_sol_tot_{ori}"
         irradiance = float(sim_df[col].iloc[tstep]) if col in sim_df.columns else 0.0
         if surface.get("adaptive_envelope") is not None:
-            ctx = sim_df.attrs.get("adaptive_envelope_ctx")
+            # multizone engine: one context per thermal zone, looked up by window name
+            ctx_map = sim_df.attrs.get("adaptive_envelope_ctx_map") or {}
+            ctx = ctx_map.get(str(surface.get("name", ""))) or sim_df.attrs.get("adaptive_envelope_ctx")
             if ctx is None or str(surface.get("name", "")) not in ctx.controllers:
                 raise ValueError(
                     f"Window '{surface.get('name', '')}': adaptive_envelope (EN ISO 52016-3) "
-                    "is supported by the single-zone engines only"
+                    "has no control context (the zone of the window is unknown)"
                 )
             return ctx.properties(surface, tstep, irradiance)
         return cls._movable_shading_properties(surface, sim_df.index[tstep], irradiance)
@@ -3740,6 +3759,7 @@ class ISO52016:
             for surf in building_object["building_surface"]
         ]
 
+        _ztu_set_for_resistance = UnconditionedZoneSet(building_object)
         for i in range(0, len(el_type)):
             if el_type[i] == "AD":
                 R_c_eli[i] = float("inf")
@@ -3756,6 +3776,15 @@ class ISO52016:
                         else 0.0
                     )
                     R_c_eli[i] = 1 / U_eli[i] - r_si - r_se
+                    if el_type[i] == "ADJ":
+                        # 6.5.8.4: internal-type unconditioned zone -> Formula (54)
+                        _surf_i = building_object["building_surface"][i]
+                        _zc = _ztu_set_for_resistance.coefficients_for(_surf_i.get("name_adj_zone"))
+                        if _zc is not None and _zc.ztu_type == "internal":
+                            R_c_eli[i] = corrected_thermal_resistance(
+                                R_c_eli[i], _zc.b,
+                                h_ci_eli[i] + h_ri_eli[i], h_ce_eli[i] + h_re_eli[i],
+                            )
 
         # layer = 1
         layer_no = 0
@@ -4261,113 +4290,16 @@ class ISO52016:
         return simulation_df(simulation_df=sim_df)
     
     @classmethod
-    def transmission_heat_transfer_coefficient_ISO13789(cls,adj_zone, n_ue=0.5, qui=0):
-        '''
-        Calculation of heat transfer coefficient, Htr calculated as
-        Htr = Hd + Hg + Hu + Ha
-        where:
-        Hd: direct transmission heat transfer coefficient between the heated and cooled space and exterior trough the building envelope in W/K
-        Hg: transmission trasnfer coefficient through the ground in W/K
-        Hu: transmission heat transfer coefficent through unconditioned space
-        Ha: transmision heat transfer coefficient to adjacent buildings
-        '''
+    def transmission_heat_transfer_coefficient_ISO13789(cls, adj_zone, n_ue=None, qui=0):
+        """Adjustment factor of a thermally unconditioned adjacent zone (ISO 52016-1, 6.4.5.4).
 
-        '''
-        1. From the adj_zone dictionary, get the orientation, U and area of the facade elements
-        '''
-        # Geographical azimuth convention used across checks/surfaces:
-        # NV=0, EV=90, SV=180, WV=270.
-        # Use nearest cardinal to be robust to non-exact azimuths.
-        try:
-            azimuth = float(adj_zone["orientation_zone"]["azimuth"]) % 360.0
-        except Exception:
-            azimuth = 0.0
-        candidates = np.array([0.0, 90.0, 180.0, 270.0], dtype=float)
-        labels = np.array(["NV", "EV", "SV", "WV"], dtype=object)
-        diffs = np.abs(((azimuth - candidates + 180.0) % 360.0) - 180.0)
-        orientation_name = str(labels[int(np.argmin(diffs))])
-
-        # --- Step 2: Extract arrays
-        areas = np.asarray(adj_zone["area_facade_elements"], dtype=float)
-        U_values = np.asarray(adj_zone["transmittance_U_elements"], dtype=float)
-        orientations = np.asarray(adj_zone["orientation_elements"], dtype=object)
-
-        # --- Step 3: Boolean masks
-        # mask_selected = orientation_name == orientation_name
-        # mask_others = orientation_name != orientation_name
-        mask_selected = orientations == orientation_name
-        mask_others = orientations != orientation_name
-
-        # --- Step 4: Calculate sums
-        '''
-        Transmission losses of walls attached to the unconditioned zone
-        '''
-        Hd_zt_ztu = np.sum(areas[mask_selected] * U_values[mask_selected])
-
-        '''   
-        Transmission losses of external walls of unconditioned zone
-        '''
-        Hd_ztu_ext = np.sum(areas[mask_others] * U_values[mask_others])
-
-        '''
-        4. Calculate ventilation losses Hve,iu and Hve,ue
-        
-        1) Hve,iu = rho*cp*qiu
-        2) Hve,ue = rho*cp*que
-        
-        rho: density of air
-        cp: specific heat capacity of air
-        qiu: air flow rate in m3/h between conditioned and unconditioned zone   
-        que: air flow rate in m3/h between unconditioned zone and external environment
-        Note:
-        rho_cp = 0.33 Wh/(m3K) if qiu in m3/h
-
-        # air change rate of unconditioned spaces:
-        in order to not understimate the transmission heat transfer, the air flow rate between a conditioned space and an unconditioned space 
-        shall be assumed to be zero
-        qiu= 0
-        que = Vu * n_ue
-        Vu: volume of the air in the unconditioned space
-        n_ue: air change rate between the unconditioned space and the external environment in h-1. Can be taken from the table df_n_ue that is table 7  of ISO 13789
-
-        default n_ue = 0.5 that is for building having All joints between components well-sealed, no ventilation opening provided
-
-        '''    
-        volume_zone = adj_zone["volume"]
-        que = volume_zone * n_ue
-        Hve_ue =  0.33 * que
-        Hve_iu = 0.33 * qui
-        # 
-        Hue = Hd_ztu_ext + Hve_ue
-        Hiu = Hd_zt_ztu + Hve_iu
-        H_ztu_tot = float(round(Hiu +Hue,3))
-        
-        '''
-        Calculation of the adjustment factor for the thermally uncononditioned afjacent zone ztu for in month m
-        b = Hztu_e_m/Hztu_tot_m
-
-        where:
-        H_ztu_tot_m = sum(j=1 to n)(H_ztc_j_ztu) + Hztu_e_m
-        where:
-        H_ztc_j_ztu: heat transfer coefficient between the thermally unconditioned zone and the adjacent thermally conditioned zone j  = Hiu (ISO 13789)
-        Hztu_e_m: heat transfer coefficient between the thermally unconditioned zone and the external environment for month m =  Hue (ISO 13789)
-        '''
-        b_ztu_m = float(round(Hue/(Hue + Hiu),3))
-
-        '''
-        Calculation of the distribution factor for the heat transfer between thermally conditioned zone i and the adjacent thermally unconditioned zone ztu, for month m
-    
-        if multiple thermally conditioned zones:
-            F_ztc_ztu_m = H_ztc_i_ztu_m / sum(j=1 to n)(H_ztc_j_ztu)
-        where:
-            H_ztc_i_ztu_m: heat transfer coefficient between the single thermally conditioned zone and the adjacent thermally unconditioned zone for month m
-        if only 1 thermally conditioned zones:
-            F_ztc_ztu_m = 1
-
-        '''
-        F_ztc_ztu_m = 1 #<<<< write the code formultiple thermally consitioned zones
-        
-        return H_ztu_tot, b_ztu_m, F_ztc_ztu_m
+        Returns ``(H_ztu_tot, b_ztu, F_ztc_ztu)``.  ``H_ztu;e`` follows Formula (6)
+        with ``c_ztu;ve = 0.5`` (Table B.5) unless ``n_ue`` is given, in which case the
+        ISO 13789 ventilation term ``0.33 * V * n_ue`` is used (legacy behaviour).
+        See :mod:`pybuildingenergy.source.unconditioned_zone_52016_1` for the full model
+        (internal zone type, default ``b_ztu``, E.3 gains).
+        """
+        return legacy_iso13789_coefficients(adj_zone, n_ue=n_ue, qui=qui)
 
 
     @classmethod
@@ -4437,6 +4369,8 @@ class ISO52016:
             bnd = str(s.get("boundary", "OUTDOORS")).upper()
             zone = s.get("zone", None)
             adjacent_zone = s.get("adjacent_zone", None)
+            if adjacent_zone is None and str(s.get("boundary", "")).upper() in ("UNCONDITIONED", "ADJACENT"):
+                adjacent_zone = s.get("name_adj_zone", None)
             # A movable shading device has a per-window, time-dependent state
             # (Annex G).  Do not merge it with another window: otherwise a
             # south-facing blind and shutter with different controls would be
@@ -4508,6 +4442,9 @@ class ISO52016:
                 b["components"].append({
                     "name": s.get("name", "surface"),
                     "weight": max(0.0, g * A * (1.0 - _surface_frame_area_fraction(s))),
+                    # fallback when the base g is zero (e.g. an adaptive window whose
+                    # later state has g > 0): the shading factor stays geometric
+                    "area_weight": max(0.0, A * (1.0 - _surface_frame_area_fraction(s))),
                 })
                 b["parapetA"] += parapet_ * A
                 b["ffrA"] += _surface_frame_area_fraction(s) * A
@@ -4564,6 +4501,15 @@ class ISO52016:
                 agg["window_components"] = list(b["components"])
             if b["type"] == "transparent" and b["has_ffr"]:
                 agg["frame_area_fraction"] = b["ffrA"] / A
+            if b["type"] == "transparent" and area_tot > 0.0:
+                # Formula (69) is linear in g * A * (1 - F_fr): choose the equivalent g so
+                # that g_eq * A_tot * (1 - F_fr,eq) equals the sum over the windows.  The
+                # area-weighted g times the area-weighted F_fr differs when the windows
+                # have different g and frame fractions.
+                one_minus_ffr = 1.0 - _surface_frame_area_fraction(agg)
+                if one_minus_ffr > 0.0:
+                    gf_sum = sum(c["weight"] for c in b["components"])
+                    agg["g_value"] = gf_sum / (area_tot * one_minus_ffr)
             if b["type"] == "transparent":
                 agg["solar_transmittance_correction_factor"] = b.get(
                     "solar_transmittance_correction_factor", 0.90
@@ -4798,10 +4744,21 @@ class ISO52016:
         progress_log_every_steps=None,
         progress_logger=None,
         c_int_per_A_us=10000.0,
+        validate=True,
     ):
         """
         Multizone envelope simulation with coupled internal partitions and ideal HVAC.
         Supports profile-driven setpoints, internal gains and ventilation terms.
+
+        Thermal coupling follows ISO 52016-1 Annex D (INTERNAL partitions, optional air flow
+        between zones through ``building_object["interzone_airflows"]``, see
+        :mod:`pybuildingenergy.source.multizone_52016_1`).  All zones are solved together in
+        each hour (no previous-hour boundary condition, no oscillation), which deviates from
+        the letter of D.2.  A zone with ``"free_floating": true`` never receives heating or
+        cooling (a thermally unconditioned space modelled as a zone, 6.4.2.3).
+
+        ``validate=True`` checks the input (zone names, partitions, air flows; errors raise
+        ``ValueError``) and emits warnings for the zoning criteria of 6.4.2.
 
         ``c_int_per_A_us`` [J/(m2 K)] is the areal heat capacity of the zone air
         and furniture lumped in each zone air node (ISO 52016-1 default 10000),
@@ -4850,6 +4807,14 @@ class ISO52016:
           - set `progress_log_every_steps` to an integer > 0 to emit periodic progress messages.
           - `progress_logger` can be any callable accepting a single string.
         """
+
+        if validate and building_object.get("zones"):
+            _mz_issues = _mz52016.validate_multizone_input(building_object)
+            _mz52016.raise_on_errors(_mz_issues)
+            _mz52016.emit_zoning_warnings(
+                [i for i in _mz_issues if i.level == "WARN"]
+                + _mz52016.check_zoning_rules(building_object)
+            )
 
         # ------------------------
         # 0) Weather
@@ -5108,6 +5073,30 @@ class ISO52016:
         zone_names = [z["name"] for z in zones]
         Z = len(zone_names)
         z_idx = {name: i for i, name in enumerate(zone_names)}
+        # Air flow between zones (Annex D.2 1): H_ve,z->y = rho c q.  _iz_state holds the
+        # coupling matrix / source vector of the current hour (read by the HVAC balance).
+        _iz_flows = _mz52016.parse_interzone_airflows(building_object)
+        _iz_state = {"H": np.zeros((Z, Z), dtype=float), "S": np.zeros(Z, dtype=float)}
+        _free_floating_z = np.array([bool(z.get("free_floating", False)) for z in zones], dtype=bool)
+        # Shared generators (``building_object["generator_groups"]``): each group lists the zones
+        # one generator serves and its heating/cooling power [W].  Every hour the power is
+        # shared among the zones in proportion to their request of that hour; heating and
+        # cooling requested together share the generator time in the order ``space_priority``.
+        _gen_groups = []
+        for _gk, _g in enumerate(building_object.get("generator_groups") or []):
+            _zs = [str(_n) for _n in _g.get("zones", [])]
+            _bad = [_n for _n in _zs if _n not in [str(z.get("name")) for z in zones]]
+            if _bad or not _zs:
+                raise ValueError(f"generator_groups[{_gk}]: unknown or missing zones {_bad or _zs}")
+            _prio = str(_g.get("space_priority", "heating"))
+            if _prio not in ("heating", "cooling", "larger"):
+                raise ValueError(f"generator_groups[{_gk}]: space_priority must be heating, cooling or larger")
+            _gen_groups.append({
+                "zi": [i for i, z in enumerate(zones) if str(z.get("name")) in _zs],
+                "H": float(_g.get("heating_capacity", np.inf)),
+                "C": float(_g.get("cooling_capacity", np.inf)),
+                "priority": _prio,
+            })
         h_ci_model = _resolve_internal_convection_model(
             building_object,
             internal_convection_model,
@@ -5253,7 +5242,7 @@ class ISO52016:
                 surf["ISO52016_type_string"] = "GR"
             elif bnd == "ADIABATIC":
                 surf["ISO52016_type_string"] = "AD"
-            elif bnd == "INTERNAL":
+            elif bnd in ("INTERNAL", "UNCONDITIONED", "ADJACENT"):
                 surf["ISO52016_type_string"] = "ADJ"
             else:
                 surf["ISO52016_type_string"] = (
@@ -5369,10 +5358,15 @@ class ISO52016:
                     "S_ve": np.empty(Tstepn, dtype=float),
                     "T_ve_source_eq": np.full(Tstepn, np.nan, dtype=float),
                     "Q_ve": np.empty(Tstepn, dtype=float),
+                    "Q_ve_interzone": np.zeros(Tstepn, dtype=float),
                     "H_ground": np.empty(Tstepn, dtype=float),
                     "Q_ground": np.empty(Tstepn, dtype=float),
                     "night_purge_factor": np.empty(Tstepn, dtype=float),
                     "night_purge_active": np.empty(Tstepn, dtype=np.int8),
+                    "T_set_H": np.full(Tstepn, np.nan, dtype=float),
+                    "T_set_C": np.full(Tstepn, np.nan, dtype=float),
+                    "Q_HVAC_req": np.zeros(Tstepn, dtype=float),
+                    "cap_limited": np.zeros(Tstepn, dtype=np.int8),
                 }
             )
 
@@ -5719,7 +5713,7 @@ class ISO52016:
             a_use = float(zone_obj.get("net_floor_area", 50.0))
             h_occ = _profile_value(zname, "occupancy_profile", tstep, 1.0)
             h_app = _profile_value(zname, "appliances_profile", tstep, 1.0)
-            h_light = _profile_value(zname, "lighting_profile", tstep, 1.0)
+            h_light = 0.0 if zone_obj.get("daylight_lighting") is not None else _profile_value(zname, "lighting_profile", tstep, 1.0)
             try:
                 phi = VentilationInternalGains(zone_proxies[zname]).internal_gains(
                     building_type_class=bt,
@@ -5917,6 +5911,8 @@ class ISO52016:
 
             return base_bdy, purge_factor_applied, purge_active, _ahu_coll
 
+        _fsh_buffers: dict = {}   # window element -> hourly F_sh;obst actually applied
+
         def _zone_solar_transmitted_w(tstep: int) -> np.ndarray:
             phi_sol = np.zeros(Z, dtype=float)
             if not include_solar:
@@ -5951,6 +5947,10 @@ class ISO52016:
                     shading_components_by_zone_orientation=shading_components_by_zone_orientation,
                     default_zone=zone_names[0],
                 )
+                _wname = str(surf.get("name", ""))
+                if _wname not in _fsh_buffers:
+                    _fsh_buffers[_wname] = np.ones(Tstepn, dtype=float)
+                _fsh_buffers[_wname][tstep] = f_sh
                 gain = max(0.0, g_val * area * i_tot * f_sh * (1.0 - ffr_wi))
                 phi_sol[z_idx[zname]] += gain
             return phi_sol
@@ -6176,6 +6176,20 @@ class ISO52016:
                                         B[R] += float(a_sol_pli_eli[Pli, Eli]) * A_s * float(
                                             sim_df[col].iloc[tstep]
                                         )
+                            elif tstr == "ADJ" and Eli in _ztu_surf:
+                                # Thermally unconditioned adjacent zone (6.4.5, 6.5.9): the
+                                # external face sees theta_ztu (external type) or theta_e through
+                                # the corrected resistance of Formula 54 (internal type).
+                                _st = _ztu_states_t[_ztu_surf[Eli]]
+                                h_e = float(h_ce_tab) + float(h_re_tab)
+                                if _st["type"] == "internal":
+                                    _b = float(_st["b"])
+                                    _u = float(surf.get("u_value", 0.0))
+                                    if _u > 0.0 and _b < 1.0:
+                                        # R_c,tot = R_tot / (1 - b): extra series resistance
+                                        h_e = 1.0 / (1.0 / h_e + (1.0 / _u) * _b / (1.0 - _b))
+                                A[R, R] += h_e * A_s
+                                B[R] += h_e * A_s * float(_st["theta_boundary"])
                             elif tstr == "GR" and t_Th is not None:
                                 month = _month_at_tstep(tstep)
                                 T_gr = float(t_Th.Theta_gr_ve[month])
@@ -6256,6 +6270,8 @@ class ISO52016:
                     - s_ve
                     - h_tb * T_out
                     - gains_conv
+                    + float(_iz_state["H"][zi] @ np.asarray(theta_new[:Z], dtype=float))
+                    - float(_iz_state["S"][zi])
                 )
             return np.asarray(q, dtype=float)
 
@@ -6270,6 +6286,124 @@ class ISO52016:
                 else:
                     q_out[zi] = 0.0
             return q_out
+
+        # EN ISO 52016-3 adaptive windows: one control context per thermal zone, created
+        # only for the zones that have at least one adaptive window.  Each context sees the
+        # operative temperature and HVAC load of its own zone (previous time steps, 6.8.4).
+        _adaptive_zone_ctx = {}
+        _adaptive_ctx_map = {}
+        for _zn in zone_names:
+            _zs = [
+                _s for _s in surfaces
+                if _s.get("zone", zone_names[0]) == _zn and has_adaptive_envelope(_s)
+            ]
+            if not _zs:
+                continue
+            for _s in _zs:
+                if str(_s.get("name", "")) in _adaptive_ctx_map:
+                    raise ValueError(
+                        f"adaptive window name {_s.get('name')!r} is used in more than one zone"
+                    )
+            _occ = (
+                zone_profiles[_zn]["occupancy_profile"].to_numpy(dtype=float)
+                if _zn in zone_profiles else None
+            )
+            _ctx = AdaptiveEnvelopeContext(_zs, sim_df, occupancy=_occ, dt_h=float(dt_s) / 3600.0)
+            _adaptive_zone_ctx[_zn] = _ctx
+            for _s in _zs:
+                _adaptive_ctx_map[str(_s.get("name", ""))] = _ctx
+        if _adaptive_ctx_map:
+            sim_df.attrs["adaptive_envelope_ctx_map"] = _adaptive_ctx_map
+        else:
+            sim_df.attrs.pop("adaptive_envelope_ctx_map", None)
+
+        # Optional reference-point lighting model. Detailed illuminance is an
+        # externally calculated series for the actual shading schedule.
+        _light_buffers = {str(z["name"]): np.zeros((Tstepn, 5)) for z in zones
+                          if z.get("daylight_lighting") is not None}
+
+        def _zone_lighting(zone, t):
+            cfg = zone["daylight_lighting"]
+            zn = str(zone["name"])
+            method = cfg.get("method", "simplified")
+            if method == "external":
+                series = cfg.get("illuminance_lux")
+                if not isinstance(series, dict):
+                    raise ValueError("external illuminance_lux must map timestamps to lux")
+                stamp = str(sim_df.index[t])
+                value = series.get(stamp, series.get(sim_df.index[t].isoformat()))
+                if value is None:
+                    raise ValueError(f"missing external daylight illuminance for {zn} at {stamp}")
+                natural = float(value)
+            elif method == "simplified":
+                natural = 0.0
+                for surf in surfaces:
+                    if surf.get("zone", zone_names[0]) != zn or surf.get("type") != "transparent":
+                        continue
+                    params = (cfg.get("windows") or {}).get(str(surf.get("name")))
+                    if params is None:
+                        raise ValueError(f"missing daylight parameters for window {surf.get('name')!r}")
+                    ori = surf.get("ISO52016_orientation_string", "SV")
+                    irr = max(0.0, float(sim_df[f"I_sol_tot_{ori}"].iloc[t]))
+                    fsh = cls._surface_shading_factor_from_timeseries(sim_df, t, surf, shading_components_by_zone_orientation)
+                    if has_adaptive_envelope(surf):
+                        ctx = _adaptive_ctx_map[str(surf["name"])]
+                        state = ctx.controllers[str(surf["name"])].state_at(ctx, t, irr)
+                        tau = state.properties.tau_v
+                    else:
+                        tau = float(params["tau_v"])
+                    a, h = float(params["a_dayl"]), float(params["H_gl_1m"])
+                    b = float(params.get("b_dayl", 0.0))
+                    if not np.isfinite([a, h, b, tau]).all() or min(a, h, b, tau) < 0 or tau > 1:
+                        raise ValueError(f"invalid daylight parameters for window {surf.get('name')!r}")
+                    external_lux = 115.0 * irr * fsh
+                    natural += min(external_lux, a * tau * h * external_lux + b)
+            else:
+                raise ValueError("daylight_lighting.method must be simplified or external")
+            occupied = _profile_value(zn, "occupancy_profile", t, 1.0) > 0 and _profile_value(zn, "lighting_profile", t, 1.0) > 0
+            return lighting_step(natural, occupied, cfg["target_lux"], cfg["design_lux"], cfg["installed_power_w"], cfg.get("mode", "continuous"), cfg.get("heat_fraction", 1.0))
+
+        # Thermally unconditioned adjacent zones (EN ISO 52016-1 6.4.5, 6.5.9, E.3), declared in
+        # ``adjacent_zones`` and reached by surfaces with ``boundary: "UNCONDITIONED"`` and
+        # ``name_adj_zone``.  The state of hour t uses the operative temperature of hour t-1 of
+        # the conditioned zones next to it (weighted by U * A of the shared surfaces).
+        _ztu_mz = UnconditionedZoneSet(building_object)
+        _ztu_surf = {}
+        _ztu_states_t = []
+        _ztu_w = None
+        _ztu_irr_mz = {}
+        if _ztu_mz.active:
+            _ztu_mz.init_history(Tstepn)
+            _ztu_w = np.zeros((len(_ztu_mz), Z), dtype=float)
+            for _Eli, _s in enumerate(surfaces):
+                if str(_s.get("boundary", "")).upper() not in ("UNCONDITIONED", "ADJACENT"):
+                    continue
+                _k = (_ztu_mz.names.index(_s.get("name_adj_zone"))
+                      if _s.get("name_adj_zone") in _ztu_mz.names else None)
+                if _k is None:
+                    raise ValueError(
+                        f"Surface {_s.get('name')!r}: name_adj_zone {_s.get('name_adj_zone')!r} "
+                        f"is not one of the adjacent_zones {_ztu_mz.names}"
+                    )
+                _ztu_surf[_Eli] = _k
+                _ztu_w[_k, z_idx[_s.get("zone", zone_names[0])]] += (
+                    float(_s.get("u_value", 0.0)) * float(_s.get("area", 0.0))
+                )
+            for _c in _ztu_mz.coeffs:
+                for _a in _c.absorbing:
+                    _o = _a["orientation"]
+                    if _o not in _ztu_irr_mz:
+                        _ztu_irr_mz[_o] = (
+                            _series_to_float_array(sim_df, f"I_sol_dif_{_o}", default=0.0),
+                            _series_to_float_array(sim_df, f"I_sol_dir_w_{_o}", default=0.0),
+                        )
+            _ztu_vig = VentilationInternalGains(zone_proxies[zone_names[0]])
+        elif any(str(_s.get("boundary", "")).upper() in ("UNCONDITIONED", "ADJACENT") for _s in surfaces):
+            raise ValueError(
+                "surfaces with boundary 'UNCONDITIONED' need building.adj_zones_present = true "
+                "and the adjacent_zones list"
+            )
+        _theta_op_last = np.full(Z, _ZTU_INITIAL_OPERATIVE_C, dtype=float)
 
         # ------------------------
         # 8) Time loop (free-float -> setpoint solve -> capacity-limited solve)
@@ -6296,6 +6430,10 @@ class ISO52016:
             purge_active_z_t = np.zeros(Z, dtype=int)
             for zi, zone in enumerate(zones):
                 phi_int_z_t[zi] = _zone_internal_gain_w(zone, t)
+                if str(zone["name"]) in _light_buffers:
+                    _light_buffers[str(zone["name"])][t] = _zone_lighting(zone, t)
+                    if include_internal_gains:
+                        phi_int_z_t[zi] += _light_buffers[str(zone["name"])][t, 4]
                 # Theta[zi] is the zone AIR node (first Z rows of state vector),
                 # not the operative temperature - explicit lag, no algebraic loop.
                 vent_bdy, purge_factor_z_t[zi], purge_active_z_t[zi], _ahu_step = (
@@ -6321,6 +6459,32 @@ class ISO52016:
                         else:
                             _buf[col_pfx][t] = int(bool(raw))
             phi_sol_z_t = _zone_solar_transmitted_w(t)
+            if _ztu_mz.active:
+                _z0 = zone_names[0]
+                _ztu_gains = _ztu_mz.gains_direct(
+                    lambda _cls, _a, _t=t: _ztu_vig.internal_gains(
+                        building_type_class=_cls, a_use=_a,
+                        h_occup=_profile_value(_z0, "occupancy_profile", _t, 1.0),
+                        h_app=_profile_value(_z0, "appliances_profile", _t, 1.0),
+                        h_light=_profile_value(_z0, "lighting_profile", _t, 1.0),
+                        use_overrides=False,
+                    ),
+                    {_o: {"dif": float(_v[0][t]), "dir": float(_v[1][t])} for _o, _v in _ztu_irr_mz.items()},
+                )
+                _wsum = _ztu_w.sum(axis=1)
+                _op_prev = [
+                    float(_ztu_w[_k] @ _theta_op_last / _wsum[_k]) if _wsum[_k] > 0 else float(_theta_op_last.mean())
+                    for _k in range(len(_ztu_mz))
+                ]
+                _ztu_states_t = _ztu_mz.step(t, _op_prev, T_out, _ztu_gains)
+                # Formulae 65 and 68: gains of internal-type zones, shared by U * A
+                for _k, _st in enumerate(_ztu_states_t):
+                    if _st["type"] != "internal" or _wsum[_k] <= 0:
+                        continue
+                    _f = (1.0 - _st["b"]) * _st["F"]
+                    _share = _ztu_w[_k] / _wsum[_k]
+                    phi_int_z_t = phi_int_z_t + _f * _st["phi_int_dir"] * _share
+                    phi_sol_z_t = np.asarray(phi_sol_z_t, dtype=float) + _f * _st["phi_sol_dir"] * _share
 
             # Base matrix for this timestep
             A_base, B_base, zone_air_links_t, zone_hsurf_sum_t = assemble_system(
@@ -6332,6 +6496,15 @@ class ISO52016:
                 phi_sol_z_t,
             )
 
+            # Annex D.2 (1): air flow between zones, in the zone air equations
+            if _iz_flows:
+                _iz_state["H"], _iz_state["S"] = _mz52016.interzone_coupling(
+                    _iz_flows, z_idx, Z, T_out,
+                    profile_value=lambda _zn, _col, _t=t: _profile_value(_zn, _col, _t, 1.0),
+                )
+                A_base[:Z, :Z] += _iz_state["H"]
+                B_base[:Z] += _iz_state["S"]
+
             # 8.1 free-floating solve
             Theta_ff = _solve_with_diag_guard(A_base.copy(), B_base.copy())
             Theta_air_ff, _, Theta_op_ff = _zone_air_radiant_operative(Theta_ff)
@@ -6339,6 +6512,8 @@ class ISO52016:
             # 8.2 decide mode per zone
             mode = ["0"] * Z
             T_set = np.full(Z, np.nan, dtype=float)
+            Th_z = np.full(Z, np.nan, dtype=float)
+            Tc_z = np.full(Z, np.nan, dtype=float)
             for zi, zone in enumerate(zones):
                 zname_mode = str(zone.get("name", zone_names[zi]))
                 if use_profiles:
@@ -6349,6 +6524,9 @@ class ISO52016:
                 else:
                     Th = float(zone["heating_setpoint"])
                     Tc = float(zone["cooling_setpoint"])
+                Th_z[zi], Tc_z[zi] = Th, Tc
+                if _free_floating_z[zi]:
+                    continue
                 if hvac_control_mode == "air":
                     T0 = float(Theta_air_ff[zi])
                 else:
@@ -6362,30 +6540,59 @@ class ISO52016:
                 else:
                     mode[zi] = "0"
 
-            # 8.3 setpoint solve with ideal clamps where mode != 0
-            A_sp = A_base.copy()
-            B_sp = B_base.copy()
-
-            for zi in range(Z):
-                if mode[zi] != "0":
-                    if hvac_control_mode == "air":
-                        _apply_air_setpoint_constraint(A_sp, B_sp, zi, float(T_set[zi]))
-                    else:
-                        _apply_operative_setpoint_constraint(A_sp, B_sp, zi, float(T_set[zi]))
-
-            Theta_sp = _solve_with_diag_guard(A_sp, B_sp)
-            Q_req = _compute_q_hvac_from_balance(
-                Theta_sp,
-                Theta,
-                mode,
-                h_ve_z_t,
-                s_ve_z_t,
-                phi_int_z_t,
-                phi_sol_z_t,
-                T_out,
-                zone_air_links_t,
-                zone_hsurf_sum_t,
-            )
+            # 8.3 setpoint solve with ideal clamps where mode != 0.
+            # The modes were chosen on the free-floating state; once the zones are coupled a
+            # zone left at "0" may leave its set-point range because a neighbour is
+            # conditioned, and a conditioned zone may need no energy (Q of the wrong sign).
+            # Re-check the modes and re-solve until they are consistent (Annex D.3 steps 2-4).
+            _seen_modes = set()
+            for _mode_it in range(Z + 2):
+                A_sp = A_base.copy()
+                B_sp = B_base.copy()
+                for zi in range(Z):
+                    if mode[zi] != "0":
+                        if hvac_control_mode == "air":
+                            _apply_air_setpoint_constraint(A_sp, B_sp, zi, float(T_set[zi]))
+                        else:
+                            _apply_operative_setpoint_constraint(A_sp, B_sp, zi, float(T_set[zi]))
+                Theta_sp = _solve_with_diag_guard(A_sp, B_sp)
+                Q_req_raw = _compute_q_hvac_from_balance(
+                    Theta_sp,
+                    Theta,
+                    mode,
+                    h_ve_z_t,
+                    s_ve_z_t,
+                    phi_int_z_t,
+                    phi_sol_z_t,
+                    T_out,
+                    zone_air_links_t,
+                    zone_hsurf_sum_t,
+                )
+                _seen_modes.add(tuple(mode))
+                if Z < 2:
+                    break
+                _air_sp, _, _op_sp = _zone_air_radiant_operative(Theta_sp)
+                _ctrl_sp = _air_sp if hvac_control_mode == "air" else _op_sp
+                _mode_prev = list(mode)
+                _changed = False
+                for zi in range(Z):
+                    if _free_floating_z[zi]:
+                        continue
+                    if mode[zi] == "0":
+                        if _ctrl_sp[zi] < Th_z[zi] - 1e-6:
+                            mode[zi], T_set[zi], _changed = "H", Th_z[zi], True
+                        elif _ctrl_sp[zi] > Tc_z[zi] + 1e-6:
+                            mode[zi], T_set[zi], _changed = "C", Tc_z[zi], True
+                    elif mode[zi] == "H" and Q_req_raw[zi] < -1e-3:
+                        mode[zi], _changed = "0", True
+                    elif mode[zi] == "C" and Q_req_raw[zi] > 1e-3:
+                        mode[zi], _changed = "0", True
+                if not _changed:
+                    break
+                if tuple(mode) in _seen_modes:
+                    mode = _mode_prev      # cycle: keep the last consistent solution
+                    break
+            Q_req = Q_req_raw
             Q_req = _clamp_q_hvac_by_mode(Q_req, mode)
 
             # 8.4 check capacities (if provided) and, if needed, re-solve with limited HVAC power
@@ -6411,36 +6618,101 @@ class ISO52016:
                     else:
                         Q_target[zi] = Q_req[zi]
 
-            if np.any(capacity_limited):
-                A_cap = A_base.copy()
-                B_cap = B_base.copy()
-
-                for zi in range(Z):
-                    if mode[zi] == "0":
+            # shared generators: the power of the hour goes to the zones in proportion to
+            # their request; heating and cooling together share the generator time
+            for _g in _gen_groups:
+                _dem = {
+                    "H": [zi for zi in _g["zi"] if mode[zi] == "H" and Q_target[zi] > 0.0],
+                    "C": [zi for zi in _g["zi"] if mode[zi] == "C" and Q_target[zi] < 0.0],
+                }
+                _tot = {"H": float(sum(Q_target[zi] for zi in _dem["H"])),
+                        "C": float(sum(-Q_target[zi] for zi in _dem["C"]))}
+                if _g["priority"] == "larger":
+                    _order = ("H", "C") if _tot["H"] >= _tot["C"] else ("C", "H")
+                else:
+                    _order = ("H", "C") if _g["priority"] == "heating" else ("C", "H")
+                _f = 1.0
+                for _svc in _order:
+                    if _tot[_svc] <= 0.0 or not np.isfinite(_g[_svc]):
                         continue
-                    if capacity_limited[zi]:
-                        # Air equation right-hand side includes known HVAC term
-                        B_cap[zi] += float(Q_target[zi])
-                    else:
-                        # Keep ideal operative setpoint where capacity is sufficient
-                        if hvac_control_mode == "air":
-                            _apply_air_setpoint_constraint(A_cap, B_cap, zi, float(T_set[zi]))
-                        else:
-                            _apply_operative_setpoint_constraint(A_cap, B_cap, zi, float(T_set[zi]))
+                    _avail = max(_f, 0.0) * _g[_svc]
+                    if _tot[_svc] > _avail:
+                        _scale = _avail / _tot[_svc]
+                        for zi in _dem[_svc]:
+                            Q_target[zi] *= _scale
+                            capacity_limited[zi] = True
+                    _f -= min(_tot[_svc], _avail) / _g[_svc] if _g[_svc] > 0 else 1.0
 
-                Theta_new = _solve_with_diag_guard(A_cap, B_cap)
-                Q_hvac = _compute_q_hvac_from_balance(
-                    Theta_new,
-                    Theta,
-                    mode,
-                    h_ve_z_t,
-                    s_ve_z_t,
-                    phi_int_z_t,
-                    phi_sol_z_t,
-                    T_out,
-                    zone_air_links_t,
-                    zone_hsurf_sum_t,
-                )
+            if np.any(capacity_limited):
+                # The limited zones change the request of their neighbours through the
+                # partitions: re-check after each solve until no zone and no shared
+                # generator exceeds its power.
+                for _cap_it in range(Z + 2):
+                    A_cap = A_base.copy()
+                    B_cap = B_base.copy()
+
+                    for zi in range(Z):
+                        if mode[zi] == "0":
+                            continue
+                        if capacity_limited[zi]:
+                            # Air equation right-hand side includes known HVAC term
+                            B_cap[zi] += float(Q_target[zi])
+                        else:
+                            # Keep ideal operative setpoint where capacity is sufficient
+                            if hvac_control_mode == "air":
+                                _apply_air_setpoint_constraint(A_cap, B_cap, zi, float(T_set[zi]))
+                            else:
+                                _apply_operative_setpoint_constraint(A_cap, B_cap, zi, float(T_set[zi]))
+
+                    Theta_new = _solve_with_diag_guard(A_cap, B_cap)
+                    Q_hvac = _compute_q_hvac_from_balance(
+                        Theta_new,
+                        Theta,
+                        mode,
+                        h_ve_z_t,
+                        s_ve_z_t,
+                        phi_int_z_t,
+                        phi_sol_z_t,
+                        T_out,
+                        zone_air_links_t,
+                        zone_hsurf_sum_t,
+                    )
+                    _changed = False
+                    for zi in range(Z):
+                        if capacity_limited[zi] or mode[zi] == "0":
+                            continue
+                        if mode[zi] == "H":
+                            _c = float(zones[zi].get("heating_capacity", np.inf))
+                            if np.isfinite(_c) and Q_hvac[zi] > _c + 1e-6:
+                                capacity_limited[zi], Q_target[zi], _changed = True, _c, True
+                        elif mode[zi] == "C":
+                            _c = float(zones[zi].get("cooling_capacity", np.inf))
+                            if np.isfinite(_c) and Q_hvac[zi] < -_c - 1e-6:
+                                capacity_limited[zi], Q_target[zi], _changed = True, -_c, True
+                    for _g in _gen_groups:
+                        for _svc, _sgn in (("H", 1.0), ("C", -1.0)):
+                            if not np.isfinite(_g[_svc]):
+                                continue
+                            _zs = [zi for zi in _g["zi"] if mode[zi] == _svc]
+                            _val = {zi: _sgn * (Q_target[zi] if capacity_limited[zi] else Q_hvac[zi]) for zi in _zs}
+                            _limit = _g[_svc]
+                            if _g["priority"] != ("heating" if _svc == "H" else "cooling") and _g["priority"] != "larger":
+                                # second service: what the first one left
+                                _other = "C" if _svc == "H" else "H"
+                                _used = sum(abs(Q_target[zi] if capacity_limited[zi] else Q_hvac[zi])
+                                            for zi in _g["zi"] if mode[zi] == _other)
+                                if np.isfinite(_g[_other]) and _g[_other] > 0:
+                                    _limit = max(1.0 - _used / _g[_other], 0.0) * _g[_svc]
+                            if sum(_val.values()) > _limit + 1e-6:
+                                _req = {zi: max(_sgn * Q_req[zi], 0.0) for zi in _zs}
+                                _rs = sum(_req.values())
+                                for zi in _zs:
+                                    share = _req[zi] / _rs if _rs > 0 else 1.0 / len(_zs)
+                                    Q_target[zi] = _sgn * _limit * share
+                                    capacity_limited[zi] = True
+                                _changed = True
+                    if not _changed:
+                        break
             else:
                 Theta_new = Theta_sp
                 Q_hvac = Q_req
@@ -6450,6 +6722,8 @@ class ISO52016:
             # advance state
             Theta = Theta_new
             Theta_air_t, Theta_rad_t, Theta_op_t = _zone_air_radiant_operative(Theta_new)
+            for _zn, _ctx in _adaptive_zone_ctx.items():
+                _ctx.record(t, float(Theta_op_t[z_idx[_zn]]), float(Q_hvac[z_idx[_zn]]))
             month_t = _month_at_tstep(t)
             T_ground_t, q_ground_zone_t, q_ground_surface_t = _ground_fluxes_from_state(
                 theta_state=Theta_new,
@@ -6471,6 +6745,13 @@ class ISO52016:
                 zone_out["T_air"][t] = float(Theta_air_t[zi])
                 zone_out["T_rad"][t] = float(Theta_rad_t[zi])
                 zone_out["T_op"][t] = float(Theta_op_t[zi])
+                _theta_op_last[zi] = float(Theta_op_t[zi])
+                # set-points active in the hour and ideal request: a capacity shortage shows
+                # as Q_HVAC_req - Q_HVAC and as an operative temperature off the set-point
+                zone_out["T_set_H"][t] = float(Th_z[zi])
+                zone_out["T_set_C"][t] = float(Tc_z[zi])
+                zone_out["Q_HVAC_req"][t] = float(Q_req[zi])
+                zone_out["cap_limited"][t] = int(bool(capacity_limited[zi]))
                 zone_out["Q_HVAC"][t] = float(Q_hvac[zi])
                 zone_out["mode"][t] = mode[zi]
                 zone_out["Phi_int"][t] = float(phi_int_z_t[zi])
@@ -6482,6 +6763,12 @@ class ISO52016:
                     _s_ve_i / _h_ve_i if _h_ve_i > 0.0 else np.nan
                 )
                 zone_out["Q_ve"][t] = _h_ve_i * float(Theta_air_t[zi]) - _s_ve_i
+                if _iz_flows:
+                    # heat gained by the zone air from air flow between zones [W]
+                    zone_out["Q_ve_interzone"][t] = float(
+                        -(_iz_state["H"][zi] @ np.asarray(Theta_new[:Z], dtype=float))
+                        + _iz_state["S"][zi]
+                    )
                 zone_out["H_ground"][t] = float(zone_h_ground[zi]) if zi < len(zone_h_ground) else 0.0
                 zone_out["Q_ground"][t] = float(q_ground_zone_t.get(str(zone_out["name"]), 0.0))
                 zone_out["night_purge_factor"][t] = float(purge_factor_z_t[zi])
@@ -6525,10 +6812,16 @@ class ISO52016:
             out_data[f"S_ve_{name}"] = zone_out["S_ve"]
             out_data[f"T_ve_source_eq_{name}"] = zone_out["T_ve_source_eq"]
             out_data[f"Q_ve_{name}"] = zone_out["Q_ve"]
+            if _iz_flows:
+                out_data[f"Q_ve_interzone_{name}"] = zone_out["Q_ve_interzone"]
             out_data[f"H_ground_{name}"] = zone_out["H_ground"]
             out_data[f"Q_ground_{name}"] = zone_out["Q_ground"]
             out_data[f"night_purge_factor_{name}"] = zone_out["night_purge_factor"]
             out_data[f"night_purge_active_{name}"] = zone_out["night_purge_active"]
+            out_data[f"T_set_H_{name}"] = zone_out["T_set_H"]
+            out_data[f"T_set_C_{name}"] = zone_out["T_set_C"]
+            out_data[f"Q_HVAC_req_{name}"] = zone_out["Q_HVAC_req"]
+            out_data[f"cap_limited_{name}"] = zone_out["cap_limited"]
         for surface_out in ground_surface_output_buffers:
             out_data[f"Q_ground_surface_{surface_out['surface_token']}"] = surface_out["Q_ground"]
         for surface_out in opaque_inside_surface_output_buffers:
@@ -6543,7 +6836,23 @@ class ISO52016:
             for col_pfx, _, _ in _AHU_DIAG_SPEC:
                 out_data[f"{col_pfx}_{comp_name}_{_zn}"] = _buf[col_pfx]
 
+        out_data["T_ext"] = T2m_arr
+        for _zn, _values in _light_buffers.items():
+            for _i, _field in enumerate(("daylight_lux", "electric_lux", "total_lux", "lighting_power_W", "lighting_heat_W")):
+                out_data[f"{_field}_{_zn}"] = _values[:, _i]
+        if _ztu_mz.active:
+            for _j, _name in enumerate(_ztu_mz.names):
+                out_data[f"theta_ztu_{_name}"] = _ztu_mz.theta_history[:, _j]
+        # F_sh;obst applied to each window element (only the shaded ones)
+        for _wname, _buf in _fsh_buffers.items():
+            if np.any(_buf < 1.0 - 1e-12):
+                out_data[f"F_sh_{_wname}"] = _buf
+        out_data["RH_ext"] = _series_to_float_array(sim_df, "RH", default=np.nan)
         out = pd.DataFrame(out_data, index=sim_df.index)
+        if _adaptive_zone_ctx:
+            _logs = [c.to_dataframe().reindex(sim_df.index) for c in _adaptive_zone_ctx.values()]
+            out = pd.concat([out] + _logs, axis=1)
+            sim_df.attrs.pop("adaptive_envelope_ctx_map", None)
         out = out.iloc[start_idx:].copy()
         return out
 
@@ -6555,12 +6864,30 @@ class ISO52016:
         weather_source="epw",
         include_solar=True,
         warmup_hours=744,
+        include_total=True,
+        include_latent=True,
         **kwargs,
     ):
         """
         Multizone hourly/annual energy-need calculation.
         This extends the multizone coupled model with profile-driven setpoints,
         ventilation and internal gains, and returns annual KPIs per zone.
+
+        Moisture and latent load (EN ISO 52016-1 6.5.14, ideal humidity control), per zone:
+        ``include_latent=True`` adds ``X_int_kg_kg_da_<zone>``, ``G_HU_kg_s_<zone>``,
+        ``G_DHU_kg_s_<zone>``, ``Phi_HU_W_<zone>``, ``Phi_DHU_W_<zone>``, ``Q_latent_W_<zone>``
+        (dehumidification, latent cooling need) and ``Q_H_latent_W_<zone>`` and the annual
+        ``Q_latent_annual_kWh`` / ``Q_H_latent_annual_kWh``.  Options, as in the single-zone
+        engine, in the zone dictionary or as keyword arguments (zone value first):
+        ``latent_rh_humidification_pct`` / ``latent_rh_dehumidification_pct`` (default 25 / 60 %)
+        or ``latent_indoor_rh_pct``, ``moisture_production_kg_s``, ``moisture_absorption_kg_s``,
+        ``latent_internal_fraction``, ``latent_mechanical_supply_m3_s``.  The air flow of each
+        zone is its outdoor ventilation/infiltration ``H_ve``; moisture carried by air flows
+        between zones (``interzone_airflows``) is not modelled.
+
+        ``include_total=True`` appends a ``zone == "TOTAL"`` row (sum of the zones, specific
+        values over the total useful floor area).  Sum the ``annual`` columns only after
+        excluding that row, or pass ``include_total=False`` for the per-zone rows alone.
 
         Returns:
             hourly_results (pd.DataFrame):
@@ -6572,6 +6899,12 @@ class ISO52016:
                 (plus explicit kWh columns) and specific values.
         """
         from .generate_profile import HourlyProfileGenerator, get_country_code_from_latlon  # lazy
+        _latent_keys = (
+            "latent_rh_humidification_pct", "latent_rh_dehumidification_pct", "latent_indoor_rh_pct",
+            "latent_internal_fraction", "moisture_production_kg_s", "moisture_absorption_kg_s",
+            "latent_mechanical_supply_m3_s",
+        )
+        latent_opts = {k: kwargs.pop(k) for k in _latent_keys if k in kwargs}
         hourly_results = cls.simulate_envelope_multizone_free_floating(
             building_object=building_object,
             path_weather_file=path_weather_file,
@@ -6592,6 +6925,11 @@ class ISO52016:
 
         annual_rows = []
         dt_h = _infer_timestep_hours_from_index(hourly_results.index, default=1.0)
+        latent_by_zone = {}
+        if include_latent:
+            hourly_results, latent_by_zone = cls._multizone_latent_balance(
+                hourly_results, zones, latent_opts, dt_h
+            )
         for zone in zones:
             zname = zone["name"]
             qcol = f"Q_HVAC_{zname}"
@@ -6618,9 +6956,95 @@ class ISO52016:
                     "time_step_h": dt_h,
                 }
             )
+            if zname in latent_by_zone:
+                q_lat, q_hlat = latent_by_zone[zname]
+                annual_rows[-1].update(
+                    {
+                        "Q_latent_annual_kWh": q_lat / 1000.0,
+                        "Q_H_latent_annual_kWh": q_hlat / 1000.0,
+                        "Q_latent_annual_kWh_per_sqm": (q_lat / 1000.0 / area) if area > 0 else 0.0,
+                        "Q_H_latent_annual_kWh_per_sqm": (q_hlat / 1000.0 / area) if area > 0 else 0.0,
+                    }
+                )
 
         annual_results = pd.DataFrame(annual_rows)
+        if include_total:
+            annual_results = _mz52016.annual_with_total(annual_results, zones)
         return hourly_results, annual_results
+
+    @classmethod
+    def _multizone_latent_balance(cls, hourly_results, zones, options, dt_h):
+        """Moisture content and latent load per zone (EN ISO 52016-1, 6.5.14).
+
+        Applies the single-zone balance (:func:`_zone_moisture_balance`) to each zone with
+        the zone volume, its outdoor air flow ``H_ve_<zone>`` and air temperature, and the
+        outdoor temperature / relative humidity.  Returns the hourly frame with the new
+        columns and ``{zone: (latent cooling Wh, latent heating Wh)}``.
+        """
+        if "RH_ext" not in hourly_results.columns or not np.isfinite(
+            hourly_results["RH_ext"].to_numpy(dtype=float)
+        ).any():
+            warnings.warn(
+                "multizone latent balance skipped: the weather data has no relative humidity",
+                stacklevel=3,
+            )
+            return hourly_results, {}
+        new_cols = {}
+        result = {}
+        t_ext = hourly_results["T_ext"].to_numpy(dtype=float)
+        rh_ext = hourly_results["RH_ext"].to_numpy(dtype=float)
+        for zone in zones:
+            zn = str(zone["name"])
+            if f"H_ve_{zn}" not in hourly_results.columns:
+                continue
+
+            def opt(key, default=None):
+                if zone.get(key) is not None:
+                    return zone[key]
+                return options.get(key, default)
+
+            both = opt("latent_indoor_rh_pct")
+            rh_hu = opt("latent_rh_humidification_pct",
+                        DEFAULT_RH_SET_HUMIDIFICATION_PCT if both is None else both)
+            rh_dhu = opt("latent_rh_dehumidification_pct",
+                         DEFAULT_RH_SET_DEHUMIDIFICATION_PCT if both is None else both)
+            phi_int = hourly_results[f"Phi_int_{zn}"].to_numpy(dtype=float)
+            phi_lat_int = float(opt("latent_internal_fraction", 0.0)) * phi_int
+            g_int = np.asarray(opt("moisture_production_kg_s", 0.0), dtype=float) \
+                + phi_lat_int / ISO52016_HWE_J_KG
+            mech_q = opt("latent_mechanical_supply_m3_s")
+            mb = _zone_moisture_balance(
+                hourly_results[f"H_ve_{zn}"].to_numpy(dtype=float),
+                hourly_results[f"T_air_{zn}"].to_numpy(dtype=float),
+                t_ext,
+                rh_ext,
+                float(zone.get("volume") or zone.get("zone_volume_m3") or 0.0),
+                dt_h * 3600.0,
+                rh_hu,
+                rh_dhu,
+                g_int_kg_s=g_int,
+                g_abs_kg_s=opt("moisture_absorption_kg_s", 0.0),
+                q_mech_rho_kg_s=None if mech_q is None
+                else ISO52016_RHO_A_KG_M3 * np.asarray(mech_q, dtype=float),
+            )
+            new_cols[f"X_int_kg_kg_da_{zn}"] = mb["x_int"]
+            new_cols[f"G_HU_kg_s_{zn}"] = mb["g_hu_kg_s"]
+            new_cols[f"G_DHU_kg_s_{zn}"] = mb["g_dhu_kg_s"]
+            new_cols[f"Phi_HU_W_{zn}"] = mb["phi_hu_w"]
+            new_cols[f"Phi_DHU_W_{zn}"] = mb["phi_dhu_w"]
+            new_cols[f"Q_latent_W_{zn}"] = mb["phi_dhu_w"]
+            new_cols[f"Q_H_latent_W_{zn}"] = mb["phi_hu_w"]
+            result[zn] = (
+                _integrate_power_series_to_energy_wh(pd.Series(mb["phi_dhu_w"], index=hourly_results.index),
+                                                     default_dt_h=dt_h),
+                _integrate_power_series_to_energy_wh(pd.Series(mb["phi_hu_w"], index=hourly_results.index),
+                                                     default_dt_h=dt_h),
+            )
+        if new_cols:
+            hourly_results = pd.concat(
+                [hourly_results, pd.DataFrame(new_cols, index=hourly_results.index)], axis=1
+            )
+        return hourly_results, result
 
     @classmethod
     def _build_single_zone_building_object_for_core(cls, building_object: dict, zone_name: str) -> dict:
@@ -6883,7 +7307,7 @@ class ISO52016:
                 surf["ISO52016_type_string"] = "GR"
             elif bnd == "ADIABATIC":
                 surf["ISO52016_type_string"] = "AD"
-            elif bnd == "INTERNAL":
+            elif bnd in ("INTERNAL", "UNCONDITIONED", "ADJACENT"):
                 surf["ISO52016_type_string"] = "ADJ"
             else:
                 surf["ISO52016_type_string"] = (
@@ -7201,6 +7625,18 @@ class ISO52016:
                     "net_floor_area": float(building_object["building"]["net_floor_area"]),
                 }
             ]
+        if (
+            building_object.get("interzone_airflows")
+            or any(z.get("free_floating") for z in zones)
+            or any(str(s.get("boundary", "")).upper() in ("UNCONDITIONED", "ADJACENT")
+                   for s in building_object.get("building_surface", []))
+        ):
+            raise NotImplementedError(
+                "the hybrid iterative multizone method couples zones only through the INTERNAL "
+                "partitions: air flow between zones (interzone_airflows), free-floating zones "
+                "and unconditioned adjacent zones (boundary UNCONDITIONED) need "
+                "Temperature_and_Energy_needs_calculation_multizone"
+            )
         zone_names = [z["name"] for z in zones]
         coupling_h_ci_model = kwargs.get("internal_convection_model", None)
         coupling_h_ce_model = kwargs.get("external_convection_model", None)
@@ -7633,6 +8069,58 @@ class ISO52016:
         except Exception as exc:
             print(f"ERROR: Simulation error in Temperature_and_Energy_needs_calculation: {exc}")
             raise
+
+    @classmethod
+    def _spatial_setpoint_adjustment_months(cls, building_object, sim_df, profile_df, h_tb):
+        """Monthly decrease of the heating set-point, 6.4.6 Option B (Formulae 7-8).
+
+        Enabled with ``building_parameters.spatial_setpoint_adjustment = {"enabled": true,
+        "f_mod_t": 0.8, "f_mod_sp": 0.5, "H_int_spec": 2.0}`` (Table B.6 defaults).  The
+        reduction applies to the heating set-point (not to the set-back).  H_tr is the sum of
+        U*A of the thermal envelope plus the thermal bridges (elements to an unconditioned zone
+        weighted with b, or 1 - b for the internal type); H_ve is the monthly mean of the
+        ventilation heat transfer coefficient.  Returns ``None`` when not enabled.
+        """
+        bp = building_object.get("building_parameters") or {}
+        cfg = bp.get("spatial_setpoint_adjustment")
+        if not cfg or not bool(cfg.get("enabled", False)):
+            return None
+        f_mod_t = float(cfg.get("f_mod_t", 0.8))
+        f_mod_sp = float(cfg.get("f_mod_sp", 0.5))
+        h_int_spec = float(cfg.get("H_int_spec", 2.0))
+        a_use = float(building_object["building"]["net_floor_area"])
+        theta_set = float(bp["temperature_setpoints"]["heating_setpoint"])
+
+        ztu = UnconditionedZoneSet(building_object)
+        h_tr = float(h_tb)
+        for surf in building_object["building_surface"]:
+            typ = str(surf.get("type", "")).lower()
+            if typ == "adiabatic" or str(surf.get("ISO52016_type_string", "")).upper() == "AD":
+                continue
+            ua = float(surf.get("u_value", 0.0)) * float(surf.get("area", 0.0))
+            if typ == "adjacent":
+                c = ztu.coefficients_for(surf.get("name_adj_zone"))
+                if c is not None:
+                    ua *= c.b if c.ztu_type == "external" else (1.0 - c.b)
+            h_tr += ua
+
+        n = len(sim_df)
+        h_ve_hourly = np.zeros(n, dtype=float)
+        for t in range(n):
+            bdy = _resolve_single_zone_vent_boundary(building_object, theta_set, t, sim_df, profile_df)
+            h_ve_hourly[t] = float(bdy.heat_transfer_coefficient_w_k)
+        months = sim_df.index.month.to_numpy() - 1
+        t_out = _series_to_float_array(sim_df, "T2m")
+        out = np.zeros(12, dtype=float)
+        for m in range(12):
+            sel = months == m
+            if not sel.any():
+                continue
+            out[m] = _mz52016.spatial_setpoint_reduction(
+                h_tr, float(h_ve_hourly[sel].mean()), a_use, theta_set, float(t_out[sel].mean()),
+                f_mod_t=f_mod_t, f_mod_sp=f_mod_sp, h_int_spec=h_int_spec,
+            )
+        return out
 
     @classmethod
     def _single_zone_52016_engine(
@@ -8122,15 +8610,21 @@ class ISO52016:
         H_ve_nat_all = [0]
         S_ve_nat_all = [0.0]
         _ahu_coll_all: list = []   # per-timestep {comp_name: AHUStepOutputs}; appended once per timestep after HVAC loop
-        # Time step for indoor temperature in adjacent zones
-        if building_object['building']['adj_zones_present']:
-            list_adj_zones = building_object['building']['number_adj_zone']
-            if list_adj_zones == 1:
-                theta_ztu = np.zeros(Tstepn)
-                theta_ztu[0] = 15
-            elif list_adj_zones > 1:
-                theta_ztu = np.zeros((Tstepn, list_adj_zones))
-                theta_ztu[:2] = 15
+        # Thermally unconditioned adjacent zones (ISO 52016-1, 6.4.5, 6.5.9, E.3)
+        _ztu_set = UnconditionedZoneSet(building_object)
+        _ztu_states: list = []
+        _ztu_irr = {}
+        if _ztu_set.active:
+            _ztu_set.init_history(Tstepn)
+            for _c in _ztu_set.coeffs:
+                for _a in _c.absorbing:
+                    _o = _a["orientation"]
+                    if _o in _ztu_irr:
+                        continue
+                    _ztu_irr[_o] = (
+                        _series_to_float_array(sim_df, f"I_sol_dif_{_o}", default=0.0),
+                        _series_to_float_array(sim_df, f"I_sol_dir_w_{_o}", default=0.0),
+                    )
                 
         
         # Generate profiles
@@ -8323,6 +8817,9 @@ class ISO52016:
         # -----------------------------------------------------------
 
         _adaptive_ctx = cls._attach_adaptive_envelope(building_object, sim_df, profile_df)
+        _dtheta_spatial = cls._spatial_setpoint_adjustment_months(
+            building_object, sim_df, profile_df, t_Th.thermal_bridge_heat
+        )
         with tqdm(total=Tstepn) as pbar:
             n_w = 0
             for Tstepi in range(start_idx, Tstepn):
@@ -8331,6 +8828,9 @@ class ISO52016:
                     Theta_H_set = building_object["building_parameters"]["temperature_setpoints"]["heating_setpoint"]
                 else:
                     Theta_H_set = building_object["building_parameters"]["temperature_setpoints"]["heating_setback"]
+                if _dtheta_spatial is not None and heat_prof_arr[Tstepi] > 0 and Theta_H_set > -995:
+                    # 6.4.6 Option B: spatial average temperature of the moderately conditioned spaces
+                    Theta_H_set = Theta_H_set - _dtheta_spatial[month_arr[Tstepi]]
                 if cool_prof_arr[Tstepi] > 0:
                     Theta_C_set = building_object["building_parameters"]["temperature_setpoints"]["cooling_setpoint"]
                 else:
@@ -8487,9 +8987,30 @@ class ISO52016:
                     the convective fraction of the heating/cooling system
                     '''
 
+                    # Adjacent thermally unconditioned zones at this hour (6.5.9): the state
+                    # depends only on the previous-hour operative temperature.
+                    if _ztu_set.active:
+                        _ztu_gains = _ztu_set.gains_direct(
+                            lambda _cls, _a, _t=Tstepi: vig.internal_gains(
+                                building_type_class=_cls, a_use=_a,
+                                h_occup=occ_prof_arr[_t], h_app=app_prof_arr[_t],
+                                h_light=light_prof_arr[_t], use_overrides=False,
+                            ),
+                            {
+                                _o: {"dif": float(_v[0][Tstepi]), "dir": float(_v[1][Tstepi])}
+                                for _o, _v in _ztu_irr.items()
+                            },
+                        )
+                        _ztu_states = _ztu_set.step(
+                            Tstepi,
+                            float(Theta_int_op[Tstepi - 1, 0]) if Tstepi > 0 else _ZTU_INITIAL_OPERATIVE_C,
+                            float(T2m_arr[Tstepi]),
+                            _ztu_gains,
+                        )
                     _vent_bdy = _resolve_single_zone_vent_boundary(
                         building_object, float(Theta_old[ri]), Tstepi, sim_df, profile_df,
                         ahu_outputs_collector=_ahu_coll_tstep,
+                        adjacent_zone_state=_ztu_set.ventilation_state(_ztu_states) if _ztu_set.active else None,
                     )
                     H_ve_nat = _vent_bdy.heat_transfer_coefficient_w_k
                     S_ve_nat = _vent_bdy.source_term_w
@@ -8504,75 +9025,23 @@ class ISO52016:
                     
                     
                     # ===========================================================================
-                    #                       INTERNAL GAINS
+                    #                       INTERNAL GAINS (6.5.12.1)
                     # ===========================================================================
-                    #                       UNCONDITIONED ZONES
-                    # ---------------------------------------------------------------------------
-                    # Internal gains and solar of unconditioned zone
-                    if building_object['building']['adj_zones_present']:
-                        # list_adj_zones = list(building_object.adj_zones.keys())
-                        list_adj_zones = building_object['building']['number_adj_zone']
-                        adj_bui_class = building_object['adjacent_zones'][0]['building_type_class']
-                        adj_bui_a_use = building_object['adjacent_zones'][0]['a_use']
-                        phi_int_gains_unc_zone = vig.internal_gains(
-                            building_type_class = adj_bui_class, 
-                            a_use = adj_bui_a_use, 
-                            unconditioned_zones_nearby = False,
-                            h_occup=occ_prof_arr[Tstepi],
-                            h_app=app_prof_arr[Tstepi],
-                            h_light=light_prof_arr[Tstepi],
-                        )
-                        phi_solar_gains_unc_zone = 0 # <----- TO BE MODIFIED ACCORDING TO THE WIDNOW OF THE UNCODITIONED ZONES !!!!!
-                        phi_gn_dir_ztu = phi_int_gains_unc_zone + phi_solar_gains_unc_zone
-                    
-                        ## CASE OF SINGLE UNCONDITIONED ZONE
-                        if list_adj_zones == 1:
-                            adj_zone = building_object['adjacent_zones'][0]
-                            H_ztu, b_ztu, F_ztc_ztu_m =ISO52016().transmission_heat_transfer_coefficient_ISO13789(adj_zone)
-                            H_ztu_zones_df = pd.DataFrame(
-                                [[H_ztu], [b_ztu], [F_ztc_ztu_m], [adj_zone['orientation_zone']['azimuth']]],
-                                columns=[adj_zone['name']], index=['H_ztu', 'b_ztu', 'F_ztc_ztu_m', 'orientation'])
-                        else: 
-                            H_ztu_zones = np.zeros((4, list_adj_zones))
-                            name_zones = []
-                            for i in range(list_adj_zones):
-                                adj_zone = building_object['adjacent_zones'][i]
-                                H_ztu, b_ztu, F_ztc_ztu_m =ISO52016().transmission_heat_transfer_coefficient_ISO13789(adj_zone)
-                                H_ztu_zones[0, i] = H_ztu
-                                H_ztu_zones[1, i] = b_ztu
-                                H_ztu_zones[2, i] = F_ztc_ztu_m
-                                H_ztu_zones[3, i] = adj_zone['orientation_zone']['azimuth']
-                                name_zones.append(adj_zone['name'])
-                            H_ztu_zones_df = pd.DataFrame(H_ztu_zones, columns=name_zones, index = ['H_ztu', 'b_ztu', 'F_ztc_ztu_m', 'orientation'])
-                            
-                    # ---------------------------------------------------------------------------
-                    # Internal gains conditioned and unconditioned zones
-                    if building_object['building']['adj_zones_present']:
-                        int_gains_with_unconditioned_zones = vig.internal_gains(
-                                            building_type_class = building_object['building']['building_type_class'], 
-                                            a_use=building_object['building']['net_floor_area'], 
-                                            unconditioned_zones_nearby = True, 
-                                            Fztc_ztu_m=F_ztc_ztu_m,
-                                            list_adj_zones=list_adj_zones,
-                                            b_ztu=b_ztu,
-                                            h_occup=occ_prof_arr[Tstepi],
-                                            h_app=app_prof_arr[Tstepi],
-                                            h_light=light_prof_arr[Tstepi],
-                                            )
-                    else:
-                        int_gains_conditioned_zone = vig.internal_gains(
-                                            building_type_class = building_object['building']['building_type_class'], 
-                                            a_use=building_object['building']['net_floor_area'], 
-                                            unconditioned_zones_nearby = False,
-                                            h_occup=occ_prof_arr[Tstepi],
-                                            h_app=app_prof_arr[Tstepi],
-                                            h_light=light_prof_arr[Tstepi],
-                                            )
-
-                    if building_object['building']['adj_zones_present'] and building_object['building']['number_adj_zone']>=1:
-                        int_gains = int_gains_with_unconditioned_zones
-                    else:
-                        int_gains = int_gains_conditioned_zone
+                    # Phi_int,ztc = Phi_int,dir,ztc (+ sum (1-b) F Phi_int,dir,ztu for the
+                    # internal-type unconditioned zones only, Formula 65).
+                    int_gains = vig.internal_gains(
+                        building_type_class=building_object['building']['building_type_class'],
+                        a_use=building_object['building']['net_floor_area'],
+                        h_occup=occ_prof_arr[Tstepi],
+                        h_app=app_prof_arr[Tstepi],
+                        h_light=light_prof_arr[Tstepi],
+                        ztu_contributions=[
+                            (_s["phi_int_dir"], _s["b"], _s["F"])
+                            for _s in _ztu_states if _s["type"] == "internal"
+                        ],
+                    )
+                    # Formula 68: solar gains of internal-type unconditioned zones
+                    Phi_sol_dir_zt_t += UnconditionedZoneSet.attributed_gains(_ztu_states)["sol"]
 
                     ext_int_gain = float(external_internal_gains_series[Tstepi])
                     if not np.isfinite(ext_int_gain):
@@ -8640,27 +9109,7 @@ class ISO52016:
                         )
                     # ==================================================================
 
-                    # ========================================
-                    # Temperature of unconditioned space (if any)
-                    # ========================================
-                    if building_object['building']['adj_zones_present']:
-                        c_ztu_h_max = 1 # from table B.16 
-                        if Tstepi >0:
-                            # Single zones
-                            if list_adj_zones == 1:
-                                theta_ztu_t = (Theta_int_op[Tstepi-1,0] - b_ztu*(Theta_int_op[Tstepi-1,0] - T2m_arr[Tstepi]) + (phi_gn_dir_ztu/H_ztu))
-                                theta_ztu_t_checked = min(T2m_arr[Tstepi] + c_ztu_h_max*(Theta_int_op[Tstepi-1,0] - T2m_arr[Tstepi]), theta_ztu_t)
-                                theta_ztu[Tstepi] = theta_ztu_t_checked
-                            
-                            # Multiple zones
-                            elif list_adj_zones > 1:
-                                for z in range(list_adj_zones):
-                                    zone = building_object['adjacent_zones'][z]
-                                    H_ztu = H_ztu_zones_df.loc['H_ztu'][zone['name']]
-                                    theta_ztu_t = (Theta_int_op[Tstepi-1,0] - b_ztu*(Theta_int_op[Tstepi-1,0] - T2m_arr[Tstepi]) + (phi_gn_dir_ztu/H_ztu))
-                                    theta_ztu_t_checked = min(T2m_arr[Tstepi] + c_ztu_h_max*(Theta_int_op[Tstepi-1,0] - T2m_arr[Tstepi]), theta_ztu_t)
-                                    theta_ztu[Tstepi,z] = theta_ztu_t_checked
-                        theta_ztu_df = pd.DataFrame(theta_ztu, columns=H_ztu_zones_df.columns.tolist())
+                    # (temperature of the unconditioned zones: computed at the start of the hour)
 
                     for Eli in range(bui_eln):
                         n_nodes = nodes.Pln[Eli]
@@ -8730,18 +9179,12 @@ class ISO52016:
                                     a_sol_pli_eli = 0
                                     '''
                                     XTemp = 0.0
-                                    if building_object['building']['adj_zones_present']:
-                                        list_adj_zones = building_object['building']['number_adj_zone']
-                                        if list_adj_zones > 1:
-                                            name_adj_zone = name_adjacent_zones[Eli]
+                                    if _ztu_set.active:
+                                        _k_ztu = _ztu_set.index_of(name_adjacent_zones[Eli])
+                                        if _k_ztu is not None:
                                             XTemp = (
                                                 (heat_convective_elements_external[Eli] + heat_radiative_elements_external_t[Eli])
-                                                * theta_ztu_df[name_adj_zone].iloc[Tstepi]
-                                            )
-                                        else:
-                                            XTemp = (
-                                                (heat_convective_elements_external[Eli] + heat_radiative_elements_external_t[Eli])
-                                                * theta_ztu[Tstepi]
+                                                * _ztu_states[_k_ztu]["theta_boundary"]
                                             )
                                     
                                     for cBi in range(nrHCmodes):
@@ -9056,8 +9499,8 @@ class ISO52016:
                         elif q_cond < 0: E_solar_Wh += (-q_cond) * dt_h
                         q_adj_total += q_cond
                     _report_q_adj_all.append(q_adj_total)
-                    if building_object['building']['adj_zones_present']:
-                        _report_theta_ztu_all.append(np.atleast_1d(theta_ztu[Tstepi]).copy())
+                    if _ztu_set.active:
+                        _report_theta_ztu_all.append(np.array([_s['theta'] for _s in _ztu_states], dtype=float))
                     _report_q_solar_gains_all.append(phi_solar)
                     _report_q_internal_gains_all.append(phi_int)
                     _report_q_storage_all.append(q_storage)
@@ -9200,7 +9643,7 @@ class ISO52016:
         hourly_results["Q_adj"] = np.asarray(_report_q_adj_all, dtype=float)
         if _report_theta_ztu_all:
             _theta_ztu_arr = np.vstack(_report_theta_ztu_all)
-            _ztu_names = H_ztu_zones_df.columns.tolist()
+            _ztu_names = list(_ztu_set.names)
             if len(_ztu_names) == 1:
                 hourly_results["theta_ztu"] = _theta_ztu_arr[:, 0]
             else:
@@ -9772,15 +10215,21 @@ class ISO52016:
         H_ve_nat_all = [0]
         S_ve_nat_all = [0.0]
         _ahu_coll_all: list = []   # per-timestep {comp_name: AHUStepOutputs}; appended once per timestep after HVAC loop
-        # Time step for indoor temperature in adjacent zones
-        if building_object['building']['adj_zones_present']:
-            list_adj_zones = building_object['building']['number_adj_zone']
-            if list_adj_zones == 1:
-                theta_ztu = np.zeros(Tstepn)
-                theta_ztu[0] = 15
-            elif list_adj_zones > 1:
-                theta_ztu = np.zeros((Tstepn, list_adj_zones))
-                theta_ztu[:2] = 15
+        # Thermally unconditioned adjacent zones (ISO 52016-1, 6.4.5, 6.5.9, E.3)
+        _ztu_set = UnconditionedZoneSet(building_object)
+        _ztu_states: list = []
+        _ztu_irr = {}
+        if _ztu_set.active:
+            _ztu_set.init_history(Tstepn)
+            for _c in _ztu_set.coeffs:
+                for _a in _c.absorbing:
+                    _o = _a["orientation"]
+                    if _o in _ztu_irr:
+                        continue
+                    _ztu_irr[_o] = (
+                        _series_to_float_array(sim_df, f"I_sol_dif_{_o}", default=0.0),
+                        _series_to_float_array(sim_df, f"I_sol_dir_w_{_o}", default=0.0),
+                    )
                 
         
         # Generate profiles
@@ -9978,6 +10427,9 @@ class ISO52016:
         # -----------------------------------------------------------
 
         _adaptive_ctx = cls._attach_adaptive_envelope(building_object, sim_df, profile_df)
+        _dtheta_spatial = cls._spatial_setpoint_adjustment_months(
+            building_object, sim_df, profile_df, t_Th.thermal_bridge_heat
+        )
         with tqdm(total=Tstepn) as pbar:
             n_w = 0
             for Tstepi in range(start_idx, Tstepn):
@@ -9986,6 +10438,9 @@ class ISO52016:
                     Theta_H_set = building_object["building_parameters"]["temperature_setpoints"]["heating_setpoint"]
                 else:
                     Theta_H_set = building_object["building_parameters"]["temperature_setpoints"]["heating_setback"]
+                if _dtheta_spatial is not None and heat_prof_arr[Tstepi] > 0 and Theta_H_set > -995:
+                    # 6.4.6 Option B: spatial average temperature of the moderately conditioned spaces
+                    Theta_H_set = Theta_H_set - _dtheta_spatial[month_arr[Tstepi]]
                 if cool_prof_arr[Tstepi] > 0:
                     Theta_C_set = building_object["building_parameters"]["temperature_setpoints"]["cooling_setpoint"]
                 else:
@@ -10181,9 +10636,30 @@ class ISO52016:
                     the convective fraction of the heating/cooling system
                     '''
 
+                    # Adjacent thermally unconditioned zones at this hour (6.5.9): the state
+                    # depends only on the previous-hour operative temperature.
+                    if _ztu_set.active:
+                        _ztu_gains = _ztu_set.gains_direct(
+                            lambda _cls, _a, _t=Tstepi: vig.internal_gains(
+                                building_type_class=_cls, a_use=_a,
+                                h_occup=occ_prof_arr[_t], h_app=app_prof_arr[_t],
+                                h_light=light_prof_arr[_t], use_overrides=False,
+                            ),
+                            {
+                                _o: {"dif": float(_v[0][Tstepi]), "dir": float(_v[1][Tstepi])}
+                                for _o, _v in _ztu_irr.items()
+                            },
+                        )
+                        _ztu_states = _ztu_set.step(
+                            Tstepi,
+                            float(Theta_int_op[Tstepi - 1, 0]) if Tstepi > 0 else _ZTU_INITIAL_OPERATIVE_C,
+                            float(T2m_arr[Tstepi]),
+                            _ztu_gains,
+                        )
                     _vent_bdy = _resolve_single_zone_vent_boundary(
                         building_object, float(Theta_old[ri]), Tstepi, sim_df, profile_df,
                         ahu_outputs_collector=_ahu_coll_tstep,
+                        adjacent_zone_state=_ztu_set.ventilation_state(_ztu_states) if _ztu_set.active else None,
                     )
                     H_ve_nat = _vent_bdy.heat_transfer_coefficient_w_k
                     S_ve_nat = _vent_bdy.source_term_w
@@ -10198,75 +10674,23 @@ class ISO52016:
                     
                     
                     # ===========================================================================
-                    #                       INTERNAL GAINS
+                    #                       INTERNAL GAINS (6.5.12.1)
                     # ===========================================================================
-                    #                       UNCONDITIONED ZONES
-                    # ---------------------------------------------------------------------------
-                    # Internal gains and solar of unconditioned zone
-                    if building_object['building']['adj_zones_present']:
-                        # list_adj_zones = list(building_object.adj_zones.keys())
-                        list_adj_zones = building_object['building']['number_adj_zone']
-                        adj_bui_class = building_object['adjacent_zones'][0]['building_type_class']
-                        adj_bui_a_use = building_object['adjacent_zones'][0]['a_use']
-                        phi_int_gains_unc_zone = vig.internal_gains(
-                            building_type_class = adj_bui_class, 
-                            a_use = adj_bui_a_use, 
-                            unconditioned_zones_nearby = False,
-                            h_occup=occ_prof_arr[Tstepi],
-                            h_app=app_prof_arr[Tstepi],
-                            h_light=light_prof_arr[Tstepi],
-                        )
-                        phi_solar_gains_unc_zone = 0 # <----- TO BE MODIFIED ACCORDING TO THE WIDNOW OF THE UNCODITIONED ZONES !!!!!
-                        phi_gn_dir_ztu = phi_int_gains_unc_zone + phi_solar_gains_unc_zone
-                    
-                        ## CASE OF SINGLE UNCONDITIONED ZONE
-                        if list_adj_zones == 1:
-                            adj_zone = building_object['adjacent_zones'][0]
-                            H_ztu, b_ztu, F_ztc_ztu_m =ISO52016().transmission_heat_transfer_coefficient_ISO13789(adj_zone)
-                            H_ztu_zones_df = pd.DataFrame(
-                                [[H_ztu], [b_ztu], [F_ztc_ztu_m], [adj_zone['orientation_zone']['azimuth']]],
-                                columns=[adj_zone['name']], index=['H_ztu', 'b_ztu', 'F_ztc_ztu_m', 'orientation'])
-                        else: 
-                            H_ztu_zones = np.zeros((4, list_adj_zones))
-                            name_zones = []
-                            for i in range(list_adj_zones):
-                                adj_zone = building_object['adjacent_zones'][i]
-                                H_ztu, b_ztu, F_ztc_ztu_m =ISO52016().transmission_heat_transfer_coefficient_ISO13789(adj_zone)
-                                H_ztu_zones[0, i] = H_ztu
-                                H_ztu_zones[1, i] = b_ztu
-                                H_ztu_zones[2, i] = F_ztc_ztu_m
-                                H_ztu_zones[3, i] = adj_zone['orientation_zone']['azimuth']
-                                name_zones.append(adj_zone['name'])
-                            H_ztu_zones_df = pd.DataFrame(H_ztu_zones, columns=name_zones, index = ['H_ztu', 'b_ztu', 'F_ztc_ztu_m', 'orientation'])
-                            
-                    # ---------------------------------------------------------------------------
-                    # Internal gains conditioned and unconditioned zones
-                    if building_object['building']['adj_zones_present']:
-                        int_gains_with_unconditioned_zones = vig.internal_gains(
-                                            building_type_class = building_object['building']['building_type_class'], 
-                                            a_use=building_object['building']['net_floor_area'], 
-                                            unconditioned_zones_nearby = True, 
-                                            Fztc_ztu_m=F_ztc_ztu_m,
-                                            list_adj_zones=list_adj_zones,
-                                            b_ztu=b_ztu,
-                                            h_occup=occ_prof_arr[Tstepi],
-                                            h_app=app_prof_arr[Tstepi],
-                                            h_light=light_prof_arr[Tstepi],
-                                            )
-                    else:
-                        int_gains_conditioned_zone = vig.internal_gains(
-                                            building_type_class = building_object['building']['building_type_class'], 
-                                            a_use=building_object['building']['net_floor_area'], 
-                                            unconditioned_zones_nearby = False,
-                                            h_occup=occ_prof_arr[Tstepi],
-                                            h_app=app_prof_arr[Tstepi],
-                                            h_light=light_prof_arr[Tstepi],
-                                            )
-
-                    if building_object['building']['adj_zones_present'] and building_object['building']['number_adj_zone']>=1:
-                        int_gains = int_gains_with_unconditioned_zones
-                    else:
-                        int_gains = int_gains_conditioned_zone
+                    # Phi_int,ztc = Phi_int,dir,ztc (+ sum (1-b) F Phi_int,dir,ztu for the
+                    # internal-type unconditioned zones only, Formula 65).
+                    int_gains = vig.internal_gains(
+                        building_type_class=building_object['building']['building_type_class'],
+                        a_use=building_object['building']['net_floor_area'],
+                        h_occup=occ_prof_arr[Tstepi],
+                        h_app=app_prof_arr[Tstepi],
+                        h_light=light_prof_arr[Tstepi],
+                        ztu_contributions=[
+                            (_s["phi_int_dir"], _s["b"], _s["F"])
+                            for _s in _ztu_states if _s["type"] == "internal"
+                        ],
+                    )
+                    # Formula 68: solar gains of internal-type unconditioned zones
+                    Phi_sol_dir_zt_t += UnconditionedZoneSet.attributed_gains(_ztu_states)["sol"]
 
                     ext_int_gain = float(external_internal_gains_series[Tstepi])
                     if not np.isfinite(ext_int_gain):
@@ -10334,27 +10758,7 @@ class ISO52016:
                         )
                     # ==================================================================
 
-                    # ========================================
-                    # Temperature of unconditioned space (if any)
-                    # ========================================
-                    if building_object['building']['adj_zones_present']:
-                        c_ztu_h_max = 1 # from table B.16 
-                        if Tstepi >0:
-                            # Single zones
-                            if list_adj_zones == 1:
-                                theta_ztu_t = (Theta_int_op[Tstepi-1,0] - b_ztu*(Theta_int_op[Tstepi-1,0] - T2m_arr[Tstepi]) + (phi_gn_dir_ztu/H_ztu))
-                                theta_ztu_t_checked = min(T2m_arr[Tstepi] + c_ztu_h_max*(Theta_int_op[Tstepi-1,0] - T2m_arr[Tstepi]), theta_ztu_t)
-                                theta_ztu[Tstepi] = theta_ztu_t_checked
-                            
-                            # Multiple zones
-                            elif list_adj_zones > 1:
-                                for z in range(list_adj_zones):
-                                    zone = building_object['adjacent_zones'][z]
-                                    H_ztu = H_ztu_zones_df.loc['H_ztu'][zone['name']]
-                                    theta_ztu_t = (Theta_int_op[Tstepi-1,0] - b_ztu*(Theta_int_op[Tstepi-1,0] - T2m_arr[Tstepi]) + (phi_gn_dir_ztu/H_ztu))
-                                    theta_ztu_t_checked = min(T2m_arr[Tstepi] + c_ztu_h_max*(Theta_int_op[Tstepi-1,0] - T2m_arr[Tstepi]), theta_ztu_t)
-                                    theta_ztu[Tstepi,z] = theta_ztu_t_checked
-                        theta_ztu_df = pd.DataFrame(theta_ztu, columns=H_ztu_zones_df.columns.tolist())
+                    # (temperature of the unconditioned zones: computed at the start of the hour)
 
                     for Eli in range(bui_eln):
                         n_nodes = nodes.Pln[Eli]
@@ -10424,18 +10828,12 @@ class ISO52016:
                                     a_sol_pli_eli = 0
                                     '''
                                     XTemp = 0.0
-                                    if building_object['building']['adj_zones_present']:
-                                        list_adj_zones = building_object['building']['number_adj_zone']
-                                        if list_adj_zones > 1:
-                                            name_adj_zone = name_adjacent_zones[Eli]
+                                    if _ztu_set.active:
+                                        _k_ztu = _ztu_set.index_of(name_adjacent_zones[Eli])
+                                        if _k_ztu is not None:
                                             XTemp = (
                                                 (heat_convective_elements_external[Eli] + heat_radiative_elements_external_t[Eli])
-                                                * theta_ztu_df[name_adj_zone].iloc[Tstepi]
-                                            )
-                                        else:
-                                            XTemp = (
-                                                (heat_convective_elements_external[Eli] + heat_radiative_elements_external_t[Eli])
-                                                * theta_ztu[Tstepi]
+                                                * _ztu_states[_k_ztu]["theta_boundary"]
                                             )
                                     
                                     for cBi in range(nrHCmodes):
@@ -10780,8 +11178,8 @@ class ISO52016:
                         elif q_cond < 0: E_solar_Wh += (-q_cond) * dt_h
                         q_adj_total += q_cond
                     _report_q_adj_all.append(q_adj_total)
-                    if building_object['building']['adj_zones_present']:
-                        _report_theta_ztu_all.append(np.atleast_1d(theta_ztu[Tstepi]).copy())
+                    if _ztu_set.active:
+                        _report_theta_ztu_all.append(np.array([_s['theta'] for _s in _ztu_states], dtype=float))
                     _report_q_solar_gains_all.append(phi_solar)
                     _report_q_internal_gains_all.append(phi_int)
                     _report_q_storage_all.append(q_storage)
@@ -10929,7 +11327,7 @@ class ISO52016:
         hourly_results["Q_adj"] = np.asarray(_report_q_adj_all, dtype=float)
         if _report_theta_ztu_all:
             _theta_ztu_arr = np.vstack(_report_theta_ztu_all)
-            _ztu_names = H_ztu_zones_df.columns.tolist()
+            _ztu_names = list(_ztu_set.names)
             if len(_ztu_names) == 1:
                 hourly_results["theta_ztu"] = _theta_ztu_arr[:, 0]
             else:

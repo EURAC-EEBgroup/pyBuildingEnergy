@@ -565,7 +565,8 @@ class VentilationInternalGains:
 
     def internal_gains(
         self, building_type_class, a_use, unconditioned_zones_nearby=False, list_adj_zones=None, Fztc_ztu_m: float=1, b_ztu: float=1,
-        h_occup: float=1, h_app: float=1, h_light: float=1, h_dhw: float=1, h_hvac: float=1, h_proc: float=1
+        h_occup: float=1, h_app: float=1, h_light: float=1, h_dhw: float=1, h_hvac: float=1, h_proc: float=1,
+        ztu_contributions=None, use_overrides: bool = True,
         ):
         """
         Calculation of internal gains (6.5.12.1 Overall internal heat gains into thermally conditioned zone )
@@ -586,7 +587,19 @@ class VentilationInternalGains:
         q_int_hvac: internal heat flow due to HVAC M10 - iso 15316-1. 16798-9, 16798-3
         q_int_proc: internal heat flow due to processes heat M1-6 - iso 16798-1
         A_use: useful area of the building [m2]
-        
+
+        Adjacent thermally unconditioned zones (Formula 65): the gains of an *internal* type
+        zone are attributed to the conditioned zone as ``sum((1 - b) * F * Phi_int;dir;ztu)``.
+        Pass them as ``ztu_contributions=[(Phi_int_dir_ztu, b_ztu, F_ztc_ztu), ...]``; the
+        values are those of the unconditioned zones themselves, see
+        :mod:`pybuildingenergy.source.unconditioned_zone_52016_1`.  The legacy arguments
+        ``unconditioned_zones_nearby``, ``list_adj_zones``, ``Fztc_ztu_m`` and ``b_ztu`` are
+        accepted but no longer change the result (they used to add the conditioned zone's own
+        gains again, giving 2-3 times the correct value).
+
+        ``use_overrides=False`` ignores the ``internal_gains`` full-load overrides of the
+        building object (needed for the gains of an adjacent zone, which has its own class).
+
         :return:
             * Phi_int: internal gains [W]
         """
@@ -607,7 +620,7 @@ class VentilationInternalGains:
 
         # Optional full-load overrides from BUI -> internal_gains
         building_object = getattr(self, "building_object", None)
-        if building_object:
+        if building_object and use_overrides:
             # Single-zone BUI keeps the gains under building_parameters; the
             # multizone path copies them to the top level of the zone object.
             # `is not None` (not truthiness) so an explicit empty list at the
@@ -638,11 +651,10 @@ class VentilationInternalGains:
         q_int_total = q_int_occ * h_occup + q_int_app * h_app + q_int_light * h_light
         Phi_int_z_t = q_int_total * a_use
 
-        if unconditioned_zones_nearby:
-            Phi_int_dir_z_t = q_int_total * a_use
-            for zones in range(list_adj_zones):
-                Phi_int_z_t +=Phi_int_dir_z_t + (1-b_ztu)*Fztc_ztu_m * Phi_int_dir_z_t
-        
+        if ztu_contributions:
+            for phi_dir_ztu, b_k, f_k in ztu_contributions:
+                Phi_int_z_t += (1.0 - float(b_k)) * float(f_k) * float(phi_dir_ztu)   # Formula (65)
+
         return float(Phi_int_z_t)
 
 
@@ -677,6 +689,7 @@ def _resolve_component_streams(
     default_multiplier: float = 1.0,
     zone_temperature_c: float = 20.0,
     ahu_outputs_collector: dict = None,
+    adjacent_zone_state: dict = None,
 ) -> list:
     """Convert a ventilation components list to VentilationStream objects.
 
@@ -698,6 +711,11 @@ def _resolve_component_streams(
       For 'constant_ach' and 'prescribed': scales H_k linearly and is not
       restricted to [0, 1]. The resulting H_k must still be finite and
       non-negative, as enforced by VentilationStream.
+    adjacent_zone_state: mapping zone name -> {"type", "theta", "b"} of the adjacent
+      thermally unconditioned zones at this time step. A 'constant_ach' or 'prescribed'
+      component with ``"from_adjacent_zone": "<name>"`` takes its air from that zone
+      (ISO 52016-1, 6.5.10): external type -> supply temperature = theta_ztu (6.5.10.2);
+      internal type -> H_ve = b * rho * c * q (Formula 62) and supply temperature = outdoor.
     default_multiplier: applied to any component not in component_multipliers.
       Infiltration components typically use 1.0 so they remain active
       independently of the mechanical ventilation schedule.
@@ -780,6 +798,26 @@ def _resolve_component_streams(
                 "Supported component types: 'constant_ach', 'mechanical_supply', 'prescribed'."
             )
 
+        from_zone = comp.get("from_adjacent_zone")
+        if from_zone:
+            if comp_type == "mechanical_supply":
+                raise ValueError(
+                    f"Component {name!r}: 'from_adjacent_zone' is not supported for "
+                    "'mechanical_supply' components"
+                )
+            state = (adjacent_zone_state or {}).get(from_zone)
+            if state is None:
+                raise ValueError(
+                    f"Component {name!r}: from_adjacent_zone={from_zone!r} is not an "
+                    "adjacent thermally unconditioned zone of this building"
+                )
+            if state["type"] == "internal":
+                h_k = h_k * float(state["b"])                      # Formula (62)
+                source_temp = float(outdoor_temperature_c)
+            else:
+                source_temp = float(state["theta"])                # 6.5.10.2
+            category = "adjacent_zone_air"
+
         streams.append(
             VentilationStream(
                 name=name,
@@ -804,6 +842,7 @@ def resolve_ventilation_boundary(
     c_air: float = 1006.0,
     rho_air: float = 1.204,
     ahu_outputs_collector: dict = None,
+    adjacent_zone_state: dict = None,
 ) -> VentilationBoundary:
     """Resolve building/zone configuration into an ISO 52016-1 VentilationBoundary.
 
@@ -860,6 +899,7 @@ def resolve_ventilation_boundary(
             default_multiplier=1.0,
             zone_temperature_c=zone_temperature_c,
             ahu_outputs_collector=ahu_outputs_collector,
+            adjacent_zone_state=adjacent_zone_state,
         )
     else:
         vent_type = str(vent_cfg.get("ventilation_type", "none")).strip().lower()
@@ -905,150 +945,12 @@ def resolve_ventilation_boundary(
     return VentilationBoundary(streams=tuple(streams) + tuple(extra_streams))
 
 
-def transmission_heat_transfer_coefficient_ISO13789(adj_zone, n_ue=0.5, qui=0):
-        '''
-        Calcualtion of heat transfer coefficient, Htr calculated as
-        Htr = Hd + Hg + Hu + Ha
-        where:
-        Hd: direct transmission heat transfer coefficient between the heated and cooled space and exterior trough the building envelope in W/K
-        Hg:transmission trasnfer coefficient through the ground in W/K
-        Hu:transmission heat transfer coefficent through unconditioned space
-        Ha: transmision heat transfer coefficient to adjacent buildings
-        '''
-        # Sngle zone 
-        # list_adj_zones = list(building_object.adj_zones.keys())
-        # adj_zones = building_object.adj_zones
-        # volume_all_zones = [] 
-        # orient_all_zones= []
-        # for zones in list_adj_zones:
-        #     orient_all_zones.append(adj_zones[zones]['orientation'])    
-        #     volume_all_zones.append(adj_zones[zones]['volume'])    
+def transmission_heat_transfer_coefficient_ISO13789(adj_zone, n_ue=None, qui=0):
+    """Adjustment factor of an adjacent thermally unconditioned zone (ISO 52016-1, 6.4.5.4).
 
-        '''
-        1. Calculation of transmittance of wall closed to the unconditioned zone
-        '''
+    Returns ``(H_ztu_tot, b_ztu, F_ztc_ztu)``; see
+    :mod:`pybuildingenergy.source.unconditioned_zone_52016_1`.
+    """
+    from .unconditioned_zone_52016_1 import legacy_iso13789_coefficients
 
-        area_elements_zt = building_object.area_elements
-        # eli_type_zt = building_object.typology_elements
-        ori_type_zt = building_object.orientation_elements
-        transmittance_eli_zt = building_object.transmittance_U_elements
-        
-        for orient_eli in orient_all_zones:
-            area_eli_zt_ztu = np.array([a for a, t in zip(area_elements_zt, ori_type_zt) if t == orient_eli])
-            transmittance_eli_zt_ztu = np.array([a for a, t in zip(transmittance_eli_zt, ori_type_zt) if t == orient_eli])
-        
-        Hd_zt_ztu = np.sum(area_eli_zt_ztu * transmittance_eli_zt_ztu)
-            
-        '''   
-        2. Calculate the losses for transmission of the walls to the external environment of the non conditioned zone
-        '''
-        for orient_eli in orient_all_zones:
-            area_eli_ztu_ext = np.array([a for a, t in zip(area_elements_zt, ori_type_zt) if t != orient_eli])
-            transmittance_eli_ztu_ext = np.array([a for a, t in zip(transmittance_eli_zt, ori_type_zt) if t != orient_eli])
-
-        Hd_ztu_ext = np.sum(area_eli_ztu_ext * transmittance_eli_ztu_ext)
-
-
-        '''
-        4. Calculate the losses for ventilation of the non conditioned zone Hve,iu and Hve,ue
-        
-        1) Hve,iu = rho*cp*qiu
-        2) Hve,ue = rho*cp*que
-        
-        rho: density of air
-        cp: specific heat capacity of air
-        qiu: air flow rate in m3/h between conditioned and unconditioned zone   
-        que: air flow rate in m3/h between unconditioned zone and external environment
-        Note:
-        rho_cp = 0.33 Wh/(m3K) if qiu in m3/h
-
-        # air change rate of unconditioned spaces:
-        in order to not understimate the transmission heat transfer, the air flow rate between a conditioned space and an unconditioned space 
-        shall be assumed to be zero
-        qiu= 0
-        que = Vu * n_ue
-        Vu: volume of the air in the unconditioned space
-        n_ue: air change rate between the unconditioned space and the external environment in h-1. Can be taken from the table df_n_ue that is table 7  of ISO 13789
-
-        default n_ue = 0.5 that is for building having All joints between components well-sealed, no ventilation opening provided
-
-        '''    
-        que = volume_all_zones[0] * n_ue
-        Hve_ue =  0.33 * que
-        Hve_iu = 0.33 * qui
-        # 
-        Hue = Hd_ztu_ext + Hve_ue
-        Hiu = Hd_zt_ztu + Hve_iu
-        H_ztu_tot = float(round(Hiu +Hue,3))
-        
-        '''
-        Calculation of the adjustment factor for the thermally uncononditioned afjacent zone ztu for in month m
-        b = Hztu_e_m/Hztu_tot_m
-
-        where:
-        H_ztu_tot_m = sum(j=1 to n)(H_ztc_j_ztu) + Hztu_e_m
-        where:
-        H_ztc_j_ztu: heat transfer coefficient between the thermally unconditioned zone and the adjacent thermally conditioned zone j  = Hiu (ISO 13789)
-        Hztu_e_m: heat transfer coefficient between the thermally unconditioned zone and the external environment for month m =  Hue (ISO 13789)
-        '''
-        b_ztu_m = float(round(Hue/(Hue + Hiu),3))
-        
-        return H_ztu_tot, b_ztu_m
-
-    # def Vent_heat_transf_coef_and_Int_gains(
-    #     cls, building_object, path_weather_file, c_air=1006, rho_air=1.204
-    # ) -> h_vent_and_int_gains:
-    #     """
-    #     Calculation of heat transfer coefficient (section 8 - ISO 13789:2017 and 6.6.6 ISO 52016:2017 ) and internal gains
-
-    #     :param building_object: Building object create according to the method ``Building``or ``Buildings_from_dictionary``.
-    #     :param path_weather_file: path of the .epw weather file. (e.g (../User/documents/epw/athens.epw))
-    #     :param c_air: specific heat of air at constant pressure [J/(kg K)]. Default: 1006
-    #     :param rho_air: ir density at 20 °C [kg/m3]. Default: 1.204
-
-    #     .. note:: Required parameters of building_object:
-
-    #         * air_change_rate_base_value: ventilation air change rate [m3/h]
-    #         * air_change_rate_extra: extra iar change in case of comfort values [m3/h]
-    #         * a_use: useful area of the building [m2]
-    #         * internal_gains_base_value: value fo internal gains [W/m2]
-    #         * internal_gains_extra: eventual extra gains during [W]
-
-    #     :return:
-    #         * H_ve: heat transfer coefficient for ventilation [W/K]
-    #         * Phi_int: internal gains [W]
-
-    #     """
-    #     # VENTILATION (CONDUTTANCE)
-    #     sim_df = (
-    #         ISO52016()
-    #         .Occupancy_profile(building_object, path_weather_file)
-    #         .simulation_df
-    #     )
-    #     comfort_hi_mask = sim_df["comfort level"] == 1
-    #     sim_df["air flow rate"] = building_object.__getattribute__(
-    #         "air_change_rate_base_value"
-    #     ) * building_object.__getattribute__(
-    #         "a_use"
-    #     )  # [m3/h]
-    #     sim_df.loc[comfort_hi_mask, "air flow rate"] += building_object.__getattribute__("air_change_rate_extra") * building_object.__getattribute__(
-    #         "a_use"
-    #     )
-    #     air_flow_rate = sim_df["air flow rate"]
-    #     H_ve = c_air * rho_air / 3600 * air_flow_rate  # [W/K]
-
-    #     # INTERNAL GAINS
-    #     occ_hi_mask = sim_df["occupancy level"] == 1
-    #     sim_df["internal gains"] = building_object.__getattribute__(
-    #         "internal_gains_base_value"
-    #     ) * building_object.__getattribute__(
-    #         "a_use"
-    #     )  # [W]
-    #     sim_df.loc[occ_hi_mask, "internal gains"] += building_object.__getattribute__(
-    #         "internal_gains_extra"
-    #     ) * building_object.__getattribute__(
-    #         "a_use"
-    #     )  # [W]
-    #     Phi_int = sim_df["internal gains"]
-
-    #     return h_vent_and_int_gains(H_ve=H_ve, Phi_int=Phi_int, sim_df_update=sim_df)
+    return legacy_iso13789_coefficients(adj_zone, n_ue=n_ue, qui=qui)

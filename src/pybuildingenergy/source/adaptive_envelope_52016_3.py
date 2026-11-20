@@ -40,7 +40,7 @@ Scope and assumptions
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -410,6 +410,16 @@ class AdaptiveElementConfig:
     env_hysteresis: float = 0.0
     env_discrete: Tuple[Tuple[float, OpticalState], ...] = ()  # discrete states, ascending x
     glare_limit_lx: float = GLARE_LIMIT_LX_FORMULA
+    # visual comfort and artificial lighting (optional): target illuminance on the working
+    # plane, installed lighting power density, control (dimming / on_off)
+    lighting: Optional[Dict[str, Any]] = None
+
+    @property
+    def daylight_limit_lx(self) -> float:
+        """Minimum daylight on the working plane (DAYL-MODE): Table 33 or the target."""
+        if self.lighting is not None:
+            return float(self.lighting["target_lx"])
+        return DAYLIGHT_DESK_LIMIT_LX
 
     @property
     def is_residential(self) -> bool:
@@ -557,10 +567,31 @@ def parse_adaptive_envelope(surface: dict) -> AdaptiveElementConfig:
                 f"Window '{name}': control.daylight needs a_dayl, b_dayl and H_gl_1m (Formula 4)"
             ) from exc
 
+    lighting = control_opts.get("lighting", data.get("lighting"))
+    if lighting is not None:
+        lighting = dict(lighting)
+        lighting.setdefault("target_lx", 300.0 if space != "residential" else 200.0)
+        lighting.setdefault("power_W_m2", 8.0 if space != "residential" else 5.0)
+        lighting.setdefault("control", "dimming")
+        if lighting["control"] not in ("dimming", "on_off"):
+            raise ValueError(f"Window '{name}': lighting.control must be 'dimming' or 'on_off'")
+        if float(lighting["target_lx"]) <= 0.0:
+            raise ValueError(f"Window '{name}': lighting.target_lx must be > 0")
+        if daylight is None:
+            coef = lighting.get("daylight_coefficient")
+            if coef is None:
+                raise ValueError(
+                    f"Window '{name}': lighting needs control.daylight (a_dayl, b_dayl, H_gl_1m, "
+                    "Formula 4) or lighting.daylight_coefficient (working-plane illuminance per "
+                    "unit of tau_V and of the vertical outdoor illuminance on the window)"
+                )
+            # Formula (4) with a_dayl * H_gl;1m = coefficient and b_dayl = 0
+            daylight = (float(coef), 0.0, 1.0)
+
     return AdaptiveElementConfig(
         name, etype, position, control, space, system, retracted, extended,
         scenario_table_id(etype, position, space), edition, hc_method, day_hours, sleeping, daylight,
-        glare_limit_lx=glare_limit_lx,
+        glare_limit_lx=glare_limit_lx, lighting=lighting,
     )
 
 
@@ -578,6 +609,11 @@ class AdaptiveState:
     held: bool  # manual control, occupant not awake: previous position kept
     properties: OpticalState
     irradiance: float = 0.0  # on the element plane, W/m2 (weight of the mean g and tau_V)
+    e_v_ext_lx: float = 0.0  # vertical outdoor illuminance on the window, K_V * irradiance
+    e_day_lx: float = float("nan")  # daylight on the working plane, Formula (4) with this state
+    e_art_lx: float = 0.0  # artificial illuminance added to reach the target
+    p_light_w_m2: float = 0.0  # lighting power density used in the hour
+    visual_assessed: bool = False  # occupants present and awake: visual comfort counts
 
     @property
     def extended(self) -> bool:
@@ -605,8 +641,42 @@ class AdaptiveEnvelopeController:
             ctx, tstep, irradiance
         )
         st.irradiance = max(0.0, float(irradiance))
+        self._visual(ctx, tstep, st)
         self.log[tstep] = st
         return st
+
+    def _visual(self, ctx, t: int, st: "AdaptiveState") -> None:
+        """Daylight and artificial light on the working plane with the state of the hour.
+
+        Daylight, Formula (4) with tau_V of the state actually applied; artificial light
+        only for what the daylight does not provide (daylight first): dimming adds
+        E_target - E_day, on/off switches the full target on below it.  Lighting counts
+        when the occupants are present and awake (sleeping hours excluded in residential
+        spaces).
+        """
+        cfg = self.cfg
+        e_ext = LUMINOUS_EFFICACY_LM_W * st.irradiance
+        st.e_v_ext_lx = e_ext
+        if cfg.daylight is None:
+            return
+        a_dayl, b_dayl, h_gl = cfg.daylight
+        day = ctx.is_day(t, cfg.day_hours)
+        tau = st.properties.tau_v if np.isfinite(st.properties.tau_v) else 0.0
+        e_day = min(e_ext, a_dayl * tau * h_gl * e_ext + b_dayl) if day else 0.0
+        st.e_day_lx = max(0.0, e_day)
+        if cfg.lighting is None:
+            return
+        awake = ctx.occupied(t) and not (cfg.is_residential and ctx.sleeping(t, cfg.sleeping_hours))
+        st.visual_assessed = bool(awake)
+        if not awake:
+            return
+        target = float(cfg.lighting["target_lx"])
+        if cfg.lighting["control"] == "dimming":
+            e_art = max(target - st.e_day_lx, 0.0)
+        else:
+            e_art = target if st.e_day_lx < target else 0.0
+        st.e_art_lx = e_art
+        st.p_light_w_m2 = float(cfg.lighting["power_W_m2"]) * e_art / target
 
     # -- 6.7 -------------------------------------------------------------
     def _environmental(self, ctx, t: int, irradiance: float) -> AdaptiveState:
@@ -677,7 +747,7 @@ class AdaptiveEnvelopeController:
             tau = self._properties_of_state(interim, manual, awake).tau_v
             if np.isfinite(tau):
                 e_desk = min(e_lx, a_dayl * tau * h_gl * e_lx + b_dayl)  # Formula (4)
-                dayl = "LL" if e_desk < DAYLIGHT_DESK_LIMIT_LX else "LN"
+                dayl = "LL" if e_desk < cfg.daylight_limit_lx else "LN"
 
         number = identify_state_number(day, hc, tint, self._rad, glare, dayl)
         row = self._rows[number]
@@ -859,6 +929,16 @@ class AdaptiveEnvelopeContext:
             frames[f"{prefix}_u"] = pd.Series([r.properties.u for r in rows], index=idx)
             frames[f"{prefix}_tau_v"] = pd.Series([r.properties.tau_v for r in rows], index=idx)
             frames[f"{prefix}_I_sol"] = pd.Series([r.irradiance for r in rows], index=idx)
+            frames[f"{prefix}_E_v_ext_lx"] = pd.Series([r.e_v_ext_lx for r in rows], index=idx)
+            if ctrl.cfg.daylight is not None:
+                frames[f"{prefix}_E_day_lx"] = pd.Series([r.e_day_lx for r in rows], index=idx)
+            if ctrl.cfg.lighting is not None:
+                frames[f"{prefix}_E_art_lx"] = pd.Series([r.e_art_lx for r in rows], index=idx)
+                frames[f"{prefix}_E_tot_lx"] = pd.Series(
+                    [r.e_day_lx + r.e_art_lx for r in rows], index=idx)
+                frames[f"{prefix}_P_light_W_m2"] = pd.Series([r.p_light_w_m2 for r in rows], index=idx)
+                frames[f"{prefix}_visual_assessed"] = pd.Series(
+                    [int(r.visual_assessed) for r in rows], index=idx)
         return pd.DataFrame(frames)
 
 
@@ -903,8 +983,12 @@ def adaptive_envelope_kpis(
         high = float(np.sum(np.maximum(t_op[mask] - high_limit_c, 0.0))) * time_step_h
         return low, high
 
-    def _rel(delta: float, ref: float) -> float:
-        return 100.0 * delta / ref if abs(ref) > 1e-12 else float("nan")
+    def _rel(delta: float, ref: float, min_ref: float = 1e-12) -> float:
+        return 100.0 * delta / ref if abs(ref) > min_ref else float("nan")
+
+    # With an ideal HVAC the operative temperature sits on the set-point up to numerical
+    # noise, giving reference values of a few 1e-3 K h: a percentage of that is meaningless.
+    _MIN_REF_KH = 1.0
 
     h_a, c_a = _annual(adaptive)
     h_r, c_r = _annual(reference)
@@ -919,8 +1003,8 @@ def adaptive_envelope_kpis(
         "dQ_HC_nd_pct": _rel((h_a + c_a) - (h_r + c_r), h_r + c_r),
         "dT_low_Kh": low_a - low_r,
         "dT_high_Kh": high_a - high_r,
-        "dT_low_pct": _rel(low_a - low_r, low_r),
-        "dT_high_pct": _rel(high_a - high_r, high_r),
+        "dT_low_pct": _rel(low_a - low_r, low_r, _MIN_REF_KH),
+        "dT_high_pct": _rel(high_a - high_r, high_r, _MIN_REF_KH),
     }
     return kpi
 
@@ -1003,6 +1087,43 @@ def adaptive_envelope_monthly_report(
     return pd.DataFrame(rows).T
 
 
+def adaptive_lighting_by_state(hourly: pd.DataFrame, time_step_h: float = 1.0) -> pd.DataFrame:
+    """Daylight and artificial light per adaptive window and per control state.
+
+    One row per (window, Annex C state number): hours, hours with the occupants present
+    and awake, mean outdoor vertical illuminance, mean daylight and artificial
+    illuminance on the working plane during those hours, share of them in which
+    daylight alone reaches the target, and lighting energy [kWh/m2].  Needs the window
+    ``lighting`` option (or ``control.daylight`` for the daylight columns only).
+    """
+    rows = []
+    for w in _adaptive_windows(hourly):
+        p = f"adaptive_{w}_"
+        if f"{p}E_day_lx" not in hourly.columns:
+            continue
+        df = hourly[[c for c in hourly.columns if str(c).startswith(p)]]
+        has_light = f"{p}E_art_lx" in df.columns
+        for state, g in df.groupby(df[f"{p}state"]):
+            vis = g[f"{p}visual_assessed"].astype(bool) if has_light else pd.Series(True, index=g.index)
+            gv = g[vis]
+            row = {
+                "window": w, "state": int(state), "modes": g[f"{p}modes"].mode().iat[0],
+                "hours": int(len(g)), "hours_occupied_awake": int(vis.sum()),
+                "tau_v": float(g[f"{p}tau_v"].mean()),
+                "E_v_ext_lx_mean": float(gv[f"{p}E_v_ext_lx"].mean()) if len(gv) else float("nan"),
+                "E_day_lx_mean": float(gv[f"{p}E_day_lx"].mean()) if len(gv) else float("nan"),
+            }
+            if has_light:
+                tot = gv[f"{p}E_tot_lx"]
+                row["E_art_lx_mean"] = float(gv[f"{p}E_art_lx"].mean()) if len(gv) else float("nan")
+                row["pct_daylight_only"] = (
+                    100.0 * float((gv[f"{p}E_art_lx"] <= 1e-9).mean()) if len(gv) else float("nan"))
+                row["E_tot_lx_min"] = float(tot.min()) if len(gv) else float("nan")
+                row["lighting_kWh_m2"] = float(g[f"{p}P_light_W_m2"].sum() * time_step_h / 1000.0)
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def adaptive_envelope_state_statistics(hourly: pd.DataFrame) -> Dict[str, dict]:
     """Use of the states per adaptive window (6.10 "statistics", Table 8 of the case study).
 
@@ -1066,6 +1187,12 @@ def adaptive_envelope_conformity_report(building_object: dict, hourly: Optional[
                 "DAYL-MODE": (
                     "AM1 Formula (4), a_dayl=%g, b_dayl=%g, H_gl;1m=%g" % cfg.daylight
                     if cfg.daylight else "not assessed (a_dayl, b_dayl not given): LN"
+                ),
+                "visual comfort / lighting": (
+                    "daylight first: LL below %.0f lx on the working plane; artificial light %s up to "
+                    "the target, %.1f W/m2 installed, occupied and awake hours"
+                    % (cfg.daylight_limit_lx, cfg.lighting["control"], float(cfg.lighting["power_W_m2"]))
+                    if cfg.lighting else "not modelled (no lighting option)"
                 ),
                 "user behaviour": "approach 1 (fraction of the element unchanged)",
             },

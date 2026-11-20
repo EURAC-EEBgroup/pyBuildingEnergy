@@ -10,7 +10,7 @@ from importlib import import_module
 
 __author__ = "Daniele Antonucci, Ulrich Filippi Oberegger, Olga Somova"
 __email__ = "daniele.antonucci@eurac.edu"
-__version__ = "2.1.5"
+__version__ = "2.1.6"
 
 
 _PUBLIC_IMPORTS = {
@@ -124,6 +124,21 @@ _PUBLIC_IMPORTS = {
     "simulate_emission_only": (".source.composer", "simulate_emission_only"),
     "MultizoneResult": (".source.composer", "MultizoneResult"),
     "simulate_multizone": (".source.composer", "simulate_multizone"),
+    "MultizoneEmissionResult": (".source.composer", "MultizoneEmissionResult"),
+    "simulate_multizone_emission": (".source.composer", "simulate_multizone_emission"),
+    "simulate_multizone_system": (".source.multizone_system", "simulate_multizone_system"),
+    "MultizoneSystemResult": (".source.multizone_system", "MultizoneSystemResult"),
+    "dispatch_combined": (".source.multizone_system", "dispatch_combined"),
+    "compare_adaptive_with_reference_multizone": (".source.adaptive_envelope_workflow_52016_3", "compare_adaptive_with_reference_multizone"),
+    "comfort_indicators": (".source.comfort_16798_1", "comfort_indicators"),
+    "capacity_shortage_indicators": (".source.comfort_16798_1", "capacity_shortage_indicators"),
+    "multizone_comfort_table": (".source.comfort_16798_1", "multizone_comfort_table"),
+    "multizone_report": (".source.multizone_52016_1", "multizone_report"),
+    "format_multizone_report": (".source.multizone_52016_1", "format_multizone_report"),
+    "validate_multizone_input": (".source.multizone_52016_1", "validate_multizone_input"),
+    "check_zoning_rules": (".source.multizone_52016_1", "check_zoning_rules"),
+    "spatial_setpoint_reduction": (".source.multizone_52016_1", "spatial_setpoint_reduction"),
+    "UnconditionedZoneSet": (".source.unconditioned_zone_52016_1", "UnconditionedZoneSet"),
 }
 
 # Compatibility for attributes historically exposed by wildcard imports.

@@ -1383,7 +1383,7 @@ building_object = {
 "tilt": 90.0 },
 "ISO52016_orientation_string": "NV",
 "sky_view_factor": 0.0,
-"adjacent_zone": "Z1",
+"adjacent_zone": "Z2",
 "convective_heat_transfer_coefficient_internal": 2.5,
 "radiative_heat_transfer_coefficient_internal": 5.13,
 "convective_heat_transfer_coefficient_external": 2.5,
