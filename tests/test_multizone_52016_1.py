@@ -104,6 +104,14 @@ def test_include_total_false_keeps_per_zone_rows_only():
 
 def test_partition_conductance_equals_u_times_a_on_operative_temperature():
     bui = _partition_only(_building())
+    # Same film on both faces: the U*A identity on the operative temperatures holds only
+    # then.  A floor/ceiling gets the reversed Table 25 coefficient on the second face by
+    # default (tests/test_multizone_partition_symmetry.py), which lowers the exchange.
+    for s in bui["building_surface"]:
+        if s["boundary"] == "INTERNAL":
+            from pybuildingenergy.source.utils import _surface_heat_transfer_default_values
+            d = _surface_heat_transfer_default_values(dict(s, ISO52016_type_string="ADJ"))
+            s["convective_heat_transfer_coefficient_internal_b"] = d["convective_heat_transfer_coefficient_internal"]
     hourly, _ = _steady(bui)
     t = hourly.iloc[-2000:]
     s = [x for x in bui["building_surface"] if x["boundary"] == "INTERNAL"][0]

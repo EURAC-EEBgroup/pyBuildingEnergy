@@ -1891,6 +1891,40 @@ def _apply_surface_heat_transfer_defaults(surface: dict) -> None:
             surface[key] = defaults[key]
 
 
+def _partition_side_b_coefficients(surface: dict) -> tuple:
+    """``(h_c, h_r)`` of the face of an INTERNAL partition that looks into the adjacent zone.
+
+    EN ISO 52016-1 treats a partition between two simulated zones as an internal surface on
+    both sides (Table 25).  The ``*_external`` fields are NOT used for it (they belong to
+    the outdoor or unconditioned-space boundary):
+
+    * explicit ``convective_heat_transfer_coefficient_internal_b`` /
+      ``radiative_heat_transfer_coefficient_internal_b`` when given;
+    * vertical partition (horizontal heat flow): the internal coefficients of the surface,
+      the same on both faces;
+    * floor/ceiling: Table 25 for the reversed heat-flow direction - the slab is a ceiling
+      for one zone and a floor for the other (upwards 5.0 / downwards 0.7 W/(m2K)).
+    """
+    defaults = _surface_heat_transfer_default_values(surface)
+    h_ci = surface.get("convective_heat_transfer_coefficient_internal")
+    h_ri = surface.get("radiative_heat_transfer_coefficient_internal")
+    h_ci = float(defaults["convective_heat_transfer_coefficient_internal"] if h_ci is None else h_ci)
+    h_ri = float(defaults["radiative_heat_transfer_coefficient_internal"] if h_ri is None else h_ri)
+    h_cb = surface.get("convective_heat_transfer_coefficient_internal_b")
+    h_rb = surface.get("radiative_heat_transfer_coefficient_internal_b")
+    if h_cb is None:
+        direction = _surface_internal_heat_flow_direction(surface)
+        if direction == "upwards":
+            h_cb = _TABLE25_SURFACE_HEAT_TRANSFER_DEFAULTS.internal_downwards.convective
+        elif direction == "downwards":
+            h_cb = _TABLE25_SURFACE_HEAT_TRANSFER_DEFAULTS.internal_upwards.convective
+        else:
+            h_cb = h_ci
+    if h_rb is None:
+        h_rb = h_ri
+    return float(h_cb), float(h_rb)
+
+
 def _normalize_internal_convection_model(model_raw) -> str:
     if model_raw is None:
         return "table"
@@ -3777,11 +3811,18 @@ class ISO52016:
                     r_se = 0.0
                     R_c_eli[i] = 1 / _u_i - r_si
                 else:
-                    r_se = (
-                        1 / (h_ce_eli[i] + h_re_eli[i])
-                        if (h_ce_eli[i] + h_re_eli[i]) > 0
-                        else 0.0
-                    )
+                    _surf_b = building_object["building_surface"][i]
+                    if str(_surf_b.get("boundary", "")).upper() == "INTERNAL":
+                        # partition between two simulated zones: the second face is an
+                        # internal surface of the adjacent zone, so U stays air-to-air
+                        _hcb, _hrb = _partition_side_b_coefficients(_surf_b)
+                        r_se = 1 / (_hcb + _hrb) if (_hcb + _hrb) > 0 else 0.0
+                    else:
+                        r_se = (
+                            1 / (h_ce_eli[i] + h_re_eli[i])
+                            if (h_ce_eli[i] + h_re_eli[i]) > 0
+                            else 0.0
+                        )
                     R_c_eli[i] = 1 / _u_i - r_si - r_se
                 if R_c_eli[i] <= 0.0:
                     # 1/U must exceed the surface resistances: otherwise the core conductance is
@@ -4439,6 +4480,13 @@ class ISO52016:
                 b["solar_transmittance_correction_factor"] = fw_key
             if b.get("construction_class") is None and construction_class_key is not None:
                 b["construction_class"] = construction_class_key
+            for _bk in ("convective_heat_transfer_coefficient_internal_b",
+                        "radiative_heat_transfer_coefficient_internal_b"):
+                if s.get(_bk) is not None:
+                    b.setdefault(_bk + "_A", 0.0)
+                    b.setdefault(_bk + "_area", 0.0)
+                    b[_bk + "_A"] += float(s[_bk]) * A
+                    b[_bk + "_area"] += A
 
             b["area"] += A
             b["uA"]   += U * A
@@ -4532,6 +4580,10 @@ class ISO52016:
                 )
             if b.get("construction_class") is not None:
                 agg["construction_class"] = b["construction_class"]
+            for _bk in ("convective_heat_transfer_coefficient_internal_b",
+                        "radiative_heat_transfer_coefficient_internal_b"):
+                if b.get(_bk + "_A") is not None and b.get(_bk + "_area", 0.0) > 0.0:
+                    agg[_bk] = b[_bk + "_A"] / b[_bk + "_area"]
             if b["adjacent_zone"] is not None:
                 agg["adjacent_zone"] = b["adjacent_zone"]
             if b["name_adj_zone"] is not None:
@@ -5507,11 +5559,8 @@ class ISO52016:
             if surf.get("boundary", "OUTDOORS").upper() == "INTERNAL":
                 zB = surf.get("adjacent_zone", None)
                 if zB in z_idx:
-                    h_rb = _get(
-                        surf,
-                        "radiative_heat_transfer_coefficient_external",
-                        h_ri_a,
-                    )
+                    # internal surface also on the side of the adjacent simulated zone
+                    h_rb = _partition_side_b_coefficients(surf)[1]
                     r_out = _sys_row_from_surface_ri(1 + nodes.PlnSum[Eli] + 0)
                     ziB = z_idx[zB]
                     zone_radiative_faces[ziB].append((r_out, area_s, h_rb))
@@ -5522,6 +5571,7 @@ class ISO52016:
         def _build_zone_air_links_from_theta(theta_ref: np.ndarray):
             zone_air_links_t = [[] for _ in range(Z)]  # (surface_row, h_tot_WK)
             h_ci_internal_t = np.full(Nsurf, np.nan, dtype=float)
+            h_ci_side_b_t = np.full(Nsurf, np.nan, dtype=float)   # INTERNAL partitions, zone B face
 
             for Eli, surf in enumerate(surfaces):
                 n_nodes = int(nodes.Pln[Eli])
@@ -5559,11 +5609,17 @@ class ISO52016:
                     zB = surf.get("adjacent_zone", None)
                     if zB in z_idx:
                         r_out = _sys_row_from_surface_ri(1 + nodes.PlnSum[Eli] + 0)
-                        h_cb = _get(
-                            surf,
-                            "convective_heat_transfer_coefficient_external",
-                            h_ci_tab,
+                        # same convection model as the zone-A face (TARP or table), seen from
+                        # zone B: reversed tilt for floors/ceilings
+                        _tilt_b = 180.0 - _surface_tilt_for_internal_convection(surf)
+                        h_cb = _internal_h_ci_value(
+                            {"orientation": {"tilt": _tilt_b}},
+                            h_ci_model,
+                            t_air_c=float(theta_ref[z_idx[zB]]),
+                            t_surf_c=float(theta_ref[r_out]),
+                            fallback_h_ci=_partition_side_b_coefficients(surf)[0],
                         )
+                        h_ci_side_b_t[Eli] = h_cb
                         h_tot_b = h_cb * area_s
                         zone_air_links_t[z_idx[zB]].append((r_out, h_tot_b))
 
@@ -5571,7 +5627,7 @@ class ISO52016:
                 [sum(float(h) for _, h in links) for links in zone_air_links_t],
                 dtype=float,
             )
-            return zone_air_links_t, zone_hsurf_sum_t, h_ci_internal_t
+            return zone_air_links_t, zone_hsurf_sum_t, h_ci_internal_t, h_ci_side_b_t
 
         def _zone_radiant_temperature(theta_vec: np.ndarray) -> np.ndarray:
             t_rad = np.zeros(Z, dtype=float)
@@ -6005,7 +6061,7 @@ class ISO52016:
         ):
             A = np.zeros((Ntot, Ntot), dtype=float)
             B = np.zeros((Ntot,), dtype=float)
-            zone_air_links_t, zone_hsurf_sum_t, h_ci_internal_t = _build_zone_air_links_from_theta(theta_prev)
+            zone_air_links_t, zone_hsurf_sum_t, h_ci_internal_t, h_ci_side_b_t = _build_zone_air_links_from_theta(theta_prev)
 
             T_out = float(T2m_arr[tstep])
             u_wind = 0.0
@@ -6140,12 +6196,11 @@ class ISO52016:
                     # external/adjacent face (first node)
                     if Pli == 0:
                         if is_internal:
-                            # Side B can use its own "external" coefficients.
-                            h_cb = _get(
-                                surf,
-                                "convective_heat_transfer_coefficient_external",
-                                h_ci,
-                            )
+                            # Side B is an internal surface of the adjacent zone (Table 25,
+                            # reversed heat flow for floors/ceilings); not the external fields.
+                            h_cb = h_ci_side_b_t[Eli]
+                            if not np.isfinite(h_cb):
+                                h_cb = _partition_side_b_coefficients(surf)[0]
                             h_tot_b = h_cb * A_s
                             A[R, R] += h_tot_b
                             A[R, air_B] -= h_tot_b
@@ -7520,16 +7575,9 @@ class ISO52016:
 
                     if Pli == 0:
                         if is_internal:
-                            h_cb = _get(
-                                surf,
-                                "convective_heat_transfer_coefficient_external",
-                                h_ci_tab,
-                            )
-                            h_rb = _get(
-                                surf,
-                                "radiative_heat_transfer_coefficient_external",
-                                h_ri,
-                            )
+                            # internal surface of the adjacent zone (Table 25, reversed
+                            # heat flow for floors/ceilings), not the external fields
+                            h_cb, h_rb = _partition_side_b_coefficients(surf)
                             h_tot = (h_cb + h_rb) * A_s
                             A[R, R] += h_tot
                             A[R, air_B] -= h_tot

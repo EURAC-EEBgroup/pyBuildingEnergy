@@ -1,5 +1,31 @@
-Unreleased
-----------
+2.1.7 (2026-11-23)
+------------------
+
+First PyPI release containing the 2.1.6 changes (2.1.6 was tagged but not published).
+
+- Multizone INTERNAL partitions (result-changing): the face that looks into the adjacent
+  simulated zone is an internal surface (EN ISO 52016-1 Table 25), in the main and hybrid
+  multizone methods.
+  - Before, that face used the surface's ``*_external`` coefficients for convection and
+    long-wave radiation, so a partition declared with wall-row films (e.g. ASHRAE 140
+    external 11.9/4.14) got different films on its two faces, and results depended on
+    which zone declared it.
+  - Vertical partitions get the declared internal coefficients on both faces.
+  - Floors and ceilings get the reversed heat-flow direction on the second face
+    (upwards 5.0 / downwards 0.7 W/(m2K)). Before, both faces had the same value.
+  - With the TARP model the second face is also updated every hour; before, it stayed
+    at the table value.
+  - Optional keys ``convective_heat_transfer_coefficient_internal_b`` /
+    ``radiative_heat_transfer_coefficient_internal_b``.
+  - ``Conductance_node_of_element`` subtracts the second-face film, so the declared U
+    stays air-to-air.
+  - ``UNCONDITIONED`` boundaries are unchanged. In ``build_case_960`` the override of
+    the external fields is now redundant.
+  - The surface aggregation keeps the ``*_internal_b`` keys.
+  - Effect on the two-floor example (Athens), cooling: Z_ground 17 437 -> 18 752 kWh,
+    Z_first 20 265 -> 18 975 kWh. Heating changes by about 2 % and the building totals
+    are almost unchanged: less exchange through the slab, so the load moves between the
+    floors.
 
 - ``Conductance_node_of_element`` now raises ``ValueError`` (surface index, U, core
   resistance, surface resistances and maximum U) when 1/U - R_si - R_se <= 0. Before:

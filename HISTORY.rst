@@ -2,6 +2,9 @@
 History
 =======
 
+Versions 1.0.7, 2.0.0 and 2.0.1 were published on PyPI without a Git tag;
+their exact source commits have not been verified.
+
 0.0.1 (2024-03-26)
 ------------------
 
@@ -52,4 +55,11 @@ History
   heating/cooling/DHW with a storage tank. Shared generator power is split between the
   zones hour by hour.
 * EN 16798-1 comfort categories and capacity-shortage indicators.
+* Details in CHANGELOG.rst.
+
+2.1.7 (2026-11-23)
+------------------
+* First PyPI release of the 2.1.6 work, plus these fixes:
+  * elements with 1/U - R_si - R_se <= 0 are rejected (negative window conductance);
+  * archetype windows above U = 5.7 W/(m2K) set to 5.7.
 * Details in CHANGELOG.rst.
