@@ -5491,9 +5491,14 @@ class ISO52016:
             if surf.get("boundary", "OUTDOORS").upper() == "INTERNAL":
                 zB = surf.get("adjacent_zone", None)
                 if zB in z_idx:
+                    # INTERNAL partition: the adjacent zone is a simulated
+                    # zone, so this face is an internal surface of zone B
+                    # (EN ISO 52016-1): internal coefficients, like side A.
+                    # The external coefficients belong to the UNCONDITIONED
+                    # adjacent-space boundary (6.4.5).
                     h_rb = _get(
                         surf,
-                        "radiative_heat_transfer_coefficient_external",
+                        "radiative_heat_transfer_coefficient_internal",
                         h_ri_a,
                     )
                     r_out = _sys_row_from_surface_ri(1 + nodes.PlnSum[Eli] + 0)
@@ -5543,9 +5548,12 @@ class ISO52016:
                     zB = surf.get("adjacent_zone", None)
                     if zB in z_idx:
                         r_out = _sys_row_from_surface_ri(1 + nodes.PlnSum[Eli] + 0)
+                        # INTERNAL partition face of simulated zone B:
+                        # internal convective coefficient (see the
+                        # radiant-face note above).
                         h_cb = _get(
                             surf,
-                            "convective_heat_transfer_coefficient_external",
+                            "convective_heat_transfer_coefficient_internal",
                             h_ci_tab,
                         )
                         h_tot_b = h_cb * area_s
@@ -6124,10 +6132,13 @@ class ISO52016:
                     # external/adjacent face (first node)
                     if Pli == 0:
                         if is_internal:
-                            # Side B can use its own "external" coefficients.
+                            # Side B is an internal surface of the adjacent
+                            # (simulated) zone: internal coefficients, like
+                            # side A (EN ISO 52016-1; the external coefficients
+                            # belong to the UNCONDITIONED 6.4.5 boundary).
                             h_cb = _get(
                                 surf,
-                                "convective_heat_transfer_coefficient_external",
+                                "convective_heat_transfer_coefficient_internal",
                                 h_ci,
                             )
                             h_tot_b = h_cb * A_s
