@@ -230,6 +230,30 @@ def sanitize_and_validate_BUI(bui: dict,
                     add_issue("WARN", f"{path}.u_value", f"u_value invalid ({u}); set to default value: {default_u}", fixed=True)
                 else:
                     add_issue("ERROR", f"{path}.u_value", f"u_value should be > 0; value={u}", fixed=False)
+            # 1/U must exceed R_si + R_se, otherwise the core conductance is negative
+            u = s.get("u_value", None)
+            bnd = str(s.get("boundary", "OUTDOORS")).upper()
+            if isinstance(u, (int, float)) and u > 0 and bnd not in ("GROUND", "ADIABATIC"):
+                try:
+                    from .utils import _apply_surface_heat_transfer_defaults
+                    probe = dict(s)
+                    probe.setdefault("ISO52016_type_string", "W" if t == "transparent" else "OP")
+                    _apply_surface_heat_transfer_defaults(probe)
+                    h_i = float(probe["convective_heat_transfer_coefficient_internal"]) + float(
+                        probe["radiative_heat_transfer_coefficient_internal"])
+                    h_e = float(probe["convective_heat_transfer_coefficient_external"]) + float(
+                        probe["radiative_heat_transfer_coefficient_external"])
+                    r_s = (1.0 / h_i if h_i > 0 else 0.0) + (1.0 / h_e if h_e > 0 else 0.0)
+                except Exception:
+                    r_s = None
+                if r_s is not None and 1.0 / float(u) - r_s <= 0.0:
+                    add_issue(
+                        "ERROR", f"{path}.u_value",
+                        f"u_value {u} W/(m2K) is not compatible with the surface resistances "
+                        f"R_si + R_se = {r_s:.4f} m2K/W (1/U - R_si - R_se = {1.0 / float(u) - r_s:.4f} <= 0); "
+                        f"maximum U = {1.0 / r_s:.3f} W/(m2K)",
+                        fixed=False,
+                    )
 
         # g-value for transparent
         if t == "transparent":

@@ -3765,26 +3765,42 @@ class ISO52016:
                 R_c_eli[i] = float("inf")
             if R_c_eli[i] == 0.0:
                 r_si = 1 / (h_ci_eli[i] + h_ri_eli[i]) if (h_ci_eli[i] + h_ri_eli[i]) > 0 else 0.0
+                _u_i = float(U_eli[i])
+                if not np.isfinite(_u_i) or _u_i <= 0.0:
+                    raise ValueError(
+                        f"building_surface[{i}] ({building_object['building_surface'][i].get('name', '')!r}): "
+                        f"u_value must be a positive number, got {U_eli[i]!r}"
+                    )
                 if el_type[i] == "GR":
                     # Ground-contact surfaces use the ground/soil boundary model
                     # downstream; do not subtract the outdoor-air surface resistance.
-                    R_c_eli[i] = 1 / U_eli[i] - r_si
+                    r_se = 0.0
+                    R_c_eli[i] = 1 / _u_i - r_si
                 else:
                     r_se = (
                         1 / (h_ce_eli[i] + h_re_eli[i])
                         if (h_ce_eli[i] + h_re_eli[i]) > 0
                         else 0.0
                     )
-                    R_c_eli[i] = 1 / U_eli[i] - r_si - r_se
-                    if el_type[i] == "ADJ":
-                        # 6.5.8.4: internal-type unconditioned zone -> Formula (54)
-                        _surf_i = building_object["building_surface"][i]
-                        _zc = _ztu_set_for_resistance.coefficients_for(_surf_i.get("name_adj_zone"))
-                        if _zc is not None and _zc.ztu_type == "internal":
-                            R_c_eli[i] = corrected_thermal_resistance(
-                                R_c_eli[i], _zc.b,
-                                h_ci_eli[i] + h_ri_eli[i], h_ce_eli[i] + h_re_eli[i],
-                            )
+                    R_c_eli[i] = 1 / _u_i - r_si - r_se
+                if R_c_eli[i] <= 0.0:
+                    # 1/U must exceed the surface resistances: otherwise the core conductance is
+                    # negative (or zero, which would leave the element without conduction)
+                    raise ValueError(
+                        f"building_surface[{i}] ({building_object['building_surface'][i].get('name', '')!r}): "
+                        f"u_value {_u_i:g} W/(m2K) gives a core resistance 1/U - R_si - R_se = "
+                        f"{R_c_eli[i]:.4f} m2K/W <= 0 (R_si = {r_si:.4f}, R_se = {r_se:.4f}); "
+                        f"the maximum U with these surface coefficients is {1.0 / (r_si + r_se):.3f} W/(m2K)"
+                    )
+                if el_type[i] == "ADJ":
+                    # 6.5.8.4: internal-type unconditioned zone -> Formula (54)
+                    _surf_i = building_object["building_surface"][i]
+                    _zc = _ztu_set_for_resistance.coefficients_for(_surf_i.get("name_adj_zone"))
+                    if _zc is not None and _zc.ztu_type == "internal":
+                        R_c_eli[i] = corrected_thermal_resistance(
+                            R_c_eli[i], _zc.b,
+                            h_ci_eli[i] + h_ri_eli[i], h_ce_eli[i] + h_re_eli[i],
+                        )
 
         # layer = 1
         layer_no = 0

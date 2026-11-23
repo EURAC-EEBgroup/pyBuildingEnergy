@@ -1,3 +1,18 @@
+Unreleased
+----------
+
+- ``Conductance_node_of_element`` now raises ``ValueError`` (surface index, U, core
+  resistance, surface resistances and maximum U) when 1/U - R_si - R_se <= 0. Before:
+  - a window with U above about 5.8 W/(m2K) and the default vertical films got a
+    negative core conductance (e.g. -334 W/(m2K) at U = 5.9), an unphysical network;
+  - a core resistance of exactly 0 left the element without conduction.
+
+  A non-positive or non-finite ``u_value`` is also rejected.
+- ``sanitize_and_validate_BUI`` reports the same incompatibility as an ERROR before the
+  simulation.
+- ``examples/building_archetypes.json``: 20 windows with U = 5.8-6.1 W/(m2K) set to 5.7
+  W/(m2K), the single-glazing value compatible with the standard surface resistances.
+
 2.1.6 (2026-11-20)
 ------------------
 
