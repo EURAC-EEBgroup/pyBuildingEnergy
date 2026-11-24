@@ -42,6 +42,7 @@ from enum import Enum
 import math
 
 from .ventilation import VentilationStream
+from . import ahu_moisture_16798_5_1 as _mx
 
 
 # ---------------------------------------------------------------------------
@@ -317,8 +318,23 @@ class SensibleAHUConfig:
     extract_fan_reference_flow_m3_h: float | None = None
     supply_fan_reference_efficiency: float | None = None
     extract_fan_reference_efficiency: float | None = None
+    # EN 16798-5-1 6.4.3.2.6 / Annex D: heat recovery type and design data.  When given,
+    # the temperature ratio is eta_hr;nom * f_q * f_v * f_n (Formula 40) and the moisture
+    # recovery follows Formulae 44-45; None keeps the constant nominal efficiency.
+    heat_recovery_data: "_mx.HeatRecoveryData | None" = None
+    # 6.4.3.2.9: moisture processes (used when the step inputs carry humidity ratios)
+    coil_data: "_mx.CoilData" = _mx.CoilData()
+    supply_humidity_max_kg_kg: float | None = None    # dehumidification set-point
+    supply_humidity_min_kg_kg: float | None = None    # humidification set-point
+    humidifier_type: str = "STEAM"                    # STEAM or ADIABATIC (66a/66b)
 
     def __post_init__(self) -> None:
+        if str(self.humidifier_type).upper() not in ("STEAM", "ADIABATIC"):
+            raise ValueError("humidifier_type must be 'STEAM' or 'ADIABATIC'")
+        for _k in ("supply_humidity_max_kg_kg", "supply_humidity_min_kg_kg"):
+            _v = getattr(self, _k)
+            if _v is not None and (not math.isfinite(_v) or _v < 0.0):
+                raise ValueError(f"{_k} must be finite and >= 0")
         try:
             object.__setattr__(
                 self, "heat_recovery_control",
@@ -439,6 +455,9 @@ class AHUStepInputs:
     operation_fraction: float = 1.0
     scheduled_setpoint_c: float | None = None
     flow_fraction: float = 1.0
+    # humidity ratios [kg/kg dry air]; both given -> moisture processes are calculated
+    outdoor_humidity_ratio: float | None = None
+    extract_humidity_ratio: float | None = None
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -537,6 +556,13 @@ class AHUStepOutputs:
     heat_recovery_power_w: float
     bypass_fraction: float
     frost_protection_required: bool
+    # EN 16798-5-1 moisture processes (None / 0 when no humidity input)
+    supply_humidity_ratio: float | None = None
+    latent_cooling_coil_power_w: float = 0.0          # part of actual_cooling_coil_power_w
+    humidification_power_w: float = 0.0               # steam humidifier energy (82a)
+    humidification_water_kg_h: float = 0.0            # (83)
+    heat_recovery_temperature_ratio: float | None = None
+    moisture_recovery_efficiency: float | None = None
 
 
 def _fan_power_and_temperature_rise(
@@ -704,6 +730,12 @@ def calculate_sensible_ahu_step(
     t_outdoor = inputs.outdoor_temperature_c
     t_ext_at_hr = inputs.extract_temperature_c + dt_eta_fan
     eta_nom = config.sensible_heat_recovery_efficiency
+    hr_ratio = None
+    if config.heat_recovery_data is not None:
+        # Formula (40): eta_hr = eta_hr;nom * f_q * f_v * f_n
+        hr_ratio = _mx.temperature_ratio(
+            config.heat_recovery_data, operating_supply_m3_h, operating_extract_m3_h)
+        eta_nom = hr_ratio["eta_hr"]
     dT = t_ext_at_hr - t_outdoor  # K; positive in heating mode
 
     # EXHAUST_LIMIT frost protection — EN 16798-5-1 formula (46) direct
@@ -759,6 +791,26 @@ def calculate_sensible_ahu_step(
     # Heat recovery power: net thermal gain of the supply stream vs outdoor air
     hr_power_operating_w = rho_cp_q * (t_after_hr - t_outdoor)
 
+    # Moisture: recovery (44)-(45), cooling/dehumidification (53)-(63), humidification
+    # (65)-(66).  Only when both humidity ratios are given.
+    humid = (inputs.outdoor_humidity_ratio is not None
+             and inputs.extract_humidity_ratio is not None)
+    x_oda = x_after_hr = x_actual = None
+    eta_xr = None
+    if humid:
+        x_oda = float(inputs.outdoor_humidity_ratio)
+        x_eta = float(inputs.extract_humidity_ratio)
+        eta_xr = 0.0
+        if config.heat_recovery_data is not None:
+            eta_xr = _mx.moisture_recovery_efficiency(
+                config.heat_recovery_data, x_eta, t_outdoor, x_oda,
+                operating_supply_m3_h, operating_extract_m3_h)["eta_xr"]
+        # the bypass (frost, modulation) reduces the moisture transfer like the heat transfer
+        eta_xr_eff = eta_xr * (1.0 - bypass_fraction)
+        x_after_hr = x_oda + eta_xr_eff * (x_eta - x_oda)                      # (44)
+        hr_power_operating_w += (q_sup * _RHO_AIR_KG_M3 * _mx.R_W_J_KG
+                                 * (x_after_hr - x_oda))                       # (77) latent part
+
     # Cooling coil — precedes the heating coil, following the EN 16798-5-1 air
     # path.  In this sensible single-setpoint model the two coils are mutually
     # exclusive within a timestep, so the ordering does not change the result.
@@ -767,18 +819,48 @@ def calculate_sensible_ahu_step(
     # down to t_target.  When the coil is disabled it is reported as the unmet
     # cooling shortfall (actual delivered = 0); when enabled it is met up to the
     # optional capacity limit.  This mirrors the heating coil below.
-    required_cooling_operating_w = rho_cp_q * max(0.0, t_after_hr - t_target)
-    if not config.cooling_coil_enabled:
-        actual_cooling_operating_w = 0.0
-    elif config.cooling_coil_max_power_w is None:
-        actual_cooling_operating_w = required_cooling_operating_w
+    latent_cooling_operating_w = 0.0
+    if humid:
+        # (53b)-(63): required outlet state, with dehumidification to x_max if set
+        req = _mx.cooling_and_dehumidification(
+            t_after_hr, x_after_hr, t_target, config.supply_humidity_max_kg_kg, config.coil_data)
+        s_req, l_req = _mx.coil_power_w(q_sup, _RHO_AIR_KG_M3, t_after_hr, x_after_hr,
+                                        req["theta_SUP_C"], req["x_SUP_C"])
+        required_cooling_operating_w = s_req + l_req                            # (80)
+        if not config.cooling_coil_enabled:
+            actual_cooling_operating_w = 0.0
+            t_after_cooling, x_after_cooling = t_after_hr, x_after_hr
+        else:
+            act = _mx.limit_cooling_coil(
+                t_after_hr, x_after_hr, req["theta_SUP_C"], q_sup, _RHO_AIR_KG_M3,
+                config.cooling_coil_max_power_w, config.coil_data)
+            actual_cooling_operating_w = act["Q_sens_w"] + act["Q_lat_w"]
+            latent_cooling_operating_w = act["Q_lat_w"]
+            t_after_cooling, x_after_cooling = act["theta_SUP_C"], act["x_SUP_C"]
+        hum = _mx.humidification(x_after_cooling, config.supply_humidity_min_kg_kg,
+                                 config.humidifier_type)
+        x_actual = hum["x_SUP_HU"]
+        d_theta_hu = hum["d_theta_SUP_HU"]
+        humidification_operating_w = (q_sup * _RHO_AIR_KG_M3 * _mx.R_W_J_KG * hum["dx_HU"]
+                                      if str(config.humidifier_type).upper() == "STEAM" else 0.0)  # (82a)
+        humidification_water_kg_h = q_sup * _RHO_AIR_KG_M3 * hum["dx_HU"] * 3600.0 * op       # (83)
+        # adiabatic humidifier cools the air (66b): the heating coil compensates (69)
+        t_after_cooling = t_after_cooling - d_theta_hu
     else:
-        actual_cooling_operating_w = min(
-            required_cooling_operating_w,
-            config.cooling_coil_max_power_w,
-        )
+        humidification_operating_w = 0.0
+        humidification_water_kg_h = 0.0
+        required_cooling_operating_w = rho_cp_q * max(0.0, t_after_hr - t_target)
+        if not config.cooling_coil_enabled:
+            actual_cooling_operating_w = 0.0
+        elif config.cooling_coil_max_power_w is None:
+            actual_cooling_operating_w = required_cooling_operating_w
+        else:
+            actual_cooling_operating_w = min(
+                required_cooling_operating_w,
+                config.cooling_coil_max_power_w,
+            )
 
-    t_after_cooling = t_after_hr - actual_cooling_operating_w / rho_cp_q
+        t_after_cooling = t_after_hr - actual_cooling_operating_w / rho_cp_q
 
     # Heating coil targeting t_target so the delivered temperature equals
     # requested_t_sup after supply-fan heat is added below.  It sees the
@@ -810,6 +892,12 @@ def calculate_sensible_ahu_step(
         heat_recovery_power_w=hr_power_operating_w * op,
         bypass_fraction=bypass_fraction,
         frost_protection_required=frost_protection_req,
+        supply_humidity_ratio=x_actual,
+        latent_cooling_coil_power_w=latent_cooling_operating_w * op,
+        humidification_power_w=humidification_operating_w * op,
+        humidification_water_kg_h=humidification_water_kg_h,
+        heat_recovery_temperature_ratio=(hr_ratio["eta_hr"] if hr_ratio else eta_nom),
+        moisture_recovery_efficiency=eta_xr,
     )
 
 
@@ -887,6 +975,30 @@ def sensible_ahu_config_from_dict(d: dict) -> SensibleAHUConfig:
     cooling_coil_max = d.get("cooling_coil_max_power_w")
     if cooling_coil_max is not None:
         cooling_coil_max = float(cooling_coil_max)
+
+    # EN 16798-5-1 6.4.3.2.6 / Annex D: heat recovery type and design data (optional)
+    hr_data = None
+    if d.get("heat_recovery_type") is not None:
+        hr_data = _mx.HeatRecoveryData(
+            hr_type=str(d["heat_recovery_type"]),
+            # the declared nominal efficiency is eta_hr;nom (Table B.6 only as fallback)
+            eta_hr_nom=_opt_float(d.get("heat_recovery_nominal_ratio",
+                                        d.get("sensible_heat_recovery_efficiency"))),
+            v_hr_des_m_s=_opt_float(d.get("heat_recovery_design_velocity_m_s")),
+            q_sup_hr_nom_m3_h=_opt_float(d.get("heat_recovery_nominal_flow_m3_h")),
+            v_hr_nom_m_s=float(d.get("heat_recovery_nominal_velocity_m_s", _mx.V_HR_NOM_M_S)),
+            C1=_opt_float(d.get("heat_recovery_C1")),
+            C2=float(d.get("heat_recovery_C2", _mx.C2_DEFAULT)),
+            rotor_speed_rpm=_opt_float(d.get("rotor_speed_rpm")),
+            rotor_speed_max_rpm=float(d.get("rotor_speed_max_rpm", 20.0)),
+            eta_xr_nom=_opt_float(d.get("moisture_recovery_nominal_efficiency")),
+        )
+    coil_data = _mx.CoilData(
+        CC1=float(d.get("cooling_coil_CC1", _mx.TABLE_B8["CC1"])),
+        CC2=float(d.get("cooling_coil_CC2", _mx.TABLE_B8["CC2"])),
+        CC3=float(d.get("cooling_coil_CC3", _mx.TABLE_B8["CC3"])),
+        f_C_bp=float(d.get("cooling_coil_bypass_factor", _mx.TABLE_B8["f_C_bp"])),
+    )
 
     ctrl_mode_str = str(d.get("supply_temperature_mode", "fixed")).strip().lower()
     if ctrl_mode_str in ("fixed", ""):
@@ -982,6 +1094,11 @@ def sensible_ahu_config_from_dict(d: dict) -> SensibleAHUConfig:
         extract_fan_reference_efficiency=_opt_float(
             d.get("extract_fan_reference_efficiency")
         ),
+        heat_recovery_data=hr_data,
+        coil_data=coil_data,
+        supply_humidity_max_kg_kg=_opt_float(d.get("supply_humidity_max_kg_kg")),
+        supply_humidity_min_kg_kg=_opt_float(d.get("supply_humidity_min_kg_kg")),
+        humidifier_type=str(d.get("humidifier_type", "STEAM")).upper(),
     )
 
 

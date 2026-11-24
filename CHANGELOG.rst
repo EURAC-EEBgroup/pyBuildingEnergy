@@ -1,3 +1,47 @@
+Unreleased
+----------
+
+EN 16798-5-1:2017 air handling unit: moisture processes and heat recovery corrections
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- New module ``ahu_moisture_16798_5_1`` implements:
+  - heat recovery temperature ratio (Formulae 40-43): f_q (flow imbalance), f_v (air
+    velocity), and f_n for rotary exchangers (D.1);
+  - moisture recovery (44-45) with the Annex D corrections (D.5-D.10);
+  - cooling and dehumidification (53-63, coil constants Table B.8);
+  - humidification, steam or adiabatic (65-66, 82-83);
+  - psychrometrics (D.6-D.7) and constants of Table 27.
+- ``mechanical_supply`` components accept new optional keys. Without them the results
+  are unchanged.
+  - Heat recovery: ``heat_recovery_type`` (PLATE_CROSS, PLATE_COUNTER, ROT_NH, ROT_HYG,
+    ROT_SORP, PUMP_CIRC, OTHER), ``heat_recovery_design_velocity_m_s``,
+    ``heat_recovery_nominal_flow_m3_h``, ``rotor_speed_rpm``,
+    ``moisture_recovery_nominal_efficiency``.
+  - Humidity set-points and humidifier: ``supply_humidity_max_kg_kg``,
+    ``supply_humidity_min_kg_kg``, ``humidifier_type``.
+  - Cooling coil constants: ``cooling_coil_CC1``/``CC2``/``CC3`` and
+    ``cooling_coil_bypass_factor``.
+- AHU step outputs: supply humidity ratio, latent cooling coil power (included in the
+  coil power), steam humidifier energy, humidification water, heat recovery ratio and
+  moisture recovery efficiency.
+- Zone moisture balance (EN ISO 52016-1 6.5.14, eq. 80-83), single-zone and multizone:
+  - When a ``mechanical_supply`` component declares moisture data, each hour's supply
+    humidity is computed by the AHU, using the previous hour's zone moisture content
+    as extract air (``latent_ahu_moisture``: ``"auto"``, True or False).
+  - New columns: ``X_ahu_sup_<ahu>``, ``Q_ahu_cool_lat_<ahu>``, ``Q_ahu_hum_<ahu>``,
+    ``m_ahu_hum_water_kg_h_<ahu>``, ``X_sup_ss_kg_kg_da`` and ``X_int_ss_kg_kg_da``.
+- Formula D.8 is applied as printed. It gives 0.9, not 1, for balanced flow.
+
+Limits:
+
+- Inside the thermal hour the latent power does not reduce the cooling coil capacity
+  available for the sensible part. The moisture balance follows the thermal
+  simulation.
+- Supply and extract flows must still be equal, so f_q = 1.
+- Not yet implemented: duct losses (6.4.2), recirculation, earth-to-air preheating,
+  adiabatic cooling, indirect frost control (47-49), and fan control strategies other
+  than no control.
+
 2.1.7 (2026-11-23)
 ------------------
 

@@ -68,6 +68,71 @@ def _x_set_point(theta_c, rh_pct, p_atm: float = ISO52016_P_ATM_PA):
     return 0.622 * p_v / (p_atm - p_v)  # (75)/(76)
 
 
+def _ahu_supply_moisture(building_object, hourly, mode="auto", zone=None):
+    """EN 16798-5-1 AHU moisture processes for the zone moisture balance (6.5.14, eq. 80).
+
+    Returns ``{"fn", "q_m3_s", "record"}`` or None.  ``fn(i, x_zone_prev, x_ext_i)`` reruns
+    the AHU step of hour ``i`` with the outdoor humidity ratio and the zone moisture content
+    of the previous hour as extract air, and returns the supply humidity ratio; ``record``
+    collects the hourly latent coil power, humidifier energy and water, and supply humidity.
+
+    ``mode``: ``"auto"`` (default) - only when a ``mechanical_supply`` component declares
+    moisture data (``supply_humidity_max_kg_kg``, ``supply_humidity_min_kg_kg`` or
+    ``heat_recovery_type``); True - always for a mechanical supply; False - never.
+    """
+    if mode is False or not isinstance(building_object, dict):
+        return None
+    vent = ((building_object.get("building_parameters") or {}).get("ventilation") or {})
+    raw = vent.get("components") or []
+    sfx = ""
+    if zone is not None:
+        # multizone: zone-local components override the global ones (as in the solver)
+        zv = zone.get("ventilation") or {}
+        if isinstance(zv, dict) and "components" in zv:
+            raw = zv["components"] or []
+        sfx = f"_{zone['name']}"
+    comps = [c for c in raw
+             if str(c.get("ventilation_type", "")).lower() == "mechanical_supply"]
+    if not comps:
+        return None
+    keys = ("supply_humidity_max_kg_kg", "supply_humidity_min_kg_kg", "heat_recovery_type")
+    if mode == "auto" and not any(c.get(k) is not None for c in comps for k in keys):
+        return None
+    if len(comps) > 1:
+        warnings.warn("EN 16798-5-1 moisture: only the first mechanical_supply component is "
+                      "used for the supply moisture content", stacklevel=3)
+    comp = comps[0]
+    name = str(comp.get("name", "mechanical_supply"))
+    from .ventilation_16798_5_1 import (AHUStepInputs, calculate_sensible_ahu_step,
+                                        sensible_ahu_config_from_dict)
+    cfg = sensible_ahu_config_from_dict(comp)
+    n = len(hourly)
+    col_q = f"q_sup_m3h_{name}{sfx}"
+    q = (pd.to_numeric(hourly[col_q], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+         if col_q in hourly.columns else np.full(n, float(comp.get("supply_flow_m3_h", 0.0))))
+    t_ext = pd.to_numeric(hourly["T_ext"], errors="coerce").to_numpy(dtype=float)
+    t_air = pd.to_numeric(hourly[f"T_air{sfx}"], errors="coerce").to_numpy(dtype=float)
+    name = f"{name}{sfx}"
+    rec = {f"X_ahu_sup_{name}": np.full(n, np.nan), f"Q_ahu_cool_lat_{name}": np.zeros(n),
+           f"Q_ahu_hum_{name}": np.zeros(n), f"m_ahu_hum_water_kg_h_{name}": np.zeros(n)}
+
+    def fn(i, x_prev, x_ext_i):
+        if q[i] <= 0.0:
+            return x_ext_i
+        out = calculate_sensible_ahu_step(cfg, AHUStepInputs(
+            outdoor_temperature_c=float(t_ext[i]),
+            extract_temperature_c=float(t_air[i - 1] if i > 0 else t_air[0]),
+            required_supply_flow_m3_h=float(q[i]), required_extract_flow_m3_h=float(q[i]),
+            outdoor_humidity_ratio=float(x_ext_i), extract_humidity_ratio=float(x_prev)))
+        rec[f"X_ahu_sup_{name}"][i] = out.supply_humidity_ratio
+        rec[f"Q_ahu_cool_lat_{name}"][i] = out.latent_cooling_coil_power_w
+        rec[f"Q_ahu_hum_{name}"][i] = out.humidification_power_w
+        rec[f"m_ahu_hum_water_kg_h_{name}"][i] = out.humidification_water_kg_h
+        return float(out.supply_humidity_ratio)
+
+    return {"fn": fn, "q_m3_s": q / 3600.0, "record": rec}
+
+
 def _zone_moisture_balance(
     h_ve_w_k,
     theta_int_c,
@@ -150,15 +215,22 @@ def _zone_moisture_balance(
         out["x_sup_hu_req"] = np.where(mech > 0.0, x_ext + g_hu / mech, np.nan)  # (78)
         out["x_sup_dhu_req"] = np.where(mech > 0.0, x_ext - g_dhu / mech, np.nan)  # (79)
     if x_sup_ss_kg_kg is not None:
-        x_ss = np.broadcast_to(np.asarray(x_sup_ss_kg_kg, dtype=float), (n,))
-        g_ss = mech * (x_ss - x_ext)  # (81): positive humidifies, negative dehumidifies
+        # a callable f(i, x_zone_prev, x_ext_i) gives the supply moisture content of the hour
+        # from the zone state (e.g. an EN 16798-5-1 AHU whose extract air is the zone air)
+        dynamic = callable(x_sup_ss_kg_kg)
+        x_ss = (np.zeros(n) if dynamic
+                else np.broadcast_to(np.asarray(x_sup_ss_kg_kg, dtype=float), (n,)).copy())
         x_zone, x_p = np.zeros(n), x_start
         for i in range(n):
+            if dynamic:
+                x_ss[i] = float(x_sup_ss_kg_kg(i, x_p, float(x_ext[i])))
             other = rho_q[i] - mech[i]  # air that does not come from the mechanical system
             denom = rho_q[i] + cap[i]
             if denom > 0.0:
                 x_p = (mech[i] * x_ss[i] + other * x_ext[i] + g_int[i] - g_abs[i] + cap[i] * x_p) / denom  # (80)
             x_zone[i] = x_p
+        g_ss = mech * (x_ss - x_ext)  # (81): positive humidifies, negative dehumidifies
+        out["x_sup_ss"] = x_ss
         out.update({
             "x_int_ss": x_zone,
             "g_ss_hu_kg_s": np.maximum(g_ss, 0.0), "g_ss_dhu_kg_s": np.maximum(-g_ss, 0.0),
@@ -6999,7 +7071,7 @@ class ISO52016:
         latent_by_zone = {}
         if include_latent:
             hourly_results, latent_by_zone = cls._multizone_latent_balance(
-                hourly_results, zones, latent_opts, dt_h
+                hourly_results, zones, latent_opts, dt_h, building_object=building_object
             )
         for zone in zones:
             zname = zone["name"]
@@ -7044,7 +7116,7 @@ class ISO52016:
         return hourly_results, annual_results
 
     @classmethod
-    def _multizone_latent_balance(cls, hourly_results, zones, options, dt_h):
+    def _multizone_latent_balance(cls, hourly_results, zones, options, dt_h, building_object=None):
         """Moisture content and latent load per zone (EN ISO 52016-1, 6.5.14).
 
         Applies the single-zone balance (:func:`_zone_moisture_balance`) to each zone with
@@ -7084,6 +7156,12 @@ class ISO52016:
             g_int = np.asarray(opt("moisture_production_kg_s", 0.0), dtype=float) \
                 + phi_lat_int / ISO52016_HWE_J_KG
             mech_q = opt("latent_mechanical_supply_m3_s")
+            x_sup_ss = opt("latent_system_supply_moisture_kg_kg")
+            ahu = _ahu_supply_moisture(building_object, hourly_results,
+                                       opt("latent_ahu_moisture", "auto"), zone=zone)
+            if x_sup_ss is None and ahu is not None:
+                # EN 16798-5-1 AHU of the zone: supply moisture from the zone moisture content
+                x_sup_ss, mech_q = ahu["fn"], ahu["q_m3_s"]
             mb = _zone_moisture_balance(
                 hourly_results[f"H_ve_{zn}"].to_numpy(dtype=float),
                 hourly_results[f"T_air_{zn}"].to_numpy(dtype=float),
@@ -7095,10 +7173,18 @@ class ISO52016:
                 rh_dhu,
                 g_int_kg_s=g_int,
                 g_abs_kg_s=opt("moisture_absorption_kg_s", 0.0),
+                x_sup_ss_kg_kg=x_sup_ss,
                 q_mech_rho_kg_s=None if mech_q is None
                 else ISO52016_RHO_A_KG_M3 * np.asarray(mech_q, dtype=float),
             )
             new_cols[f"X_int_kg_kg_da_{zn}"] = mb["x_int"]
+            if "x_int_ss" in mb:
+                new_cols[f"X_sup_ss_kg_kg_da_{zn}"] = mb["x_sup_ss"]
+                new_cols[f"X_int_ss_kg_kg_da_{zn}"] = mb["x_int_ss"]
+                new_cols[f"Phi_ss_HU_W_{zn}"] = mb["phi_ss_hu_w"]
+                new_cols[f"Phi_ss_DHU_W_{zn}"] = mb["phi_ss_dhu_w"]
+            if ahu is not None and x_sup_ss is ahu["fn"]:
+                new_cols.update(ahu["record"])
             new_cols[f"G_HU_kg_s_{zn}"] = mb["g_hu_kg_s"]
             new_cols[f"G_DHU_kg_s_{zn}"] = mb["g_dhu_kg_s"]
             new_cols[f"Phi_HU_W_{zn}"] = mb["phi_hu_w"]
@@ -9758,6 +9844,12 @@ class ISO52016:
         _phi_lat_int = f_lat_int * np.asarray(int_gains_act, dtype=float)
         _g_int = np.asarray(kwargs.get("moisture_production_kg_s", 0.0), dtype=float) + _phi_lat_int / ISO52016_HWE_J_KG
         _mech_q = kwargs.get("latent_mechanical_supply_m3_s")
+        _x_sup_ss = kwargs.get("latent_system_supply_moisture_kg_kg")
+        _ahu_moist = _ahu_supply_moisture(
+            building_object, hourly_results, kwargs.get("latent_ahu_moisture", "auto"))
+        if _x_sup_ss is None and _ahu_moist is not None:
+            # EN 16798-5-1 AHU: supply moisture of each hour from the zone moisture content
+            _x_sup_ss, _mech_q = _ahu_moist["fn"], _ahu_moist["q_m3_s"]
         _mb = _zone_moisture_balance(
             hourly_results["H_ve"].to_numpy(dtype=float),
             hourly_results["T_air"].to_numpy(dtype=float),
@@ -9769,7 +9861,7 @@ class ISO52016:
             _rh_dhu,
             g_int_kg_s=_g_int,
             g_abs_kg_s=kwargs.get("moisture_absorption_kg_s", 0.0),  # Table B.20: no absorption by default
-            x_sup_ss_kg_kg=kwargs.get("latent_system_supply_moisture_kg_kg"),
+            x_sup_ss_kg_kg=_x_sup_ss,
             q_mech_rho_kg_s=None if _mech_q is None else ISO52016_RHO_A_KG_M3 * np.asarray(_mech_q, dtype=float),
         )
         hourly_results["X_ext_kg_kg_da"] = _mb["x_ext"]
@@ -9791,7 +9883,11 @@ class ISO52016:
         hourly_results["Q_latent_Wh"] = _mb["phi_dhu_w"] * _dt_h_lat
         hourly_results["Q_H_latent_W"] = _mb["phi_hu_w"]  # latent heating need (humidification)
         hourly_results["Q_H_latent_Wh"] = _mb["phi_hu_w"] * _dt_h_lat
+        if _ahu_moist is not None and _x_sup_ss is _ahu_moist["fn"]:
+            for _col, _arr in _ahu_moist["record"].items():
+                hourly_results[_col] = _arr
         if "x_int_ss" in _mb:
+            hourly_results["X_sup_ss_kg_kg_da"] = _mb["x_sup_ss"]
             hourly_results["X_int_ss_kg_kg_da"] = _mb["x_int_ss"]
             hourly_results["Phi_ss_HU_W"] = _mb["phi_ss_hu_w"]
             hourly_results["Phi_ss_DHU_W"] = _mb["phi_ss_dhu_w"]
