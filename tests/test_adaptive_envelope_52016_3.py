@@ -143,6 +143,7 @@ def test_hc_mode_uses_previous_completed_day_from_0700():
 def test_hc_mode_outdoor_method_am2():
     ctx = _context(_surface(), hours=72, t_e=10.0)
     assert ctx.hc_mode(40, "AM2") == "HE"
+    ctx.theta_e = np.array(ctx.theta_e, dtype=float)  # pandas 3 hands out read-only arrays
     ctx.theta_e[:] = 14.0
     ctx._hc_cache.clear()
     assert ctx.hc_mode(40, "AM2") == "NE"

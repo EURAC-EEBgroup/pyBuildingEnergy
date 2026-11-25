@@ -1,3 +1,10 @@
+Unreleased
+----------
+
+- Checked on Python 3.12.9 and 3.13.2 with fresh dependencies (numpy 2.5.5, pandas 3.1.1):
+  the whole suite passes. ``test_hc_mode_outdoor_method_am2`` no longer writes into a
+  read-only array (pandas 3 returns read-only arrays); library code is unchanged.
+
 2.2.0 (2026-11-25)
 ------------------
 
