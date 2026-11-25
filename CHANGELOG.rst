@@ -1,6 +1,21 @@
 Unreleased
 ----------
 
+- New test ``tests/test_ashrae140_airside_ae.py``: ASHRAE 140-2023 Section 11 air-side
+  cases run with the EN 16798-5-1 AHU step at steady state (recirculation, LOAD_COMP supply
+  temperature, bypass factor 0, fan after the coils, zone humidity floating):
+  - fan-coil AE101, AE103, AE104 and single-zone AE201, AE203-AE206 (return fan modelled as
+    extract fan upstream of the recirculation);
+  - AE226 / AE245 with the 100 % outdoor air their economizer reaches imposed by the test
+    (the library has no economizer control logic).
+  Coil loads within 2 % of the quasi-analytical solution (latent within 3.1 %), inside the
+  spread of the example programs widened by 2 % (AE204 sensible -0.4 % and AE226 latent
+  -1.5 % just outside it). The constant air density of EN 16798-5-1 gives a 4 % higher
+  supply humidity ratio in AE101 and a return fan heat about 8 % lower than in the
+  mass-based QAS. The reference results are copyright ASHRAE and are read from
+  ``Standards/local_reference_data/ashrae140_2023_ae_qas.json`` (not distributed); without
+  it the comparisons are skipped.
+
 - Checked on Python 3.12.9 and 3.13.2 with fresh dependencies (numpy 2.5.5, pandas 3.1.1):
   the whole suite passes. ``test_hc_mode_outdoor_method_am2`` no longer writes into a
   read-only array (pandas 3 returns read-only arrays); library code is unchanged.

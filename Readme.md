@@ -19,8 +19,13 @@
 > (ISO 52016-1 defines no pass/fail tolerance; the one value above ±10% is Case 640 cooling, +10.3%).
 > Scripts: [`examples/iso52016_bestest/`](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/tree/master/examples/iso52016_bestest/) · reports: [`examples/iso52016_bestest/reports/index.html`](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/examples/iso52016_bestest/reports/index.html)
 >
+> **ANSI/ASHRAE Standard 140-2023, Section 11: air-side HVAC equipment (EN 16798-5-1 air handling unit) — 10 cases, coil loads within 2% of the quasi-analytical solution (latent loads within 3.1%)**
+> Four-pipe fan-coil AE101, AE103, AE104 and single-zone AE201, AE203–AE206, AE226, AE245 (economizer cases with the outdoor air fraction imposed).
+> Not yet possible with the current library: constant-volume terminal reheat AE301–AE345, variable-air-volume AE401–AE445 and the economizer control logic.
+> Test: [`tests/test_ashrae140_airside_ae.py`](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/tests/test_ashrae140_airside_ae.py) · details: [Air-side HVAC equipment](#ashrae-140-2023-section-11---air-side-hvac-equipment-new)
+>
 > **Some sources are omitted on purpose: we are not authorized to share parts, tables or limits of these standards.**
-> The ASHRAE 140 acceptance-range values (ANSI/ASHRAE Standard 140-2023, Annex A3, Tables A3-1 to A3-4) and the ISO 52016-1
+> The ASHRAE 140 acceptance-range values (ANSI/ASHRAE Standard 140-2023, Annex A3, Tables A3-1 to A3-4), the Section 11 reference results and example-program ranges, and the ISO 52016-1
 > reference results (EN ISO 52016-1:2017, clause 7.2.4, Tables 28–34) are not in the repository. **Owning the standards is
 > enough to see and check everything locally** — see [Sources not distributed](#sources-not-distributed).
 
@@ -116,6 +121,60 @@ PYTHONPATH=src python examples/iso52016_bestest/generate_reports.py    # reports
 Details, inputs and remaining gaps: [ASHRAE 140 README](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/examples/ashrae140_bestest/README.md)
 and [ISO 52016-1 README](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/examples/iso52016_bestest/README.md).
 
+### ASHRAE 140-2023 Section 11 - Air-Side HVAC Equipment **(New)**
+
+The air-side analytical verification tests of ANSI/ASHRAE Standard 140-2023,
+Section 11, run the EN 16798-5-1 air handling unit step at the steady-state
+conditions of each case and compare the coil loads with the quasi-analytical
+solution (QAS) of the accompanying files.
+
+How the specification is represented: supply 600 cfm and zone exhaust 200 cfm,
+outdoor air equal to the exhaust (recirculation, RCA_CTRL = VARIABLE); no heat
+recovery, leakage, duct or casing losses; coils that deliver the supply
+temperature needed by the zone sensible load (SUP_AIR_TEMP_CTRL = LOAD_COMP);
+cooling coil bypass factor 0; supply fan after the coils (498 Pa, efficiency
+0.7, all heat to the air); for SZ, the return fan (249 Pa) as extract fan
+upstream of the recirculation; zone humidity floating with the specified latent
+load.
+
+| System | Case | Heating coil vs QAS | Sensible cooling vs QAS | Latent cooling vs QAS |
+|---|---|---:|---:|---:|
+| Four-pipe fan-coil (FC) | AE101 high heating | +0.5% | — | — |
+| | AE103 low cooling, dry coil | — | −1.4% | — |
+| | AE104 high cooling, wet coil | — | −0.6% | +3.1% |
+| Single zone (SZ) | AE201 high heating | +0.4% | — | — |
+| | AE203 low cooling, dry coil | — | −1.9% | — |
+| | AE204 high cooling, wet coil | — | −0.9% | +3.1% |
+| | AE205 low cooling, dry coil | — | −0.2% | — |
+| | AE206 low cooling, wet coil | — | −0.6% | +0.4% |
+| | AE226 dry-bulb economizer * | — | −0.6% | −2.7% |
+| | AE245 enthalpy economizer * | — | −0.2% | — |
+
+\* At the conditions of these cases the economizer runs at 100% outdoor air;
+the library has no economizer control, so the test imposes that fraction and
+verifies the coil and fan model only.
+
+The coil loads are also compared with the spread of the example programs
+supplied with the standard (QAS, DEEAP, DeST, DOE-2.2, EnergyPlus): all values
+fall inside it widened by 2%; AE204 sensible and AE226 latent are just below
+the unwidened spread. Known source of deviation: EN 16798-5-1 uses volumetric
+flows with a constant air density (Table 27), while the QAS works with mass
+flows from the local specific volume (about 4% on the AE101 supply humidity
+ratio, about 8% on the return fan heat).
+
+**Not yet possible with the current library:**
+
+| Cases | System | Missing in the library |
+|---|---|---|
+| AE301–AE306, AE326, AE345 | Constant-volume terminal reheat (CV), two zones | terminal reheat coils per zone; system supply temperature control shared by two zones |
+| AE401–AE406, AE426, AE445 | Variable-air-volume terminal reheat (VAV), two zones | terminal reheat coils, zone dampers coupled with the variable-flow supply fan |
+| AE226, AE245, AE326, AE345, AE426, AE445 (control) | Return-air comparative dry-bulb / enthalpy economizer | economizer control logic (outdoor air fraction from the dry-bulb or enthalpy comparison) |
+| Section 10, HE100–HE230 | Fuel-fired furnace | out of scope (no furnace model) |
+
+```bash
+python -m pytest tests/test_ashrae140_airside_ae.py
+```
+
 ### Sources not distributed
 
 The following content is copyright ASHRAE / ISO and is **not included** in
@@ -127,6 +186,7 @@ limits of the standards:
 | ASHRAE 140 acceptance ranges, low-mass heating / sensible cooling | ANSI/ASHRAE Standard 140-2023, Normative Annex A3, Tables A3-1 and A3-2 | `Standards/local_reference_data/ashrae140_2023_annex_a3.json` |
 | ASHRAE 140 acceptance ranges, high-mass heating / sensible cooling | Annex A3, Tables A3-3 and A3-4 | same file |
 | ASHRAE 140 group pass criteria | Annex A3, Table A3-14 (counts quoted above) | — |
+| ASHRAE 140 Section 11 reference results (QAS coil loads and outlet humidity) and example-program ranges | ANSI/ASHRAE Standard 140-2023 accompanying files, `Std140_AE_FCSZ_Results.xlsx` | `Standards/local_reference_data/ashrae140_2023_ae_qas.json` |
 | ISO 52016-1 reference results (monthly/annual needs, operative temperatures, peaks, hourly January 4) | EN ISO 52016-1:2017, clause 7.2.4, Tables 28–34 | `Standards/local_reference_data/iso52016_1_2017_tables_28_34.json` |
 | ISO 52016-1 BESTEST climate data | EN ISO 52016-1:2017, clause 7.2.2.12 (accompanying spreadsheet) | `Standards/ISO_52016_1_BESTEST_ClimData_2016.08.24.xls` |
 
@@ -134,7 +194,8 @@ Annex A3 was introduced by Addendum b to ANSI/ASHRAE Standard 140-2020 and is
 incorporated in the 2023 edition. **Anyone who owns ANSI/ASHRAE Standard 140
 (and EN ISO 52016-1 for the ISO cases) can reproduce every check:** copy the
 values into the local files following the templates
-[`annex_a3_ranges.template.json`](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/examples/ashrae140_bestest/annex_a3_ranges.template.json) and
+[`annex_a3_ranges.template.json`](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/examples/ashrae140_bestest/annex_a3_ranges.template.json),
+[`ae_qas_reference.template.json`](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/examples/ashrae140_bestest/ae_qas_reference.template.json) and
 [`iso_reference_tables.template.json`](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/examples/iso52016_bestest/iso_reference_tables.template.json),
 which name the table each value comes from. Without them the cases still run,
 range and reference checks report "not available" and the related tests are

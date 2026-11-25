@@ -1,0 +1,125 @@
+{
+ "source": "ANSI/ASHRAE Standard 140-2023 accompanying files: Std140_AE_Files/Informative Materials/Std140_AE_FCSZ_Results.xlsx, sheet 'QAS' (coil loads, detailed outputs) and the sheets of the example programs (QAS, DEEAP, DeST, DOE22, Eplus). Fill the nulls and save as Standards/local_reference_data/ashrae140_2023_ae_qas.json.",
+ "units": {
+  "coil_loads": "kW (kWh/h)",
+  "x_cco": "kg/kg"
+ },
+ "qas_coil_loads": {
+  "AE101": [
+   null,
+   null,
+   null
+  ],
+  "AE103": [
+   null,
+   null,
+   null
+  ],
+  "AE104": [
+   null,
+   null,
+   null
+  ],
+  "AE201": [
+   null,
+   null,
+   null
+  ],
+  "AE203": [
+   null,
+   null,
+   null
+  ],
+  "AE204": [
+   null,
+   null,
+   null
+  ],
+  "AE205": [
+   null,
+   null,
+   null
+  ],
+  "AE206": [
+   null,
+   null,
+   null
+  ],
+  "AE226": [
+   null,
+   null,
+   null
+  ],
+  "AE245": [
+   null,
+   null,
+   null
+  ]
+ },
+ "_qas_coil_loads_order": "heating coil, cooling coil sensible, cooling coil latent (QH, QCsensible, QClatent)",
+ "qas_x_cco": {
+  "AE101": null,
+  "AE103": null,
+  "AE104": null
+ },
+ "_qas_x_cco": "cooling coil outlet humidity ratio, FC detailed outputs",
+ "program_range": {
+  "AE101|heating": [
+   null,
+   null
+  ],
+  "AE103|sensible": [
+   null,
+   null
+  ],
+  "AE104|sensible": [
+   null,
+   null
+  ],
+  "AE104|latent": [
+   null,
+   null
+  ],
+  "AE201|heating": [
+   null,
+   null
+  ],
+  "AE203|sensible": [
+   null,
+   null
+  ],
+  "AE204|sensible": [
+   null,
+   null
+  ],
+  "AE204|latent": [
+   null,
+   null
+  ],
+  "AE205|sensible": [
+   null,
+   null
+  ],
+  "AE206|sensible": [
+   null,
+   null
+  ],
+  "AE206|latent": [
+   null,
+   null
+  ],
+  "AE226|sensible": [
+   null,
+   null
+  ],
+  "AE226|latent": [
+   null,
+   null
+  ],
+  "AE245|sensible": [
+   null,
+   null
+  ]
+ },
+ "_program_range": "minimum and maximum over the example programs, 'case|heating', 'case|sensible' or 'case|latent'"
+}
