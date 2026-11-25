@@ -1,5 +1,5 @@
-Unreleased
-----------
+2.2.0 (2026-11-25)
+------------------
 
 EN 16798-5-1:2017 air handling unit: moisture processes and heat recovery corrections
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -30,17 +30,308 @@ EN 16798-5-1:2017 air handling unit: moisture processes and heat recovery correc
     as extract air (``latent_ahu_moisture``: ``"auto"``, True or False).
   - New columns: ``X_ahu_sup_<ahu>``, ``Q_ahu_cool_lat_<ahu>``, ``Q_ahu_hum_<ahu>``,
     ``m_ahu_hum_water_kg_h_<ahu>``, ``X_sup_ss_kg_kg_da`` and ``X_int_ss_kg_kg_da``.
-- Formula D.8 is applied as printed. It gives 0.9, not 1, for balanced flow.
+- Annex D follows the amendment as in the EPB Center spreadsheet (2026-05-12), see below.
+
+- Moisture coupled to the heat balance (single-zone and multizone):
+  - The zone moisture content is carried hour by hour inside the thermal simulation
+    (eq. 80). The AHU of each hour gets the outdoor humidity ratio and the zone
+    moisture content of the previous step.
+  - So supply temperature, coils (the latent power takes coil capacity), reheat after
+    dehumidification and the adiabatic humidifier are all in the heat balance of the
+    same hour.
+  - The moisture balance uses the supply humidity recorded in that hour. A zone with
+    several AHUs that have moisture data uses their flow-weighted mix (before, only
+    the first one).
+  - New AHU diagnostic columns: ``X_ahu_sup``, ``Q_ahu_cool_lat``, ``Q_ahu_hum``,
+    ``m_ahu_hum_water_kg_h`` (NaN or 0 for an AHU without moisture data).
+  - Multizone adds ``X_sup_ahu_mix_<zone>``, ``q_sup_ahu_moist_m3_s_<zone>`` and
+    ``X_int_ahu_<zone>``.
+  - The ``ahu_causal`` control mode is coupled too. It now has the same latent balance
+    columns and annual latent results as the standard engine (shared code), plus
+    ``X_sup_ahu_mix``, ``q_sup_ahu_moist_m3_s`` and ``X_int_ahu``.
+  - Single-zone: with a coupled AHU, the reported ``X_int_ss_kg_kg_da`` is the zone
+    moisture the AHU saw. Before, the balance after the simulation started from a
+    different initial state, so the two could differ in the first hours.
+  - In multizone, the moisture state inside the simulation uses the same options as the
+    final balance (zone value first, then the global option), including moisture
+    absorption. The reported ``X_int_ss_kg_kg_da_<zone>`` is the moisture the AHU saw.
+  - The moisture path is also active for an AHU with an enabled cooling coil and no
+    moisture data, so the coil can condense. Results change for such AHUs: the latent
+    power now takes part of the coil capacity.
+  - The fallback that rebuilt the supply humidity after the simulation runs only when
+    the coupled result is missing. Its "only the first mechanical_supply" warning no
+    longer appears for coupled runs.
+
+EN 16798-5-1 distribution, recirculation, frost and central AHU:
+
+- Unbalanced supply and extract flows. The heat recovery ratio gets f_q (41) and the
+  exhaust temperature follows the energy balance of the two streams. When the extract is
+  larger than the supply, the difference enters the zone as outdoor make-up air (new
+  stream ``<ahu>_makeup``).
+- Distribution (6.4.2):
+  - leakage of ducts (Table 10, ``duct_leakage_class``), AHU (Table 11,
+    ``ahu_leakage_class``) and heat recovery (Table B.5, ``supply_fan_location`` /
+    ``extract_fan_location``), or explicit factors. The fan flows follow (4a), (25)-(26).
+  - Supply duct leakage goes into the zone (``duct_location``: "conditioned", default)
+    or is lost ("unconditioned").
+  - Duct heat losses (12)-(15), (18)-(19) with ``duct_supply_h_unconditioned_w_k``,
+    ``duct_supply_h_zone_w_k``, ``duct_extract_h_unconditioned_w_k`` and
+    ``duct_surrounding_temperature_c`` (default: outdoor air). Losses (21) and the
+    recoverable part (22) are reported.
+- Recirculation (6.4.3.2.5): ``recirculation_control`` "fix" (``outdoor_air_fraction_min``)
+  or "variable" (component ``outdoor_air_flow_m3_h``). With the modulating control the
+  outdoor air share rises up to f_ODA;hr (38b) before the heat recovery is bypassed.
+  Mixing (36a), (37) and energy (79).
+- Frost protection (6.4.3.2.7): ``frost_control`` "direct" (46, with the corrected ratios
+  ``frost_direct_ratio_minus15`` / ``frost_direct_ratio_minus7``), "indirect_bypass"
+  (48c), "indirect_preheat" (47b, preheat energy 90a) and "indirect_recirc" (exhaust mixed
+  into the outdoor air). ``building_use`` sets the Table B.14 exhaust limit.
+- Adiabatic cooling on the extract side (6.4.3.2.8): ``adiabatic_cooling``,
+  ``adiabatic_cooling_efficiency`` (default 0.9). It runs in cooling, with recirculation
+  off, formulae (50)-(52) and a psychrometric wet-bulb temperature. Water use is reported.
+- Central multizone AHU with VAV (``building_parameters.central_ahus``):
+  - One AHU step serves several zones. Each zone has a constant volume or VAV terminal.
+  - The VAV flow is sized from the zone load of the previous hour.
+  - Air flow control NO_CTRL, ON_OFF, MULTI_STAGE or VARIABLE (23a-d).
+  - The AHU flow is shared among the zones in proportion to their requirements (6),
+    without exceeding any terminal maximum. Flow above the sum of the maxima (NO_CTRL,
+    a stage or the minimum flow ratio) is not delivered.
+  - Extract air is the flow-weighted mix of the zones. The AHU moisture is coupled to
+    the zone moisture balance.
+  - With ``recirculation_control: "variable"`` the outdoor air share follows (35a): the
+    largest ratio of required outdoor air to zone supply among the zones. Every zone
+    therefore gets its ``outdoor_air_flow_m3_h``, not only the total.
+  - When the flow limits make a zone requirement impossible (a fixed share, f_ODA;hr < 1,
+    frost recirculation, or a zone supply below its requirement), a warning is issued.
+    The hours are counted in ``CentralAHU.oda_deficit_hours``, and
+    ``q_oda_m3h_<ahu>_<zone>`` reports the outdoor air each zone receives.
+  - A served zone outside the AHU moisture path (``latent_ahu_moisture: false`` or a
+    declared ``latent_system_supply_moisture_kg_kg``) still has its moisture content
+    carried. That state only feeds the AHU extract mix, so the AHU still treats the
+    humidity for the other zones.
+  - New columns ``<diag>_<ahu>`` and ``q_vav_m3h_<ahu>_<zone>``.
+- New AHU diagnostic columns: ``Q_ahu_duct_loss``, ``Q_ahu_duct_loss_rbl``, ``Q_ahu_rca``,
+  ``Q_ahu_frost_preh``, ``f_ahu_oda``, ``q_ahu_makeup_m3h``, ``m_ahu_ac_water_kg_h``.
+- An AHU with no supply and a non-zero extract (extract only) still uses extract fan
+  power (72), and the zone takes the extracted air from outdoors.
+- Full recirculation (``recirculation_control: "variable"`` with no outdoor air required)
+  is calculated: no outdoor air crosses the heat recovery. With the modulating control,
+  the outdoor air share can still open up to f_ODA;hr (38b). Before, this case raised
+  ZeroDivisionError.
+- With the default configuration the AHU step gives the same results as before.
+- Where the printed formula breaks the energy balance, the implementation keeps the
+  balance:
+  - (18): the extract duct loss lowers the temperature;
+  - (20): the leakage air is mixed by flow;
+  - (47b)/(48c): the supply/exhaust flow ratio is inverted;
+  - (50): with adiabatic cooling, the supply after recovery is the recovered temperature.
+
+EN 16798-7 (module M5-5, air flow rates), new module ``ventilation_16798_7``:
+
+- The existing ventilation types (``temp_wind``, ``occupancy``, ``sherman_grimsrud_like`` and
+  others) are empirical models, not this standard. The new module implements method 1
+  (clause 6) as a separate calculation of one ventilation zone.
+- Required flows: outdoor air requirement (9) with ``f_ctrl`` / ``f_sys`` (Tables B.4, B.5),
+  flows at the air terminal devices by VENT_SYS_OP (10)-(17), ODA or LOAD flow control
+  (18)-(22), design flow (23), supply outdoor air (24), and the LOAD_COMP supply
+  temperature with emission losses (7)-(8).
+- ``ZoneAirflow.solve`` combines in the mass balance on the internal reference pressure (67)
+  all the air flow paths:
+  - envelope leakage with the Table B.12 distribution (B.4)-(B.6), (62)-(64);
+  - vents (58)-(61), (59), Table B.11;
+  - airing through windows: simplified (42)-(43), wind and temperature, single-sided and
+    cross ventilation (44)-(52), or the window pressure method (53)-(57);
+  - passive or hybrid duct with air terminal device, duct and cowl (25)-(34);
+  - combustion air (35)-(39);
+  - mechanical supply and extract flows.
+  It gives the totals ``q_V;tot;in`` / ``q_V;tot;out`` (68)-(69) and the mass balance residual.
+- Wind (2)-(3) and pressure (4)-(6) with the Table B.7/B.8 pressure coefficients, Table B.13
+  terrain classes and the Annex B defaults (Tables B.2-B.14).
+- ``ahu_inputs`` maps the mechanical flows to the input of the EN 16798-5-1 AHU model.
+- Method 2 (clause 7) is a national statistical approach with no default data: only the
+  totals are exchanged (``method2_totals``).
+- Coupling with the hourly zone balance, new ventilation component
+  ``ventilation_type: "en16798_7"``:
+  - ``zone`` holds the :class:`ZoneAirflow` data (windows and ``passive_duct`` as dicts),
+    plus ``outdoor_air_req_m3_h`` (simplified airing) and ``combustion_flow_m3_h``;
+  - each hour it solves the mass balance (67) with the outdoor temperature, the zone air
+    temperature, the wind speed and the actual flows of the AHU components of the same
+    hour, and gives the natural inflow (leaks, vents, windows, passive duct) at the
+    outdoor temperature;
+  - an extract-only or unbalanced AHU then draws its make-up air through the envelope.
+    The "_makeup" stream of the AHU is not added when an ``en16798_7`` component is
+    present, so the air is not counted twice;
+  - the component schedule multiplier is the window opening fraction (0 closes the windows).
+- Inconsistent configurations are errors: a mass balance with no solution (for example
+  an extract flow with no leak, vent or window to bring the air) raises ``ValueError``
+  instead of returning an absurd pressure, and a zone accepts only one ``en16798_7``
+  component, since all its air flow paths are solved together.
+- ``required_supply_temperature`` (7)-(8) no longer assumes a 1 K difference when the
+  corrected outdoor temperature is missing, nor zero loss when the denominator is null: it
+  raises ``ValueError`` naming ``theta_e_comb_c``.
+- Non-physical inputs of the EN 16798-7 API (negative design or required flows, negative
+  or null airtightness/exponents, invalid ``PassiveDuct``, ``f_oda`` outside [0, 1],
+  negative wind speed or combustion data) are rejected with a message naming the parameter.
+  NaN/inf values are rejected too (also in ``required_supply_temperature``, whose air density
+  must be > 0), and ``f_op_v`` (an operation signal) must be in [0, 1].
+- EN 16798-5-2: the reheating energy (40) uses the whole stage time, not the recovery time:
+  with the recovery fully bypassed the coil now supplies the missing heat (it was 0 kWh).
+- EN 16798-5-2, heat pump (46): the printed formula both removes the domestic hot water time
+  from ``t_on;H;max;k`` and subtracts ``Q_W;V;gen;hp;out``, so the DHW share is counted twice.
+  The printed text is kept by default; ``HeatPumpData(deduct_dhw_energy_46=False)`` subtracts
+  only the time.
+- EN 16798-5-2: ``eta_hr`` must be finite and in [0, 1] and temperatures/preheating/precooling
+  must be finite, as must ``defrost_hours``/``defrost_dt_k`` and the numeric unit
+  configuration; NaN or a recovery above 100 % is an error instead of a NaN or non-physical result.
+- A ``mechanical_supply`` component can take its flows from the standard: with
+  ``outdoor_air_design_flow_m3_h`` (and optional ``f_ctrl``, ``f_sys``,
+  ``ventilation_effectiveness``, ``vent_sys_op``) the supply and extract flows follow
+  (9)-(17).
+- Limits: the natural flows are not reported as output columns; the flow control
+  SUP_AIR_FLW_CTRL = LOAD (20) is available as a function but not yet applied hourly to the
+  AHU; single ventilation zone without elementary spaces or flows between zones.
+- Table 7 gives the airtightness index in m3/h; with the reference area ``A_lea`` of
+  (A.1)/(B.4) it is used per m2 of ``A_lea``. In (47)/(48) the stack term uses the exponent
+  0.5 as in (45)/(46), since the printed formula is cut at the edge in the scan.
+
+EN 16798-5-2 (Method 2, monthly / yearly / bin), new module ``ventilation_16798_5_2``:
+
+- For small packaged ventilation units, typically residential.
+- ``calculate_interval`` covers, for one month, year or bin:
+  - ventilation stages, leakage of ducts and unit (4)-(10), Tables B.2-B.5;
+  - supply air temperature with preheating / precooling, heat recovery with the leakage
+    and insulation factors (Table B.6), recirculation and reheating (11)-(15);
+  - supply and extract duct losses (16)-(21) and the outdoor air fraction (22)-(23);
+  - duct and casing heat losses (25)-(30);
+  - fan energy with SPI per stage or a single SPI with flow control factor and motor
+    exponent (31a)/(31b), Tables B.12-B.15;
+  - auxiliary energy of rotor, electric defrost preheating and controls (32)-(35),
+    Tables B.7-B.9;
+  - preheating, precooling, heat recovery, recirculation and reheating energies
+    (36)-(40), Table B.17.
+- Extract air heat pump for domestic hot water, space heating and space cooling (41)-(58),
+  with the B.3.1 defaults and the Table B.16 corrections.
+- ``combine_by_area`` applies (24) to several systems in one zone.
+- ``monthly_from_hourly`` builds monthly intervals from an hourly EN ISO 52016-1 result.
+  The annual defrost hours of Table B.7 are shared by the hours below -4 degC.
+- (20) is applied with the extract duct loss lowering the temperature, as for
+  EN 16798-5-1 (18). The air density uses 288 in the altitude correction (Table 9 of
+  EN 16798-5-2; EN 16798-5-1 uses 293).
+- Input checks: ``total_hours`` > 0, stage times within ``total_hours``, defrost hours within
+  the interval, no negative flows or demands. Heating and cooling heat pump demands in the
+  same interval are rejected (the method takes one of them, 6.4.3.10.1.3 NOTE 1).
+- A demand for a heat pump service that is not configured (for example hot water with a
+  heating-only heat pump) is reported as residual (``Q_*_residual``) with a warning.
+- ``monthly_from_hourly`` makes one interval per (year, month) and returns
+  ``((year, month), result)``. The annual defrost hours are scaled to the data length of the
+  year and capped at the operating hours of the interval.
+- ``extract_duct_sign_as_printed=True`` applies (20) with the printed ``+`` sign. The default
+  keeps the physical direction (the loss lowers the extract temperature). No official erratum
+  was found; the EPB Center spreadsheet for EN 16798-5-1 keeps the printed sign in (18).
+- The module is independent of the hourly AHU model. Its results are not yet fed back
+  into the EN ISO 52016-1 zone balance.
+
+Fan location and load compensated supply temperature in zones:
+
+- ``supply_fan_location`` / ``extract_fan_location`` (UP_HR, DOWN_HR) now also have their
+  thermal effect, not only the Table B.5 leakage:
+  - supply fan UP_HR: its heat warms the outdoor air before the heat recovery (32a). Most
+    of it then leaves with the exhaust. It is counted once: the printed (70) would add
+    it again after the coils, and so does the reference spreadsheet;
+  - extract fan DOWN_HR: its heat leaves with the exhaust air (31b).
+  - Defaults (supply DOWN_HR, extract UP_HR) give the same results as before.
+- ``supply_temperature_mode: "load_compensated"`` (29c) now works for zone-level AHU
+  components in the standard, ``ahu_causal`` and multizone engines.
+  - The required supply temperature covers the zone sensible load of the previous step:
+    the ideal zone system power still delivered plus the heat the AHU supplied, with the
+    current flow, within ``supply_temperature_minimum_c`` / ``maximum_c``.
+
+Annex D amended and Italian national data:
+
+- Annex D (rotary heat exchangers, moisture recovery) now follows the amendment, as in the
+  EPB Center spreadsheet. This changes results for rotary heat recovery with moisture:
+  - (D.8) without the "+1": the flow-ratio factor is 1 for balanced flow (before 0.9);
+  - Table D.1: C7 ROT_HYG 0.476, C10 ROT_SORP +0.098, C11 per type (1.7012 ROT_NH,
+    1.5333 ROT_HYG, 1.3444 ROT_SORP);
+  - (D.5b) for ROT_HYG with the nominal condensation potential 0.005; (D.5c) removed.
+  - The printed 2017 version stays available with ``annex_d_version: "2017"``.
+- National default data, ``national_data``: "IT" (default, UNI EN 16798-5-1:2018/NA:2025)
+  or "EN" (Annex B):
+  - ``building_status`` ("new" / "existing") sets the duct and AHU tightness classes
+    (Tables NA.2 / NA.3);
+  - heat recovery design pressure drop by type (Table NA.6), used in (89);
+  - ``fan_motor_location`` (IN_AIR / OUTS_AIR) sets f_fan;rd (Table NA.12);
+  - ``system_type`` ("ventilation" / "air_conditioning") sets f_dp;ctrl (Table NA.13);
+  - humidifier pump energy by type and control (Table NA.10), with the humidifier types
+    CONTACT, ROT_SPRAY, HI_PRES, HYBRID, STEAM, OTHER;
+  - IT only: control power 5 % of the fan power when no control power is given
+    (Table NA.9). This adds auxiliary energy only.
+  - The annex gives the pump energies (Tables NA.6, NA.10) in kWh/m3. They are used as
+    Wh/m3, since the EPB Center spreadsheet notes the printed values are 1000 times too
+    large.
+  - Tightness classes, fan motor location and system type are applied only when
+    declared. Without them, the thermal results do not change.
+
+EN 16798-5-1 remaining parts, checked against the EPB Center spreadsheet
+Demo_EN_16798-5-1 (2026-05-12):
+
+- Supply temperature control (Table 19): ``supply_temperature_mode``
+  - "none" (NO_CTRL, (53a)/(67a));
+  - "oda_compensated" ((29b), with ``supply_temperature_slope`` and
+    ``supply_temperature_offset_c``);
+  - "load_compensated" ((29c), with the required supply temperature from
+    ``AHUStepInputs.required_supply_temperature_c``, or from the zone loads for a central
+    AHU with constant volume terminals).
+- Fans (72)-(75): ``fan_control`` "direct" (default, as before), "no_ctrl" (manufacturer
+  curves ``*_fan_pressure_curve``), "const_pres" and "min_pres" (with f_V;max from (11a)).
+  Fan efficiency curve (73): ``*_fan_efficiency_curve``.
+- The central AHU fans now follow the flow fraction of the nominal flow, so VAV operation
+  reduces fan power by the part-load law. Before, power was proportional to flow.
+  - The AHU flow is limited to the nominal flow (23c)/(23d).
+- Actual coil states (62)-(64), (69):
+  - from the coil medium temperature and the delivered energy given by the generation
+    modules (``cooling_coil_medium_temperature_c``, ``cooling_coil_output_w``,
+    ``heating_coil_input_w``);
+  - required medium temperatures (61), (68) are reported for the generation modules;
+  - the dehumidification requirement (81) is reported.
+- AHU casing heat losses (85) and the recoverable part (86): ``ahu_location``,
+  ``ahu_supply_casing_au_w_k``, ``ahu_extract_casing_au_w_k``.
+- Auxiliary energy (87)-(93):
+  - heat recovery rotor (88a, with the rotor speed from D.2-D.4) or pump (88b);
+  - fan energy share of the heat recovery (89);
+  - controls (91);
+  - humidifier pump (92)-(93).
+- Ground heat exchanger, Annex C (C.1)-(C.10): ``ground_exchanger`` (soil from Table C.2,
+  coldest month from Table C.1, NO_CTRL or BYPASS control (32)), with the moisture change
+  (33) and the energy (76).
+  - Outdoor air duct (32): ``duct_outdoor_h_w_k``.
+  - The engines pass the hour of the year to the AHU.
+- Air density at the site altitude (Table 27): ``altitude_m``.
+- Supply duct sections are calculated in sequence (15): the duct heat loss to the zone
+  uses the temperature after the loss to unconditioned space, as in the reference
+  spreadsheet.
+- New AHU diagnostic columns: ``Q_ahu_gnd``, ``Q_ahu_casing_loss``,
+  ``Q_ahu_casing_loss_rbl``, ``P_ahu_aux``, ``P_ahu_hum_aux``, ``Q_ahu_dhu_req``.
+- Table B.5: the printed f_ODA;hr = 1.02 for PLATE (an outdoor air share above 1) is set to
+  1.0, as in the reference spreadsheet. Before, a PLATE recovery with declared fan
+  locations was rejected.
+- Checked against the reference spreadsheet (summer hour; see
+  ``tests/test_ahu_annex_16798_5_1.py``):
+  - flows, outdoor air share, heat recovery ratio (40)-(43), D.5a/D.6, the
+    dehumidification requirement (56)-(60) and the actual coil states (62)-(64) agree;
+  - (62) and (69) agree within 0.02 K, from the air properties.
+- The reference spreadsheet differs from this implementation in these places:
+  - it keeps the printed (18), (20), (47b)/(48c) and (50);
+  - with NO_CTRL it gives a supply after recovery below the outdoor temperature, and a
+    dehumidification energy (80) without its sensible part.
 
 Limits:
 
-- Inside the thermal hour the latent power does not reduce the cooling coil capacity
-  available for the sensible part. The moisture balance follows the thermal
-  simulation.
-- Supply and extract flows must still be equal, so f_q = 1.
-- Not yet implemented: duct losses (6.4.2), recirculation, earth-to-air preheating,
-  adiabatic cooling, indirect frost control (47-49), and fan control strategies other
-  than no control.
+- Central AHU:
+  - multizone only;
+  - load compensated supply temperature only with constant volume terminals;
+  - one supply temperature for all zones, with no per-zone reheat terminal;
+  - VAV sizing uses the previous hour, not an iteration within the hour.
 
 2.1.7 (2026-11-23)
 ------------------

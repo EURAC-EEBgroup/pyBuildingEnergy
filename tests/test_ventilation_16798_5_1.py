@@ -309,7 +309,7 @@ def test_inputs_default_to_full_timestep_operation():
         ({"flow_fraction": -0.1}, "flow_fraction"),
         ({"outdoor_temperature_c": math.nan}, "outdoor_temperature_c"),
         ({"scheduled_setpoint_c": math.inf}, "scheduled_setpoint_c"),
-        ({"required_extract_flow_m3_h": 0.0}, "balanced-flow"),
+        ({"required_outdoor_air_flow_m3_h": -1.0}, "required_outdoor_air_flow_m3_h"),
     ],
 )
 def test_inputs_rejects_invalid(kwargs, match):

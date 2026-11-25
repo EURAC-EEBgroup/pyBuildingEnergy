@@ -679,6 +679,31 @@ def _parse_source_temperature(spec, outdoor_temperature_c: float) -> float:
     return float(spec)
 
 
+def _load_compensated_supply_temperature(name, load_state, zone_temperature_c,
+                                        flow_m3_h, rho_air, c_air):
+    """LOAD_COMP (29c) supply temperature for a zone-level AHU component.
+
+    ``load_state``: ``{"q_hvac_prev_w": ideal zone system power of the previous step
+    (W, positive heating), "ahu_prev": {component name: AHUStepOutputs of the previous
+    step}}``.  The zone sensible load of the previous step is the power the zone system
+    still delivered plus the heat this AHU supplied; the required supply temperature
+    covers it with the current flow.  Without a previous step: the zone air temperature.
+    """
+    t_air = float(zone_temperature_c)
+    if not load_state or flow_m3_h <= 0.0:
+        return t_air
+    prev = (load_state.get("ahu_prev") or {}).get(name)
+    q_prev = float(load_state.get("q_hvac_prev_w", 0.0) or 0.0)
+    h_prev = 0.0
+    t_src_prev = t_air
+    if prev is not None and prev.actual_supply_flow_m3_h > 0.0:
+        h_prev = (prev.air_density_kg_m3 * c_air * prev.actual_supply_flow_m3_h / 3600.0)
+        t_src_prev = float(prev.actual_supply_temperature_c)
+    load_w = q_prev + h_prev * (t_src_prev - t_air)
+    h_now = rho_air * c_air * flow_m3_h / 3600.0
+    return t_air + load_w / h_now
+
+
 def _resolve_component_streams(
     components: list,
     outdoor_temperature_c: float,
@@ -690,6 +715,10 @@ def _resolve_component_streams(
     zone_temperature_c: float = 20.0,
     ahu_outputs_collector: dict = None,
     adjacent_zone_state: dict = None,
+    moisture_state: dict = None,
+    hour_of_year: float = None,
+    load_state: dict = None,
+    wind_speed_m_s: float = 0.0,
 ) -> list:
     """Convert a ventilation components list to VentilationStream objects.
 
@@ -723,6 +752,12 @@ def _resolve_component_streams(
     streams = []
     seen_names: set = set()
     cm = component_multipliers or {}
+    # EN 16798-7 natural paths are solved after the AHUs: their mechanical flows enter the
+    # pressure balance, and the make-up air of an unbalanced AHU is then the infiltration
+    deferred_en7: list = []
+    mech_outputs: list = []
+    has_en7 = any(str(c.get("ventilation_type", "")).strip().lower() == "en16798_7"
+                  for c in components)
     for comp in components:
         name = str(comp.get("name", "")).strip()
         if not name:
@@ -733,6 +768,10 @@ def _resolve_component_streams(
 
         comp_type = str(comp.get("ventilation_type", "")).strip().lower()
         component_fraction = float(cm.get(name, default_multiplier))
+
+        if comp_type == "en16798_7":
+            deferred_en7.append((comp, name, component_fraction))
+            continue
 
         if comp_type == "constant_ach":
             if zone_volume_m3 is None or float(zone_volume_m3) <= 0.0:
@@ -769,9 +808,34 @@ def _resolve_component_streams(
                 calculate_sensible_ahu_step,
                 sensible_ahu_config_from_dict,
             )
-            supply_m3_h = float(comp["supply_flow_m3_h"])
-            extract_m3_h = float(comp.get("extract_flow_m3_h", supply_m3_h))
+            if comp.get("outdoor_air_design_flow_m3_h") is not None:
+                # EN 16798-7 (9)-(17): flows from the outdoor air requirement
+                from . import ventilation_16798_7 as _en7  # noqa: PLC0415
+                _q_oda = _en7.required_outdoor_air(
+                    float(comp["outdoor_air_design_flow_m3_h"]),
+                    float(comp.get("f_ctrl", 1.0)), float(comp.get("f_sys", 1.0)),
+                    float(comp.get("ventilation_effectiveness", 1.0)))
+                _sup, _eta = _en7.terminal_required_flows(
+                    comp.get("vent_sys_op", "BALANCED_OP"), _q_oda)
+                supply_m3_h, extract_m3_h = _sup, -_eta
+                if supply_m3_h <= 0.0 and extract_m3_h <= 0.0:
+                    supply_m3_h = extract_m3_h = 0.0
+            else:
+                supply_m3_h = float(comp["supply_flow_m3_h"])
+                extract_m3_h = float(comp.get("extract_flow_m3_h", supply_m3_h))
             ahu_cfg = sensible_ahu_config_from_dict(comp)
+            # LOAD_COMP (29c): supply temperature that covers the zone load of the previous
+            # step (ideal zone system still needed + heat this AHU supplied) with the
+            # current flow; without a previous step the zone air temperature (neutral)
+            _t_sup_req = None
+            from .ventilation_16798_5_1 import SupplyTemperatureControlMode  # noqa: PLC0415
+            if ahu_cfg.supply_temperature_control.mode is SupplyTemperatureControlMode.LOAD_COMPENSATED:
+                _t_sup_req = _load_compensated_supply_temperature(
+                    name, load_state, zone_temperature_c,
+                    supply_m3_h * component_fraction, rho_air, c_air)
+            from .ventilation_16798_5_1 import ahu_declares_moisture  # noqa: PLC0415
+            _declares_moisture = ahu_declares_moisture(
+                {**comp, "ventilation_type": "mechanical_supply"})
             # extract_air_temperature_c: previous-timestep zone AIR node temperature,
             # not operative. Explicit lag avoids the T_zone→T_extract→T_supply→T_zone loop.
             extract_air_temperature_c = zone_temperature_c
@@ -783,19 +847,43 @@ def _resolve_component_streams(
                 operation_fraction=1.0,
                 # component_fraction is a continuous flow fraction, not timestep duty-cycle.
                 flow_fraction=component_fraction,
+                # EN 16798-5-1 moisture processes in the same hour as the heat balance:
+                # outdoor humidity ratio and zone moisture content (previous step) as
+                # extract air, only for an AHU that declares moisture data
+                outdoor_humidity_ratio=(
+                    moisture_state.get("x_ext") if moisture_state and _declares_moisture else None),
+                extract_humidity_ratio=(
+                    moisture_state.get("x_zone") if moisture_state and _declares_moisture else None),
+                # RCA_CTRL = VARIABLE (35a): outdoor air required by the zone
+                required_outdoor_air_flow_m3_h=(
+                    float(comp["outdoor_air_flow_m3_h"])
+                    if comp.get("outdoor_air_flow_m3_h") is not None else None),
+                hour_of_year=hour_of_year,                 # Annex C ground preheating
+                required_supply_temperature_c=_t_sup_req,
             )
             ahu_out = calculate_sensible_ahu_step(ahu_cfg, ahu_inp)
             if ahu_outputs_collector is not None:
                 ahu_outputs_collector[name] = ahu_out
+            mech_outputs.append(ahu_out)
             _s = ahu_outputs_to_ventilation_stream(ahu_out, name=name)
             h_k = _s.heat_transfer_coefficient_w_k
             source_temp = _s.source_temperature_c
             category = "supply"
+            # extract larger than supply: the difference enters the zone from outdoors
+            if ahu_out.makeup_outdoor_air_flow_m3_h > 0.0 and not has_en7:
+                streams.append(VentilationStream(
+                    name=f"{name}_makeup",
+                    heat_transfer_coefficient_w_k=(
+                        rho_air * c_air * ahu_out.makeup_outdoor_air_flow_m3_h / 3600.0),
+                    source_temperature_c=float(outdoor_temperature_c),
+                    category="outdoor_air",
+                ))
 
         else:
             raise ValueError(
                 f"Component {name!r}: unknown ventilation_type={comp_type!r}. "
-                "Supported component types: 'constant_ach', 'mechanical_supply', 'prescribed'."
+                "Supported component types: 'constant_ach', 'mechanical_supply', 'prescribed', "
+                "'en16798_7'."
             )
 
         from_zone = comp.get("from_adjacent_zone")
@@ -826,7 +914,51 @@ def _resolve_component_streams(
                 category=category,
             )
         )
+    if len(deferred_en7) > 1:
+        raise ValueError(
+            "a zone can have only one 'en16798_7' component (found "
+            f"{[n for _, n, _ in deferred_en7]}): the air flow paths of the zone are solved "
+            "together in one mass balance (67); declare all its leaks, vents, windows and "
+            "passive duct in a single component")
+    for comp, name, fraction in deferred_en7:
+        q_nat = _en16798_7_natural_inflow(
+            comp, name, fraction, outdoor_temperature_c, zone_temperature_c, wind_speed_m_s,
+            sum(o.actual_supply_flow_m3_h for o in mech_outputs),
+            sum(o.actual_extract_flow_m3_h for o in mech_outputs))
+        if q_nat > 0.0:
+            streams.append(VentilationStream(
+                name=name, heat_transfer_coefficient_w_k=rho_air * c_air * q_nat / 3600.0,
+                source_temperature_c=float(outdoor_temperature_c), category="outdoor_air"))
     return streams
+
+
+def _en16798_7_natural_inflow(comp, name, fraction, t_out, t_zone, wind_ms,
+                              q_mech_sup, q_mech_eta) -> float:
+    """Natural air entering the zone [m3/h] from an ``en16798_7`` component.
+
+    The mass balance of EN 16798-7 (67) is solved with the mechanical flows of the AHU
+    components of the same step, so an extract-only or unbalanced system draws its
+    make-up air through leaks, vents, windows and passive ducts.  Component keys:
+    ``zone`` (dict of :class:`ZoneAirflow` fields, with ``windows`` as a list of dicts and
+    ``passive_duct`` as a dict), ``outdoor_air_req_m3_h`` (simplified airing, (42)), and
+    ``combustion_flow_m3_h`` (35).  The component multiplier is the window opening fraction.
+    """
+    from . import ventilation_16798_7 as _en7  # noqa: PLC0415
+    zd = dict(comp.get("zone") or {})
+    zd["windows"] = tuple(_en7.WindowData(**{**w, "opening_ratio": float(w.get("opening_ratio", 1.0)) * fraction})
+                          for w in (zd.get("windows") or ()))
+    if zd.get("passive_duct") is not None:
+        zd["passive_duct"] = _en7.PassiveDuct(**zd["passive_duct"])
+    try:
+        zone = _en7.ZoneAirflow(**zd)
+    except TypeError as exc:
+        raise ValueError(f"Component {name!r}: invalid 'zone' data for EN 16798-7: {exc}") from exc
+    r = zone.solve(float(t_out), float(t_zone), float(wind_ms or 0.0),
+                   q_sup_dis=max(0.0, float(q_mech_sup)), q_eta_dis=-max(0.0, float(q_mech_eta)),
+                   q_oda_req=float(comp.get("outdoor_air_req_m3_h", 0.0)),
+                   windows_open=fraction > 0.0,
+                   combustion_flow=float(comp.get("combustion_flow_m3_h", 0.0)))
+    return r["q_lea_in"] + r["q_vent_in"] + r["q_arg_in"] + r["q_pdu_in"]
 
 
 def resolve_ventilation_boundary(
@@ -843,6 +975,9 @@ def resolve_ventilation_boundary(
     rho_air: float = 1.204,
     ahu_outputs_collector: dict = None,
     adjacent_zone_state: dict = None,
+    moisture_state: dict = None,
+    hour_of_year: float = None,
+    load_state: dict = None,
 ) -> VentilationBoundary:
     """Resolve building/zone configuration into an ISO 52016-1 VentilationBoundary.
 
@@ -900,6 +1035,10 @@ def resolve_ventilation_boundary(
             zone_temperature_c=zone_temperature_c,
             ahu_outputs_collector=ahu_outputs_collector,
             adjacent_zone_state=adjacent_zone_state,
+            moisture_state=moisture_state,
+            hour_of_year=hour_of_year,
+            load_state=load_state,
+            wind_speed_m_s=wind_speed_m_s,
         )
     else:
         vent_type = str(vent_cfg.get("ventilation_type", "none")).strip().lower()

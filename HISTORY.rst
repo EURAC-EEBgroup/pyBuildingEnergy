@@ -63,3 +63,15 @@ their exact source commits have not been verified.
   * elements with 1/U - R_si - R_se <= 0 are rejected (negative window conductance);
   * archetype windows above U = 5.7 W/(m2K) set to 5.7.
 * Details in CHANGELOG.rst.
+
+2.2.0 (2026-11-25)
+------------------
+* EN 16798-5-1 air handling unit extended: moisture processes, heat recovery Annex D
+  (EPB Center spreadsheet version, 2017 print selectable), distribution and leakage,
+  recirculation, frost protection, fans and auxiliary energy, ground preheating, central
+  multizone AHU with VAV, national data sets (EN, IT).
+* New standalone modules: EN 16798-5-2 (monthly/yearly/bin method, extract air heat pump)
+  and EN 16798-7 (air flow rates, mass balance of the zone), the latter coupled to the
+  zone ventilation through an ``en16798_7`` component.
+* Input validation for the new modules (finite values, ranges, inconsistent configurations).
+* Details in CHANGELOG.rst.

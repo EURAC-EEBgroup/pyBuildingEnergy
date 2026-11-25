@@ -95,9 +95,10 @@ def _ahu_supply_moisture(building_object, hourly, mode="auto", zone=None):
              if str(c.get("ventilation_type", "")).lower() == "mechanical_supply"]
     if not comps:
         return None
-    keys = ("supply_humidity_max_kg_kg", "supply_humidity_min_kg_kg", "heat_recovery_type")
-    if mode == "auto" and not any(c.get(k) is not None for c in comps for k in keys):
-        return None
+    if mode == "auto":
+        comps = [c for c in comps if _ahu_declares_moisture(c)]
+        if not comps:
+            return None
     if len(comps) > 1:
         warnings.warn("EN 16798-5-1 moisture: only the first mechanical_supply component is "
                       "used for the supply moisture content", stacklevel=3)
@@ -421,10 +422,21 @@ def _resolve_ventilation_component_profile_multiplier(
 _ZTU_INITIAL_OPERATIVE_C = 20.0
 
 
+def _hour_of_year(sim_df, i) -> float:
+    """Hour of the year of step ``i`` (t_an = 0 at the start of the year, Annex C)."""
+    try:
+        ts = pd.Timestamp(sim_df.index[i])
+        return float((ts.dayofyear - 1) * 24 + ts.hour)
+    except Exception:
+        return float(i % 8760)
+
+
 def _resolve_single_zone_vent_boundary(
     building_object, T_zone, Tstepi, sim_df, profile_df,
     ahu_outputs_collector=None,
     adjacent_zone_state=None,
+    moisture_state=None,
+    load_state=None,
 ):
     """Build the affine ventilation boundary for legacy and causal single-zone solvers.
 
@@ -467,6 +479,9 @@ def _resolve_single_zone_vent_boundary(
         zone_volume_m3=_zone_vol if _zone_vol > 0.0 else None,
         ahu_outputs_collector=ahu_outputs_collector,
         adjacent_zone_state=adjacent_zone_state,
+        moisture_state=moisture_state,
+        hour_of_year=_hour_of_year(sim_df, Tstepi),
+        load_state=load_state,
     )
 
 
@@ -488,7 +503,182 @@ _AHU_DIAG_SPEC: tuple = (
     ("q_ext_m3h",      "actual_extract_flow_m3_h",       float),
     ("ahu_bypass",     "bypass_fraction",                float),
     ("ahu_frost",      "frost_protection_required",      int),
+    # EN 16798-5-1 moisture processes (NaN / 0 when the AHU has no moisture data)
+    ("X_ahu_sup",      "supply_humidity_ratio",          float),
+    ("Q_ahu_cool_lat", "latent_cooling_coil_power_w",    float),
+    ("Q_ahu_hum",      "humidification_power_w",         float),
+    ("m_ahu_hum_water_kg_h", "humidification_water_kg_h", float),
+    # EN 16798-5-1 distribution, recirculation, frost protection, adiabatic cooling
+    ("Q_ahu_duct_loss",     "duct_heat_loss_w",              float),
+    ("Q_ahu_duct_loss_rbl", "duct_heat_loss_recoverable_w",  float),
+    ("Q_ahu_rca",           "recirculation_power_w",         float),
+    ("Q_ahu_frost_preh",    "frost_preheat_power_w",         float),
+    ("f_ahu_oda",           "outdoor_air_fraction",          float),
+    ("q_ahu_makeup_m3h",    "makeup_outdoor_air_flow_m3_h",  float),
+    ("m_ahu_ac_water_kg_h", "adiabatic_cooling_water_kg_h",  float),
+    # ground preheating (76), casing losses (85)-(86), auxiliary energy (87), (92), (81)
+    ("Q_ahu_gnd",             "ground_heat_transfer_w",            float),
+    ("Q_ahu_casing_loss",     "ahu_heat_loss_w",                   float),
+    ("Q_ahu_casing_loss_rbl", "ahu_heat_loss_recoverable_w",       float),
+    ("P_ahu_aux",             "auxiliary_power_w",                 float),
+    ("P_ahu_hum_aux",         "humidifier_auxiliary_w",            float),
+    ("Q_ahu_dhu_req",         "dehumidification_power_required_w", float),
 )
+
+def _ahu_declares_moisture(component: dict) -> bool:
+    """A mechanical_supply component on the EN 16798-5-1 moisture path (moisture data or
+    an enabled cooling coil)."""
+    from .ventilation_16798_5_1 import ahu_declares_moisture
+    return ahu_declares_moisture(component)
+
+
+class _SingleZoneAHUMoisture:
+    """EN 16798-5-1 AHU moisture coupled to the single-zone heat balance.
+
+    Carries the zone moisture content hour by hour (EN ISO 52016-1 eq. 80) so the AHU of
+    each hour sees the outdoor humidity ratio and the zone moisture content of the
+    previous step.  Shared by the standard and the ``ahu_causal`` engines.
+    """
+
+    def __init__(self, building_object, sim_df, rh_arr, n_steps, kwargs):
+        comps = ((building_object.get("building_parameters") or {}).get("ventilation") or {}).get("components", []) or []
+        self.names = [str(c.get("name", "")) for c in comps if _ahu_declares_moisture(c)]
+        self.on = bool(self.names) and kwargs.get("latent_ahu_moisture", "auto") is not False
+        if not self.on:
+            return
+        n = int(n_steps)
+        t2m = _series_to_float_array(sim_df, "T2m", default=np.nan)[:n]
+        rh = np.asarray(rh_arr, dtype=float)
+        rh = np.where(np.isfinite(rh[:n]), np.clip(rh[:n], 0.0, 100.0), 50.0) if rh.size >= n else np.full(n, 50.0)
+        self.x_ext = _x_set_point(t2m, rh)
+        bld = building_object.get("building", {}) or {}
+        self.vol = float(bld.get("zone_volume_m3") or bld.get("zone_volume") or bld.get("volume") or 0.0)
+        self.x_zone = float(self.x_ext[0]) if n else 0.0
+        self.x_sup = np.full(n, np.nan)
+        self.q_mech = np.zeros(n)               # m3/s of the moisture-treated supply
+        self.x_int = np.full(n, np.nan)
+        g_prod = kwargs.get("moisture_production_kg_s", 0.0)
+        self.g_prod = np.asarray(0.0 if g_prod is None else g_prod, dtype=float).reshape(-1)
+        self.g_abs = kwargs.get("moisture_absorption_kg_s", 0.0)
+
+    def state(self, i):
+        """Moisture state to pass to the ventilation boundary of hour ``i`` (or None)."""
+        return {"x_ext": float(self.x_ext[i]), "x_zone": self.x_zone} if self.on else None
+
+    def step(self, i, ahu_outputs, h_ve_w_k, dt_s, g_lat_int_kg_s):
+        """Eq. (80) for hour ``i``: flow-weighted supply of the AHUs with moisture data,
+        the rest of the air from outdoors."""
+        if not self.on:
+            return
+        q_sum = qx_sum = 0.0
+        for nm in self.names:
+            ao = ahu_outputs.get(nm)
+            if ao is None or ao.supply_humidity_ratio is None:
+                continue
+            q = float(ao.actual_supply_flow_m3_h) / 3600.0
+            q_sum += q
+            qx_sum += q * float(ao.supply_humidity_ratio)
+        xe = float(self.x_ext[i])
+        xs = qx_sum / q_sum if q_sum > 0.0 else xe
+        self.x_sup[i] = xs
+        self.q_mech[i] = q_sum
+        rho_q = max(float(h_ve_w_k), 0.0) / ISO52016_CA_J_KG_K
+        mech = min(ISO52016_RHO_A_KG_M3 * q_sum, rho_q)
+        cap = ISO52016_RHO_A_KG_M3 * max(self.vol, 0.0) / max(float(dt_s), 1e-9)
+        g_abs = float(self.g_abs if np.ndim(self.g_abs) == 0 else np.asarray(self.g_abs, dtype=float).reshape(-1)[i])
+        g = float(self.g_prod[min(i, self.g_prod.size - 1)]) + float(g_lat_int_kg_s) - g_abs
+        if rho_q + cap > 0.0:
+            self.x_zone = (mech * xs + (rho_q - mech) * xe + g + cap * self.x_zone) / (rho_q + cap)
+        self.x_int[i] = self.x_zone
+
+
+def _single_zone_latent_balance(hourly_results, building_object, kwargs, RH_act, int_gains_act,
+                                ahu_mst=None, act_slice=slice(None)):
+    """EN ISO 52016-1 6.5.14 latent columns of a single-zone result (standard and
+    ``ahu_causal`` engines).  Writes the columns into ``hourly_results`` in place."""
+    f_lat_int = float(kwargs.get("latent_internal_fraction", 0.0) or 0.0)
+    # EN ISO 52016-1 6.5.14: moisture content and (de)humidification / latent load
+    # of the zone with ideal humidity control. Set-points: the dehumidification and
+    # humidification relative humidity (latent_rh_dehumidification_pct /
+    # latent_rh_humidification_pct); latent_indoor_rh_pct, when given, sets both.
+    _both_rh = kwargs.get("latent_indoor_rh_pct")
+    _rh_hu = kwargs.get("latent_rh_humidification_pct",
+                        DEFAULT_RH_SET_HUMIDIFICATION_PCT if _both_rh is None else _both_rh)
+    _rh_dhu = kwargs.get("latent_rh_dehumidification_pct",
+                         DEFAULT_RH_SET_DEHUMIDIFICATION_PCT if _both_rh is None else _both_rh)
+    _bld_m = building_object.get("building", {}) or {}
+    _zone_vol_m3 = float(_bld_m.get("zone_volume_m3") or _bld_m.get("zone_volume") or _bld_m.get("volume") or 0.0)
+    _dt_h_lat = _infer_timestep_hours_from_index(hourly_results.index, default=1.0)
+    # moisture production G_int [kg/s]: kwarg moisture_production_kg_s (scalar or hourly array)
+    # plus the legacy latent fraction of the sensible internal gains (latent_internal_fraction)
+    _phi_lat_int = f_lat_int * np.asarray(int_gains_act, dtype=float)
+    _g_int = np.asarray(kwargs.get("moisture_production_kg_s", 0.0), dtype=float) + _phi_lat_int / ISO52016_HWE_J_KG
+    _mech_q = kwargs.get("latent_mechanical_supply_m3_s")
+    _x_sup_ss = kwargs.get("latent_system_supply_moisture_kg_kg")
+    _ahu_moist = None
+    _coupled = _x_sup_ss is None and ahu_mst is not None and ahu_mst.on
+    if _coupled:
+        # EN 16798-5-1 AHU coupled in the heat balance: supply moisture recorded hour by hour
+        _x_sup_ss, _mech_q = ahu_mst.x_sup[act_slice], ahu_mst.q_mech[act_slice]
+    elif _x_sup_ss is None:
+        _ahu_moist = _ahu_supply_moisture(
+            building_object, hourly_results, kwargs.get("latent_ahu_moisture", "auto"))
+    if _x_sup_ss is None and _ahu_moist is not None:
+        # fallback: supply moisture of each hour from the zone moisture content
+        _x_sup_ss, _mech_q = _ahu_moist["fn"], _ahu_moist["q_m3_s"]
+    _mb = _zone_moisture_balance(
+        hourly_results["H_ve"].to_numpy(dtype=float),
+        hourly_results["T_air"].to_numpy(dtype=float),
+        hourly_results["T_ext"].to_numpy(dtype=float),
+        np.asarray(RH_act, dtype=float),
+        _zone_vol_m3,
+        _dt_h_lat * 3600.0,
+        _rh_hu,
+        _rh_dhu,
+        g_int_kg_s=_g_int,
+        g_abs_kg_s=kwargs.get("moisture_absorption_kg_s", 0.0),  # Table B.20: no absorption by default
+        x_sup_ss_kg_kg=_x_sup_ss,
+        q_mech_rho_kg_s=None if _mech_q is None else ISO52016_RHO_A_KG_M3 * np.asarray(_mech_q, dtype=float),
+    )
+    hourly_results["X_ext_kg_kg_da"] = _mb["x_ext"]
+    hourly_results["X_set_min_kg_kg_da"] = _mb["x_set_min"]
+    hourly_results["X_set_max_kg_kg_da"] = _mb["x_set_max"]
+    hourly_results["X_int_kg_kg_da"] = _mb["x_int"]
+    hourly_results["m_dot_vent_kg_s"] = _mb["rho_q_kg_s"]
+    hourly_results["G_HU_kg_s"] = _mb["g_hu_kg_s"]
+    hourly_results["G_DHU_kg_s"] = _mb["g_dhu_kg_s"]
+    hourly_results["Phi_HU_W"] = _mb["phi_hu_w"]
+    hourly_results["Phi_DHU_W"] = _mb["phi_dhu_w"]
+    hourly_results["X_sup_HU_req_kg_kg_da"] = _mb["x_sup_hu_req"]
+    hourly_results["X_sup_DHU_req_kg_kg_da"] = _mb["x_sup_dhu_req"]
+    hourly_results["Q_latent_vent_W"] = _mb["phi_dhu_vent_w"]  # ventilation part of the dehumidification load
+    hourly_results["Q_latent_vent_Wh"] = _mb["phi_dhu_vent_w"] * _dt_h_lat
+    hourly_results["Q_int_latent_W"] = _phi_lat_int
+    hourly_results["Q_latent_W_signed"] = _mb["phi_dhu_w"] - _mb["phi_hu_w"]  # >0 dehumidify, <0 humidify
+    hourly_results["Q_latent_W"] = _mb["phi_dhu_w"]  # latent cooling need
+    hourly_results["Q_latent_Wh"] = _mb["phi_dhu_w"] * _dt_h_lat
+    hourly_results["Q_H_latent_W"] = _mb["phi_hu_w"]  # latent heating need (humidification)
+    hourly_results["Q_H_latent_Wh"] = _mb["phi_hu_w"] * _dt_h_lat
+    if _ahu_moist is not None and _x_sup_ss is _ahu_moist["fn"]:
+        for _col, _arr in _ahu_moist["record"].items():
+            hourly_results[_col] = _arr
+    if "x_int_ss" in _mb and _coupled:
+        # coupled AHU: report the zone moisture content the AHU actually saw, so the
+        # reported state and the AHU extract air share the same initialisation
+        _mb["x_int_ss"] = ahu_mst.x_int[act_slice]
+    if "x_int_ss" in _mb:
+        hourly_results["X_sup_ss_kg_kg_da"] = _mb["x_sup_ss"]
+        hourly_results["X_int_ss_kg_kg_da"] = _mb["x_int_ss"]
+        hourly_results["Phi_ss_HU_W"] = _mb["phi_ss_hu_w"]
+        hourly_results["Phi_ss_DHU_W"] = _mb["phi_ss_dhu_w"]
+
+    hourly_results["Q_C_sensible"] = hourly_results["Q_C"]
+    hourly_results["Q_C_latent"]   = hourly_results["Q_latent_W"]   # total latent cooling need (vent + internal)
+    hourly_results["Q_C_total"]    = hourly_results["Q_C_sensible"] + hourly_results["Q_C_latent"]
+    if ahu_mst is not None and ahu_mst.on:
+        hourly_results["X_sup_ahu_mix"] = ahu_mst.x_sup[act_slice]   # supply humidity used, eq. (80)
+        hourly_results["q_sup_ahu_moist_m3_s"] = ahu_mst.q_mech[act_slice]
+        hourly_results["X_int_ahu"] = ahu_mst.x_int[act_slice]       # zone moisture seen by the AHU
 
 
 def _ahu_coll_to_columns(ahu_coll_act):
@@ -4885,6 +5075,7 @@ class ISO52016:
         progress_logger=None,
         c_int_per_A_us=10000.0,
         validate=True,
+        latent_options=None,
     ):
         """
         Multizone envelope simulation with coupled internal partitions and ideal HVAC.
@@ -5941,6 +6132,14 @@ class ISO52016:
                     component_multipliers=_comp_mult if _comp_mult else None,
                     zone_volume_m3=zone_vol if zone_vol > 0.0 else None,
                     ahu_outputs_collector=_ahu_coll,
+                    moisture_state=_mz_moist_state.get(zname),
+                    hour_of_year=_hour_of_year(sim_df, tstep),
+                    # LOAD_COMP (29c): zone load and AHU outputs of the previous step
+                    load_state={
+                        "q_hvac_prev_w": (float(_zone_out_by_zi[z_idx[zname]]["Q_HVAC"][tstep - 1])
+                                          if tstep > 0 else 0.0),
+                        "ahu_prev": _ahu_step_z.get(z_idx[zname]) or {},
+                    },
                 )
             except Exception as exc:
                 raise RuntimeError(
@@ -6506,6 +6705,71 @@ class ISO52016:
             occupied = _profile_value(zn, "occupancy_profile", t, 1.0) > 0 and _profile_value(zn, "lighting_profile", t, 1.0) > 0
             return lighting_step(natural, occupied, cfg["target_lux"], cfg["design_lux"], cfg["installed_power_w"], cfg.get("mode", "continuous"), cfg.get("heat_fraction", 1.0))
 
+        # EN 16798-5-1 AHU moisture coupled to the heat balance, per zone: the zone moisture
+        # content is carried hour by hour (EN ISO 52016-1 eq. 80) and given to the AHU of the
+        # zone (outdoor humidity ratio, zone moisture content of the previous step).
+        _mz_moist_state = {}
+        _mz_moist = {}
+        _latent_options = dict(latent_options or {})
+
+        def _mz_opt(zone, key, default=None):
+            # same resolution as _multizone_latent_balance: zone value first, then the option
+            if zone.get(key) is not None:
+                return zone[key]
+            return _latent_options.get(key, default)
+
+        def _mz_series_at(value, t):
+            arr = np.asarray(value if value is not None else 0.0, dtype=float)
+            return float(arr) if arr.ndim == 0 else float(arr.reshape(-1)[min(t, arr.size - 1)])
+
+        _gv_comps = ((building_object.get("building_parameters") or {}).get("ventilation") or {}).get("components") or []
+        for _zi, _zone in enumerate(zones):
+            _zv = _zone.get("ventilation") or {}
+            _zc = _zv["components"] if isinstance(_zv, dict) and "components" in _zv else _gv_comps
+            _names = [str(_c.get("name", "")) for _c in (_zc or []) if _ahu_declares_moisture(_c)]
+            if (_names and _mz_opt(_zone, "latent_ahu_moisture", "auto") is not False
+                    and _mz_opt(_zone, "latent_system_supply_moisture_kg_kg") is None):
+                _mz_moist[_zi] = _names
+        # EN 16798-5-1 central AHUs serving several zones through a duct network (VAV)
+        from .central_ahu_16798_5_1 import central_ahus_from_building
+        _central_ahus = central_ahus_from_building(building_object, zone_names) if include_ventilation else []
+        _central_buf = {}
+        _central_q_zone = {}
+        _central_q_oda = {}
+        _mz_track = {}          # zone index -> central AHU, moisture state for its extract only
+        for _cahu in _central_ahus:
+            _central_buf[_cahu.name] = {
+                col_pfx: (np.full(Tstepn, np.nan, dtype=float) if dtype == float
+                          else np.zeros(Tstepn, dtype=dtype))
+                for col_pfx, _, dtype in _AHU_DIAG_SPEC}
+            for _zn in _cahu.zone_names:
+                _central_q_zone[(_cahu.name, _zn)] = np.zeros(Tstepn)
+                _central_q_oda[(_cahu.name, _zn)] = np.zeros(Tstepn)
+                _zi_c = z_idx[_zn]
+                if not _cahu.declares_moisture:
+                    continue
+                if (_mz_opt(zones[_zi_c], "latent_ahu_moisture", "auto") is not False
+                        and _mz_opt(zones[_zi_c], "latent_system_supply_moisture_kg_kg") is None):
+                    _mz_moist.setdefault(_zi_c, []).append(_cahu.name)
+                else:
+                    # zone outside the AHU moisture path: its moisture content is still
+                    # carried, only to give the central AHU the extract air mix
+                    _mz_track[_zi_c] = _cahu.name
+        for _zi_c in list(_mz_track):
+            if _zi_c in _mz_moist:          # coupled through a zone component: state exists
+                _mz_track.pop(_zi_c)
+        _zone_out_by_zi = {_zo["zi"]: _zo for _zo in zone_output_buffers}
+        if _mz_moist or _mz_track:
+            _t2m_mz = _series_to_float_array(sim_df, "T2m", default=np.nan)
+            _rh_mz = _series_to_float_array(sim_df, "RH", default=np.nan)
+            _rh_mz = np.where(np.isfinite(_rh_mz), np.clip(_rh_mz, 0.0, 100.0), 50.0)
+            _x_ext_mz = _x_set_point(_t2m_mz, _rh_mz)
+            _x_zone_mz = {zi: float(_x_ext_mz[0]) for zi in list(_mz_moist) + list(_mz_track)}
+            _x_sup_mz = {zi: np.full(Tstepn, np.nan) for zi in _mz_moist}
+            _q_mech_mz = {zi: np.zeros(Tstepn) for zi in _mz_moist}
+            _x_int_mz = {zi: np.full(Tstepn, np.nan) for zi in _mz_moist}
+        _ahu_step_z = {}
+
         # Thermally unconditioned adjacent zones (EN ISO 52016-1 6.4.5, 6.5.9, E.3), declared in
         # ``adjacent_zones`` and reached by surfaces with ``boundary: "UNCONDITIONED"`` and
         # ``name_adj_zone``.  The state of hour t uses the operative temperature of hour t-1 of
@@ -6571,6 +6835,11 @@ class ISO52016:
             s_ve_z_t = np.zeros(Z, dtype=float)
             purge_factor_z_t = np.ones(Z, dtype=float)
             purge_active_z_t = np.zeros(Z, dtype=int)
+            if _mz_moist:
+                _mz_moist_state = {
+                    str(zones[zi].get("name")): {"x_ext": float(_x_ext_mz[t]), "x_zone": _x_zone_mz[zi]}
+                    for zi in _mz_moist
+                }
             for zi, zone in enumerate(zones):
                 phi_int_z_t[zi] = _zone_internal_gain_w(zone, t)
                 if str(zone["name"]) in _light_buffers:
@@ -6584,6 +6853,7 @@ class ISO52016:
                 )
                 h_ve_z_t[zi] = vent_bdy.heat_transfer_coefficient_w_k
                 s_ve_z_t[zi] = vent_bdy.source_term_w
+                _ahu_step_z[zi] = _ahu_step
                 for _cn, _ao in _ahu_step.items():
                     _key = (zi, _cn)
                     if _key not in _ahu_buffers:
@@ -6601,6 +6871,35 @@ class ISO52016:
                             _buf[col_pfx][t] = float(raw) if raw is not None else np.nan
                         else:
                             _buf[col_pfx][t] = int(bool(raw))
+            for _cahu in _central_ahus:
+                # central AHU: one step for all its zones, VAV flows from the previous step
+                _ts_c = pd.to_datetime(sim_df.index[t], errors="coerce")
+                _hod = int(_ts_c.hour) if pd.notna(_ts_c) else int(t % 24)
+                _zn_c = _cahu.zone_names
+                _c_out, _c_zone = _cahu.step(
+                    _hod, T_out,
+                    {zn: float(Theta[z_idx[zn]]) for zn in _zn_c},
+                    {zn: (float(_zone_out_by_zi[z_idx[zn]]["Q_HVAC"][t - 1]) if t > 0 else 0.0)
+                     for zn in _zn_c},
+                    x_ext=(float(_x_ext_mz[t]) if _cahu.declares_moisture else None),
+                    zone_x_prev=({zn: _x_zone_mz[z_idx[zn]] for zn in _zn_c}
+                                 if _cahu.declares_moisture else None),
+                    hour_of_year=_hour_of_year(sim_df, t),
+                )
+                for zn, _pz in _c_zone.items():
+                    _zi_c = z_idx[zn]
+                    for _st in _pz["streams"]:
+                        h_ve_z_t[_zi_c] += _st.heat_transfer_coefficient_w_k
+                        s_ve_z_t[_zi_c] += _st.heat_transfer_coefficient_w_k * _st.source_temperature_c
+                    _ahu_step_z.setdefault(_zi_c, {})[_cahu.name] = _pz["outputs"]
+                    _central_q_zone[(_cahu.name, zn)][t] = _pz["q_delivered"]
+                    _central_q_oda[(_cahu.name, zn)][t] = _pz["q_oda"]
+                for col_pfx, attr, dtype in _AHU_DIAG_SPEC:
+                    raw = getattr(_c_out, attr)
+                    if dtype == float:
+                        _central_buf[_cahu.name][col_pfx][t] = float(raw) if raw is not None else np.nan
+                    else:
+                        _central_buf[_cahu.name][col_pfx][t] = int(bool(raw))
             phi_sol_z_t = _zone_solar_transmitted_w(t)
             if _ztu_mz.active:
                 _z0 = zone_names[0]
@@ -6889,6 +7188,42 @@ class ISO52016:
                 zone_out["T_rad"][t] = float(Theta_rad_t[zi])
                 zone_out["T_op"][t] = float(Theta_op_t[zi])
                 _theta_op_last[zi] = float(Theta_op_t[zi])
+                if zi in _mz_moist or zi in _mz_track:
+                    _xe = float(_x_ext_mz[t])
+                    _q_sum = _qx_sum = 0.0
+                    if zi in _mz_moist:
+                        # eq. (80): flow-weighted supply of the zone AHUs with moisture data
+                        for _mn in _mz_moist[zi]:
+                            _ao = (_ahu_step_z.get(zi) or {}).get(_mn)
+                            if _ao is None or _ao.supply_humidity_ratio is None:
+                                continue
+                            _q = float(_ao.actual_supply_flow_m3_h) / 3600.0
+                            _q_sum += _q
+                            _qx_sum += _q * float(_ao.supply_humidity_ratio)
+                        _xs = _qx_sum / _q_sum if _q_sum > 0.0 else _xe
+                        _x_sup_mz[zi][t] = _xs
+                        _q_mech_mz[zi][t] = _q_sum
+                    else:
+                        # zone outside the AHU moisture path: the central AHU supply enters
+                        # with the declared supply moisture content, else as outdoor air
+                        _ao = (_ahu_step_z.get(zi) or {}).get(_mz_track[zi])
+                        _q_sum = float(_ao.actual_supply_flow_m3_h) / 3600.0 if _ao is not None else 0.0
+                        _x_dec = _mz_opt(zones[zi], "latent_system_supply_moisture_kg_kg")
+                        _xs = _mz_series_at(_x_dec, t) if _x_dec is not None else _xe
+                    _rho_q = max(float(h_ve_z_t[zi]), 0.0) / ISO52016_CA_J_KG_K
+                    _mech = min(ISO52016_RHO_A_KG_M3 * _q_sum, _rho_q)
+                    _vol = float(zones[zi].get("volume") or zones[zi].get("zone_volume_m3") or 0.0)
+                    _cap = ISO52016_RHO_A_KG_M3 * max(_vol, 0.0) / max(float(dt_s), 1e-9)
+                    _zd = zones[zi]
+                    _g = (_mz_series_at(_mz_opt(_zd, "moisture_production_kg_s", 0.0), t)
+                          + float(_mz_opt(_zd, "latent_internal_fraction", 0.0) or 0.0)
+                          * float(phi_int_z_t[zi]) / ISO52016_HWE_J_KG
+                          - _mz_series_at(_mz_opt(_zd, "moisture_absorption_kg_s", 0.0), t))
+                    if _rho_q + _cap > 0.0:
+                        _x_zone_mz[zi] = (_mech * _xs + (_rho_q - _mech) * _xe + _g
+                                          + _cap * _x_zone_mz[zi]) / (_rho_q + _cap)
+                    if zi in _x_int_mz:
+                        _x_int_mz[zi][t] = _x_zone_mz[zi]
                 # set-points active in the hour and ideal request: a capacity shortage shows
                 # as Q_HVAC_req - Q_HVAC and as an operative temperature off the set-point
                 zone_out["T_set_H"][t] = float(Th_z[zi])
@@ -6986,6 +7321,18 @@ class ISO52016:
         if _ztu_mz.active:
             for _j, _name in enumerate(_ztu_mz.names):
                 out_data[f"theta_ztu_{_name}"] = _ztu_mz.theta_history[:, _j]
+        for _cname, _cbuf in _central_buf.items():
+            for col_pfx, _, _ in _AHU_DIAG_SPEC:
+                out_data[f"{col_pfx}_{_cname}"] = _cbuf[col_pfx]
+        for (_cname, _zn), _qz in _central_q_zone.items():
+            out_data[f"q_vav_m3h_{_cname}_{_zn}"] = _qz          # supply delivered to the zone
+        for (_cname, _zn), _qo in _central_q_oda.items():
+            out_data[f"q_oda_m3h_{_cname}_{_zn}"] = _qo           # outdoor air reaching the zone
+        for _zi in _mz_moist:
+            _zn = str(zones[_zi].get("name"))
+            out_data[f"X_sup_ahu_mix_{_zn}"] = _x_sup_mz[_zi]          # supply humidity used, eq. (80)
+            out_data[f"q_sup_ahu_moist_m3_s_{_zn}"] = _q_mech_mz[_zi]
+            out_data[f"X_int_ahu_{_zn}"] = _x_int_mz[_zi]              # zone moisture seen by the AHU
         # F_sh;obst applied to each window element (only the shaded ones)
         for _wname, _buf in _fsh_buffers.items():
             if np.any(_buf < 1.0 - 1e-12):
@@ -7045,7 +7392,8 @@ class ISO52016:
         _latent_keys = (
             "latent_rh_humidification_pct", "latent_rh_dehumidification_pct", "latent_indoor_rh_pct",
             "latent_internal_fraction", "moisture_production_kg_s", "moisture_absorption_kg_s",
-            "latent_mechanical_supply_m3_s",
+            "latent_mechanical_supply_m3_s", "latent_ahu_moisture",
+            "latent_system_supply_moisture_kg_kg",
         )
         latent_opts = {k: kwargs.pop(k) for k in _latent_keys if k in kwargs}
         hourly_results = cls.simulate_envelope_multizone_free_floating(
@@ -7054,6 +7402,7 @@ class ISO52016:
             weather_source=weather_source,
             include_solar=include_solar,
             warmup_hours=warmup_hours,
+            latent_options=latent_opts,
             **kwargs,
         )
 
@@ -7157,10 +7506,17 @@ class ISO52016:
                 + phi_lat_int / ISO52016_HWE_J_KG
             mech_q = opt("latent_mechanical_supply_m3_s")
             x_sup_ss = opt("latent_system_supply_moisture_kg_kg")
-            ahu = _ahu_supply_moisture(building_object, hourly_results,
-                                       opt("latent_ahu_moisture", "auto"), zone=zone)
-            if x_sup_ss is None and ahu is not None:
-                # EN 16798-5-1 AHU of the zone: supply moisture from the zone moisture content
+            ahu = None
+            if x_sup_ss is None and f"X_sup_ahu_mix_{zn}" in hourly_results.columns:
+                # AHU moisture coupled in the heat balance: supply humidity recorded hour by hour
+                x_sup_ss = hourly_results[f"X_sup_ahu_mix_{zn}"].to_numpy(dtype=float)
+                x_sup_ss = np.where(np.isfinite(x_sup_ss), x_sup_ss, np.nan)
+                mech_q = hourly_results[f"q_sup_ahu_moist_m3_s_{zn}"].to_numpy(dtype=float)
+            elif x_sup_ss is None:
+                ahu = _ahu_supply_moisture(building_object, hourly_results,
+                                           opt("latent_ahu_moisture", "auto"), zone=zone)
+            if ahu is not None:
+                # fallback: supply moisture from the zone moisture content after the simulation
                 x_sup_ss, mech_q = ahu["fn"], ahu["q_m3_s"]
             mb = _zone_moisture_balance(
                 hourly_results[f"H_ve_{zn}"].to_numpy(dtype=float),
@@ -7178,6 +7534,9 @@ class ISO52016:
                 else ISO52016_RHO_A_KG_M3 * np.asarray(mech_q, dtype=float),
             )
             new_cols[f"X_int_kg_kg_da_{zn}"] = mb["x_int"]
+            if "x_int_ss" in mb and f"X_int_ahu_{zn}" in hourly_results.columns:
+                # coupled AHU: report the zone moisture content the AHU actually saw
+                mb["x_int_ss"] = hourly_results[f"X_int_ahu_{zn}"].to_numpy(dtype=float)
             if "x_int_ss" in mb:
                 new_cols[f"X_sup_ss_kg_kg_da_{zn}"] = mb["x_sup_ss"]
                 new_cols[f"X_int_ss_kg_kg_da_{zn}"] = mb["x_int_ss"]
@@ -8825,6 +9184,12 @@ class ISO52016:
             external_internal_gains_series = ext_arr[:Tstepn]
         RH_arr = _series_to_float_array(sim_df, "RH", default=np.nan)
 
+        # EN 16798-5-1 AHU moisture processes coupled to the heat balance: the zone moisture
+        # content is carried hour by hour (EN ISO 52016-1 eq. 80) so the AHU of each hour
+        # sees the outdoor humidity ratio and the zone moisture content (previous step).
+        _ahu_mst = _SingleZoneAHUMoisture(building_object, sim_df, RH_arr, Tstepn, kwargs)
+        _moist_on = _ahu_mst.on
+
         # ====================================
         # Get info of porfiles
         # ====================================
@@ -9161,6 +9526,10 @@ class ISO52016:
                         building_object, float(Theta_old[ri]), Tstepi, sim_df, profile_df,
                         ahu_outputs_collector=_ahu_coll_tstep,
                         adjacent_zone_state=_ztu_set.ventilation_state(_ztu_states) if _ztu_set.active else None,
+                        moisture_state=_ahu_mst.state(Tstepi),
+                        # LOAD_COMP (29c): zone load and AHU outputs of the previous step
+                        load_state={"q_hvac_prev_w": float(Phi_HC_nd_act[Tstepi - 1]) if Tstepi > 0 else 0.0,
+                                    "ahu_prev": _ahu_coll_all[-1] if _ahu_coll_all else {}},
                     )
                     H_ve_nat = _vent_bdy.heat_transfer_coefficient_w_k
                     S_ve_nat = _vent_bdy.source_term_w
@@ -9541,6 +9910,8 @@ class ISO52016:
                 _ahu_coll_all.append(dict(_ahu_coll_tstep))
                 H_ve_nat = _H_ve_nat_tstep
                 S_ve_nat = _S_ve_nat_tstep
+                _ahu_mst.step(Tstepi, _ahu_coll_tstep, _H_ve_nat_tstep, Dtime[Tstepi],
+                              f_lat_int * float(int_gains) / ISO52016_HWE_J_KG)
 
                 # =========================
                 # === SANKEY (per timestep)
@@ -9827,74 +10198,8 @@ class ISO52016:
 
         RH_act = RH_arr[act_slice] if len(RH_arr) >= Tstepn else np.full(len(hourly_results), np.nan)
         int_gains_act = int_gains_arr[act_slice]
-        # EN ISO 52016-1 6.5.14: moisture content and (de)humidification / latent load
-        # of the zone with ideal humidity control. Set-points: the dehumidification and
-        # humidification relative humidity (latent_rh_dehumidification_pct /
-        # latent_rh_humidification_pct); latent_indoor_rh_pct, when given, sets both.
-        _both_rh = kwargs.get("latent_indoor_rh_pct")
-        _rh_hu = kwargs.get("latent_rh_humidification_pct",
-                            DEFAULT_RH_SET_HUMIDIFICATION_PCT if _both_rh is None else _both_rh)
-        _rh_dhu = kwargs.get("latent_rh_dehumidification_pct",
-                             DEFAULT_RH_SET_DEHUMIDIFICATION_PCT if _both_rh is None else _both_rh)
-        _bld_m = building_object.get("building", {}) or {}
-        _zone_vol_m3 = float(_bld_m.get("zone_volume_m3") or _bld_m.get("zone_volume") or _bld_m.get("volume") or 0.0)
-        _dt_h_lat = _infer_timestep_hours_from_index(hourly_results.index, default=1.0)
-        # moisture production G_int [kg/s]: kwarg moisture_production_kg_s (scalar or hourly array)
-        # plus the legacy latent fraction of the sensible internal gains (latent_internal_fraction)
-        _phi_lat_int = f_lat_int * np.asarray(int_gains_act, dtype=float)
-        _g_int = np.asarray(kwargs.get("moisture_production_kg_s", 0.0), dtype=float) + _phi_lat_int / ISO52016_HWE_J_KG
-        _mech_q = kwargs.get("latent_mechanical_supply_m3_s")
-        _x_sup_ss = kwargs.get("latent_system_supply_moisture_kg_kg")
-        _ahu_moist = _ahu_supply_moisture(
-            building_object, hourly_results, kwargs.get("latent_ahu_moisture", "auto"))
-        if _x_sup_ss is None and _ahu_moist is not None:
-            # EN 16798-5-1 AHU: supply moisture of each hour from the zone moisture content
-            _x_sup_ss, _mech_q = _ahu_moist["fn"], _ahu_moist["q_m3_s"]
-        _mb = _zone_moisture_balance(
-            hourly_results["H_ve"].to_numpy(dtype=float),
-            hourly_results["T_air"].to_numpy(dtype=float),
-            hourly_results["T_ext"].to_numpy(dtype=float),
-            np.asarray(RH_act, dtype=float),
-            _zone_vol_m3,
-            _dt_h_lat * 3600.0,
-            _rh_hu,
-            _rh_dhu,
-            g_int_kg_s=_g_int,
-            g_abs_kg_s=kwargs.get("moisture_absorption_kg_s", 0.0),  # Table B.20: no absorption by default
-            x_sup_ss_kg_kg=_x_sup_ss,
-            q_mech_rho_kg_s=None if _mech_q is None else ISO52016_RHO_A_KG_M3 * np.asarray(_mech_q, dtype=float),
-        )
-        hourly_results["X_ext_kg_kg_da"] = _mb["x_ext"]
-        hourly_results["X_set_min_kg_kg_da"] = _mb["x_set_min"]
-        hourly_results["X_set_max_kg_kg_da"] = _mb["x_set_max"]
-        hourly_results["X_int_kg_kg_da"] = _mb["x_int"]
-        hourly_results["m_dot_vent_kg_s"] = _mb["rho_q_kg_s"]
-        hourly_results["G_HU_kg_s"] = _mb["g_hu_kg_s"]
-        hourly_results["G_DHU_kg_s"] = _mb["g_dhu_kg_s"]
-        hourly_results["Phi_HU_W"] = _mb["phi_hu_w"]
-        hourly_results["Phi_DHU_W"] = _mb["phi_dhu_w"]
-        hourly_results["X_sup_HU_req_kg_kg_da"] = _mb["x_sup_hu_req"]
-        hourly_results["X_sup_DHU_req_kg_kg_da"] = _mb["x_sup_dhu_req"]
-        hourly_results["Q_latent_vent_W"] = _mb["phi_dhu_vent_w"]  # ventilation part of the dehumidification load
-        hourly_results["Q_latent_vent_Wh"] = _mb["phi_dhu_vent_w"] * _dt_h_lat
-        hourly_results["Q_int_latent_W"] = _phi_lat_int
-        hourly_results["Q_latent_W_signed"] = _mb["phi_dhu_w"] - _mb["phi_hu_w"]  # >0 dehumidify, <0 humidify
-        hourly_results["Q_latent_W"] = _mb["phi_dhu_w"]  # latent cooling need
-        hourly_results["Q_latent_Wh"] = _mb["phi_dhu_w"] * _dt_h_lat
-        hourly_results["Q_H_latent_W"] = _mb["phi_hu_w"]  # latent heating need (humidification)
-        hourly_results["Q_H_latent_Wh"] = _mb["phi_hu_w"] * _dt_h_lat
-        if _ahu_moist is not None and _x_sup_ss is _ahu_moist["fn"]:
-            for _col, _arr in _ahu_moist["record"].items():
-                hourly_results[_col] = _arr
-        if "x_int_ss" in _mb:
-            hourly_results["X_sup_ss_kg_kg_da"] = _mb["x_sup_ss"]
-            hourly_results["X_int_ss_kg_kg_da"] = _mb["x_int_ss"]
-            hourly_results["Phi_ss_HU_W"] = _mb["phi_ss_hu_w"]
-            hourly_results["Phi_ss_DHU_W"] = _mb["phi_ss_dhu_w"]
-
-        hourly_results["Q_C_sensible"] = hourly_results["Q_C"]
-        hourly_results["Q_C_latent"]   = hourly_results["Q_latent_W"]   # total latent cooling need (vent + internal)
-        hourly_results["Q_C_total"]    = hourly_results["Q_C_sensible"] + hourly_results["Q_C_latent"]
+        _single_zone_latent_balance(hourly_results, building_object, kwargs, RH_act, int_gains_act,
+                                    ahu_mst=_ahu_mst, act_slice=act_slice)
 
         dt_h_annual = _infer_timestep_hours_from_index(hourly_results.index, default=1.0)
         Q_H_annual = _integrate_power_series_to_energy_wh(hourly_results["Q_H"], default_dt_h=dt_h_annual)
@@ -10375,6 +10680,11 @@ class ISO52016:
         H_ve_nat_all = [0]
         S_ve_nat_all = [0.0]
         _ahu_coll_all: list = []   # per-timestep {comp_name: AHUStepOutputs}; appended once per timestep after HVAC loop
+        # EN 16798-5-1 AHU moisture coupled to the heat balance (as in the standard engine)
+        _ahu_mst = _SingleZoneAHUMoisture(building_object, sim_df,
+                                          _series_to_float_array(sim_df, "RH", default=np.nan),
+                                          Tstepn, kwargs)
+        _f_lat_int_c = float(kwargs.get("latent_internal_fraction", 0.0) or 0.0)
         # Thermally unconditioned adjacent zones (ISO 52016-1, 6.4.5, 6.5.9, E.3)
         _ztu_set = UnconditionedZoneSet(building_object)
         _ztu_states: list = []
@@ -10820,6 +11130,10 @@ class ISO52016:
                         building_object, float(Theta_old[ri]), Tstepi, sim_df, profile_df,
                         ahu_outputs_collector=_ahu_coll_tstep,
                         adjacent_zone_state=_ztu_set.ventilation_state(_ztu_states) if _ztu_set.active else None,
+                        moisture_state=_ahu_mst.state(Tstepi),
+                        # LOAD_COMP (29c): zone load and AHU outputs of the previous step
+                        load_state={"q_hvac_prev_w": float(Phi_HC_nd_act[Tstepi - 1]) if Tstepi > 0 else 0.0,
+                                    "ahu_prev": _ahu_coll_all[-1] if _ahu_coll_all else {}},
                     )
                     H_ve_nat = _vent_bdy.heat_transfer_coefficient_w_k
                     S_ve_nat = _vent_bdy.source_term_w
@@ -11231,6 +11545,8 @@ class ISO52016:
                 _ahu_coll_all.append(dict(_ahu_coll_tstep))
                 H_ve_nat = _H_ve_nat_tstep
                 S_ve_nat = _S_ve_nat_tstep
+                _ahu_mst.step(Tstepi, _ahu_coll_tstep, _H_ve_nat_tstep, Dtime[Tstepi],
+                              _f_lat_int_c * float(int_gains) / ISO52016_HWE_J_KG)
 
                 # =========================
                 # === SANKEY (per timestep)
@@ -11525,9 +11841,18 @@ class ISO52016:
         ):
             hourly_results.loc[:, "Q_H_AHU_used"] = Phi_H_AHU_act[act_slice]
 
+        # EN ISO 52016-1 6.5.14 latent balance, same columns as the standard engine
+        _rh_c = _series_to_float_array(sim_df, "RH", default=np.nan)
+        _single_zone_latent_balance(
+            hourly_results, building_object, kwargs,
+            _rh_c[act_slice] if len(_rh_c) >= Tstepn else np.full(len(hourly_results), np.nan),
+            np.asarray(_report_q_internal_gains_all, dtype=float),
+            ahu_mst=_ahu_mst, act_slice=act_slice)
+
         dt_h_annual = _infer_timestep_hours_from_index(hourly_results.index, default=1.0)
         Q_H_annual = _integrate_power_series_to_energy_wh(hourly_results["Q_H"], default_dt_h=dt_h_annual)
         Q_C_annual = _integrate_power_series_to_energy_wh(hourly_results["Q_C"], default_dt_h=dt_h_annual)
+        Q_latent_annual = _integrate_power_series_to_energy_wh(hourly_results["Q_latent_W"], default_dt_h=dt_h_annual)
         A_use = float(building_object['building']['net_floor_area'])
 
         annual_results_dic = {
@@ -11537,8 +11862,11 @@ class ISO52016:
             "Q_C_annual_per_sqm": Q_C_annual / A_use if A_use > 0 else 0.0,
             "Q_H_annual_kWh": Q_H_annual / 1000.0,
             "Q_C_annual_kWh": Q_C_annual / 1000.0,
+            "Q_latent_annual_Wh": Q_latent_annual,
+            "Q_latent_annual_kWh": Q_latent_annual / 1000.0,
             "Q_H_annual_kWh_per_sqm": (Q_H_annual / 1000.0 / A_use) if A_use > 0 else 0.0,
             "Q_C_annual_kWh_per_sqm": (Q_C_annual / 1000.0 / A_use) if A_use > 0 else 0.0,
+            "Q_latent_annual_kWh_per_sqm": (Q_latent_annual / 1000.0 / A_use) if A_use > 0 else 0.0,
             "time_step_h": dt_h_annual,
         }
         _add_annual_balance_columns(hourly_results, annual_results_dic, A_use, dt_h_annual)

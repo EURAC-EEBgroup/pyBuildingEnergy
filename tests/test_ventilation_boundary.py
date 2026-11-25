@@ -2461,6 +2461,15 @@ class TestAhuCollToColumns:
             "T_ahu_sup_ahu", "T_ahu_sup_req_ahu",
             "q_sup_m3h_ahu", "q_ext_m3h_ahu",
             "ahu_bypass_ahu", "ahu_frost_ahu",
+            # EN 16798-5-1 moisture processes
+            "X_ahu_sup_ahu", "Q_ahu_cool_lat_ahu", "Q_ahu_hum_ahu", "m_ahu_hum_water_kg_h_ahu",
+            # distribution, recirculation, frost protection, adiabatic cooling
+            "Q_ahu_duct_loss_ahu", "Q_ahu_duct_loss_rbl_ahu", "Q_ahu_rca_ahu",
+            "Q_ahu_frost_preh_ahu", "f_ahu_oda_ahu", "q_ahu_makeup_m3h_ahu",
+            "m_ahu_ac_water_kg_h_ahu",
+            # ground preheating, casing losses, auxiliary energy, dehumidification
+            "Q_ahu_gnd_ahu", "Q_ahu_casing_loss_ahu", "Q_ahu_casing_loss_rbl_ahu",
+            "P_ahu_aux_ahu", "P_ahu_hum_aux_ahu", "Q_ahu_dhu_req_ahu",
         }
         assert set(cols.keys()) == expected
 
@@ -2648,7 +2657,8 @@ class TestMultizoneAhuDiagnostics:
         float_cols = [
             f"{col_pfx}_ahu_zone1"
             for col_pfx, _, dtype in _AHU_DIAG_SPEC
-            if dtype == float and col_pfx != "T_ahu_sup_req"
+            # X_ahu_sup is NaN for an AHU without moisture data
+            if dtype == float and col_pfx not in ("T_ahu_sup_req", "X_ahu_sup")
         ]
         for col in float_cols:
             assert np.all(np.isfinite(out[col].to_numpy())), (
