@@ -75,3 +75,13 @@ their exact source commits have not been verified.
   zone ventilation through an ``en16798_7`` component.
 * Input validation for the new modules (finite values, ranges, inconsistent configurations).
 * Details in CHANGELOG.rst.
+
+2.2.1 (2026-11-26)
+------------------
+* Fix: the multizone simulation (``simulate_envelope_multizone_free_floating``) did not
+  import the hourly profile generator, so with ``use_profiles=True`` every zone silently
+  ran with flat 1.0 profiles (constant internal gains and ventilation factor). Zone
+  profiles are now generated; a profile failure emits a ``RuntimeWarning``.
+* ASHRAE 140-2023 Section 11 air-side tests (fan-coil and single-zone systems) for the
+  EN 16798-5-1 AHU; checked on Python 3.12 and 3.13.
+* Details in CHANGELOG.rst.

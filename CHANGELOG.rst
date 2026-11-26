@@ -1,5 +1,15 @@
-Unreleased
-----------
+2.2.1 (2026-11-26)
+------------------
+
+- Fix: ``ISO52016.simulate_envelope_multizone_free_floating`` did not import
+  ``HourlyProfileGenerator`` and ``get_country_code_from_latlon`` (the lazy imports covered
+  only the single-zone paths). With ``use_profiles=True`` (the default) the per-zone profile
+  block raised NameError inside ``except Exception: continue``, so every zone ran with flat
+  1.0 profiles (constant internal gains and ventilation factor) and the holiday calendar
+  fell back to "IT". Present since the multizone harness was introduced (2.1.7 included).
+  Zone profiles are now generated; a profile failure now emits a ``RuntimeWarning`` instead
+  of passing silently. ASHRAE 140 case 960 results are unchanged (constant schedules).
+  Regression test ``tests/test_multizone_profiles.py``.
 
 - New test ``tests/test_ashrae140_airside_ae.py``: ASHRAE 140-2023 Section 11 air-side
   cases run with the EN 16798-5-1 AHU step at steady state (recirculation, LOAD_COMP supply

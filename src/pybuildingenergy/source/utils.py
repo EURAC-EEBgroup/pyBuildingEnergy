@@ -5138,6 +5138,7 @@ class ISO52016:
           - set `progress_log_every_steps` to an integer > 0 to emit periodic progress messages.
           - `progress_logger` can be any callable accepting a single string.
         """
+        from .generate_profile import HourlyProfileGenerator, get_country_code_from_latlon  # lazy
 
         if validate and building_object.get("zones"):
             _mz_issues = _mz52016.validate_multizone_input(building_object)
@@ -5371,8 +5372,15 @@ class ISO52016:
                         if col in aligned.columns:
                             arr = pd.to_numeric(aligned[col], errors="coerce").fillna(0.0).clip(lower=0.0)
                             zone_profiles[zname][col] = arr.values
-                except Exception:
-                    # Fallback to flat profiles for this zone only.
+                except Exception as exc:
+                    # Fallback to flat profiles for this zone only, but say so: a silent
+                    # fallback hid a missing import (all zones flat 1.0) up to 2.2.0.
+                    warnings.warn(
+                        f"Zone '{zname}': hourly profiles could not be generated "
+                        f"({type(exc).__name__}: {exc}); flat profiles (1.0) used.",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
                     continue
 
         def _profile_value(zone_name: str, col: str, tstep: int, default: float = 1.0) -> float:
