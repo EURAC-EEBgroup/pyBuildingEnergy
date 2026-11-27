@@ -157,6 +157,8 @@
     }
     .implemented { color: var(--green); background: #e9f7ef; }
     .simplified { color: var(--amber); background: #fff6dd; }
+    .extension { color: var(--blue); background: #e8f1fa; }
+    .assumption { color: #6b4fa0; background: #f1ecfa; }
     .link-small { color: var(--muted); font-size: 0.92rem; }
     @media (max-width: 780px) {
       .grid { grid-template-columns: 1fr; }
@@ -214,14 +216,19 @@
           <p><code>src/pybuildingenergy/source/cooling_16798_9.py</code></p>
           <p><code>src/pybuildingenergy/source/cooling_storage_16798_15.py</code></p>
           <p><code>src/pybuildingenergy/source/cooling_generation_16798_13.py</code></p>
-          <p><code>examples/heat_pump_15316_4_2_example.py</code></p>
+          <p><code>src/pybuildingenergy/source/cooling_chain_16798.py</code> (coupled chain)</p>
+          <p><code>examples/heat_pump_15316_4_2_example.py</code>, <code>examples/new_building.py</code></p>
         </div>
         <div class="card">
           <h3>Implemented Cooling Boundary</h3>
           <p>
             The default examples model a water-based room cooling system,
             chilled-water buffer storage and an air-to-water compression cooling
-            generator using EER/capacity product-map data.
+            generator using EER/capacity product-map data. The modules also cover
+            several circuits with priorities, chilled-water (mixed or stratified),
+            ice and PCM storage with a state of charge, compression, absorption and
+            OTHER generators with priorities, free cooling and the dry / wet /
+            hybrid heat rejection of EN 16798-13 6.4.2.4.
           </p>
         </div>
       </div>
@@ -245,6 +252,54 @@
   -> EN 14511/EN 14825 product performance data
   -> EN 16798-13 cooling generation
   -> EN 15316-4-2 heating/DHW heat-pump generation</code></pre>
+      <h3>Coupled storage - generator balance</h3>
+      <p>
+        <code>CoolingChainCalculator</code> closes the loop that a purely
+        sequential chain leaves open: the storage request is checked against
+        what the generator can supply at the temperature the storage requires,
+        and the storage is simulated again with that limit until both agree.
+        Each stage receives one explicit demand column.
+      </p>
+      <pre><code>EN 16798-9   Q_C_gen_in_req, required flow temperatures (circuits)
+  -> EN 16798-15  state of charge, request to the generator, formula (1) temperature
+  -> EN 16798-13  availability at that temperature (free cooling + generators + backup)
+  -> EN 16798-15  again with Q_C_sto_gen_avl_kWh: users before charging,
+                  emergency discharge, charge really received
+  ... until the storage request &lt;= availability (usually 2 iterations)
+  -> EN 16798-9   again with the actual generator / storage outlet temperatures:
+                  effective flow (23) and return (24) temperatures
+  -> terminals    (optional) cooling deliverable at that temperature; the circuit
+                  demand is limited to it and the chain re-run (outer iteration)
+  -> EN 16798-9   distribute_shortfall: lowest-priority circuits lose first,
+                  equal priorities and zones of a circuit pro rata</code></pre>
+      <p>
+        The shortfall is split into a temperature part
+        (<code>Q_C_dis_unmet_temp_kWh_&lt;circuit&gt;</code>: water too warm for the
+        terminals) and an energy part (<code>Q_C_dis_unmet_gen_kWh_&lt;circuit&gt;</code>:
+        storage / generator short). <code>h_C_dis_flw_not_reached</code> counts the hours
+        with demand in which the required flow temperature is not reached. Without
+        terminal data a warm supply is reported but not converted into a shortfall.
+        Always check <code>converged</code>: a RuntimeWarning is raised when an
+        iteration stops at <code>max_iterations</code>.
+      </p>
+      <p>
+        Outputs: <code>Q_C_sto_unmet_kWh</code> (shortfall towards the users),
+        <code>Q_C_sto_chg_unmet_kWh</code> (charge the store wanted but did not
+        receive), <code>Q_C_dis_unmet_kWh_&lt;circuit&gt;</code>,
+        <code>Q_C_del_kWh_&lt;zone&gt;</code>, iterations and convergence.
+        Both examples use the coupled chain when EN 16798-15 and EN 16798-13 are
+        selected.
+      </p>
+      <p>
+        Status labels used below:
+        <span class="status implemented">implemented</span> formula of the
+        standard;
+        <span class="status assumption">assumption</span> choice where the
+        standard is silent or ambiguous;
+        <span class="status extension">extension</span> library feature
+        beyond the standard;
+        <span class="status simplified">fallback</span> default data.
+      </p>
       <div class="note">
         In the default path, cooling electricity is reported by
         <code>CoolingGenerationSystemCalculator</code>. Heating and DHW
@@ -321,9 +376,10 @@
             <td>Required storage inlet temperature.</td>
             <td><code>CoolingStorageSystemCalculator._simulate()</code></td>
             <td>
-              The storage module passes the required cooling-side generator
-              outlet temperature through to <code>T_C_sink_C</code> for the
-              cooling generator.
+              Formula (1): while the store is recharged beyond its losses the
+              generator flow temperature is theta_C;sto - delta_theta_C;sto;gen;flw,
+              otherwise the distribution requirement; passed as
+              <code>T_C_sink_C</code> / <code>theta_C_sto_in_req_C</code>.
             </td>
             <td><span class="status implemented">implemented</span></td>
           </tr>
@@ -357,12 +413,13 @@
             <td>Condenser/source and generator outlet temperatures.</td>
             <td>
               <code>CoolingGenerationSystemCalculator._prepare_timeseries()</code><br>
-              <code>CoolingGenerationSystemCalculator._default_source_temperature()</code>
+              <code>CoolingGenerationSystemCalculator._condenser_inlet()</code>
             </td>
             <td>
-              Air-cooled examples use outdoor air as the heat-rejection/source
-              temperature. Wet, dry, hybrid and other heat-rejection types have
-              explicit fallback temperature options.
+              (3a) dry and (3b) wet condenser inlet (outdoor dry / wet bulb +
+              delta_theta_hr + delta_theta_ls;dis;hr), (4) outlet limit, (5)
+              evaporator outlet. A <code>T_C_source_C</code> column overrides the
+              computed inlet.
             </td>
             <td><span class="status implemented">implemented</span></td>
           </tr>
@@ -414,6 +471,111 @@
             <td><span class="status implemented">implemented</span></td>
           </tr>
           <tr>
+            <td>EN 16798-9, (17), (20), (23), (24), (27), (28)</td>
+            <td>Several circuits.</td>
+            <td><code>CoolingSystemCalculator._prepare_circuits()</code>, <code>_simulate_circuits()</code></td>
+            <td>Circuit demands (28) and total (27); MAX_TMP takes the minimum circuit requirement (17); effective flow temperature (23) and flow-weighted mixed return (24).</td>
+            <td><span class="status implemented">implemented</span></td>
+          </tr>
+          <tr>
+            <td>EN 16798-9, 7.4.3</td>
+            <td>Energy delivered when the supply is short.</td>
+            <td><code>CoolingSystemCalculator.distribute_shortfall()</code></td>
+            <td>Lowest priority loses first; equal priorities and zones of a circuit pro rata. The standard gives priorities but no allocation rule.</td>
+            <td><span class="status extension">extension</span></td>
+          </tr>
+          <tr>
+            <td>EN 16798-15, (2)-(6c), (9), (10)</td>
+            <td>State of charge, discharge and control.</td>
+            <td><code>CoolingStorageSystemCalculator._state_of_charge()</code></td>
+            <td>Stored energy referred to the return temperature; discharge (5) = min(stored, f_C;sto;ctrl x request); CONT / TIME / TEMP / LOAD_PRED (6a)-(6c); losses (9) with the start-of-step temperature; balance (10).</td>
+            <td><span class="status implemented">implemented</span></td>
+          </tr>
+          <tr>
+            <td>EN 16798-15, 6.5.3.5, (11)-(22), Table B.2</td>
+            <td>Ice and PCM.</td>
+            <td><code>_LatentStore</code></td>
+            <td>Liquid, latent and solid bands; ice-on-coil thickness (11)/(13); crystallisation / melting rate limits K_v;cr, K_v;fu. Charging stops at the warmer of theta_C_sto_C and the actual generator outlet: no ice is built when the generator cannot go below the transition temperature.</td>
+            <td><span class="status implemented">implemented</span></td>
+          </tr>
+          <tr>
+            <td>EN 16798-15 (charging, stratification)</td>
+            <td>When and how the store is charged.</td>
+            <td><code>_StratifiedTank</code>, <code>_state_of_charge()</code></td>
+            <td>Charging only while discharge is not authorised (CONT: always); <code>charge_power_kW</code>; users served before charging; emergency discharge when the generator is short (<code>discharge_on_generator_shortfall</code>); N-node plug-flow stratification.</td>
+            <td><span class="status assumption">assumption</span> / <span class="status extension">extension</span></td>
+          </tr>
+          <tr>
+            <td>EN 16798-13, (7)-(12)</td>
+            <td>Several generators with priorities.</td>
+            <td><code>CoolingGenerationSystemCalculator._simulate_generators()</code></td>
+            <td>Cascade by priority up to each maximum (9); remainder to backup or unmet. Equal priorities share pro rata to their maxima (extension of (10)/(11)).</td>
+            <td><span class="status implemented">implemented</span></td>
+          </tr>
+          <tr>
+            <td>EN 16798-13, 6.3.2.2.2.1, (1), (2), (19), (20a), (20b)</td>
+            <td>Part load of compression chillers from EN 14825 data.</td>
+            <td><code>_fit_en16798_13()</code>, <code>_f_eer()</code></td>
+            <td><code>part_load_performance_method="en16798_13"</code>: C1-C4 and delta_theta_corr solved from the points A-D and the 5th point (estimated with (2) when missing); EER = EER_n f_EER, constant below f_C;PL;min; capacity (9a)-(9c) with the same delta_theta_corr. The methods "en14825" and "curve" remain as approximations.</td>
+            <td><span class="status implemented">implemented</span></td>
+          </tr>
+          <tr>
+            <td>EN 16798-13, (4), several generators</td>
+            <td>Outlet temperature of each generator and of the system.</td>
+            <td><code>_simulate_generators()</code></td>
+            <td>Each generator keeps its own limit; the system outlet is the energy-weighted mix of the running generators.</td>
+            <td><span class="status assumption">assumption</span></td>
+          </tr>
+          <tr>
+            <td>EN 16798-9, (23), (24) and terminals</td>
+            <td>Actual temperatures back to the distribution, terminal capacity.</td>
+            <td><code>CoolingChainCalculator</code>, <code>CoolingSystemCalculator.terminal_limits()</code></td>
+            <td>Distribution re-run with the actual generator / storage outlet temperatures; terminal output Phi_des ((theta_room - theta_m)/(theta_room,des - theta_m,des))^n with theta_m = flow + deltaT/2 (options <code>terminal_design_capacity_kW</code>, <code>terminal_design_flow_temperature_C</code>, <code>terminal_design_room_temperature_C</code>, <code>terminal_exponent</code>).</td>
+            <td><span class="status implemented">(23)/(24) implemented</span> <span class="status extension">terminals: extension</span></td>
+          </tr>
+          <tr>
+            <td>EN 16798-13, (9a)-(9c)</td>
+            <td>Capacity at the operating temperatures (nominal-EER method).</td>
+            <td><code>_capacity_and_eer()</code></td>
+            <td>Opt-in with <code>capacity_temperature_correction</code>, <code>delta_theta_corr_K</code> (0 for nominal data); off by default for continuity.</td>
+            <td><span class="status implemented">implemented</span></td>
+          </tr>
+          <tr>
+            <td>EN 16798-13, (9d), (21)-(23)</td>
+            <td>Absorption chillers.</td>
+            <td><code>_capacity_and_zeta()</code>, <code>_carnot_heat_ratio()</code></td>
+            <td>Carnot heat ratio (23), heat ratio (22), capacity (9d), driving heat (21) in the rejected heat (16). The printed indices of C5-C8 are inconsistent and read as zeta = C5 zeta_c^2 + C6 zeta_c + C7; default zeta_n 0.7 at 7/30/90 C.</td>
+            <td><span class="status implemented">implemented</span> / <span class="status assumption">assumption</span></td>
+          </tr>
+          <tr>
+            <td>EN 16798-13, (9g), (24)</td>
+            <td>OTHER generators.</td>
+            <td><code>_capacities()</code>, <code>_simulate()</code></td>
+            <td>The standard only names the functions f(theta_C;gen;out;req, theta_sk) and f(theta_C;gen;out, theta_sk, f_C;PL): given by the user as numbers or Python functions (<code>other_capacity_factor</code>, <code>other_electric_ratio</code>).</td>
+            <td><span class="status implemented">implemented</span></td>
+          </tr>
+          <tr>
+            <td>EN 16798-13, 6.4.2.4, (13a)-(14h), (26a)/(26b)</td>
+            <td>Heat-rejection operation.</td>
+            <td><code>_wet_operation()</code>, <code>_condenser_inlet()</code>, <code>_heat_rejection_aux()</code></td>
+            <td>f_op;hr;wet and condenser inlet for AIR_C_COND, DRY, WET, HYBRID (TEMP / MAX_POWER, Table 10, decided on the sum of the generators' dry maxima) and OTHER; inlet limit; heat-rejection electricity blended by f_op;hr;wet.</td>
+            <td><span class="status implemented">implemented</span></td>
+          </tr>
+          <tr>
+            <td>EN 16798-13 (library)</td>
+            <td>Partial free cooling, part load of absorption chillers, backup.</td>
+            <td><code>_free_cooling_factor()</code>, <code>_simulate()</code></td>
+            <td><code>free_cooling_model="partial"</code> (UA exchanger, binary (6a)-(6d) by default); <code>part_load_performance_method</code> "en14825" or "curve" applied to zeta; <code>cooling_backup_eer</code>.</td>
+            <td><span class="status extension">extension</span></td>
+          </tr>
+          <tr>
+            <td>EN 16798-9 / -15 / -13 interfaces</td>
+            <td>Storage - generator closure in time.</td>
+            <td><code>CoolingChainCalculator</code></td>
+            <td>Availability at the temperature required by the storage, storage re-run with that limit, iteration to convergence, shortfall to the circuits.</td>
+            <td><span class="status extension">extension</span></td>
+          </tr>
+          <tr>
             <td>EN 16798-13, Annex B defaults</td>
             <td>Fallback nominal EER.</td>
             <td><code>_default_nominal_eer()</code></td>
@@ -446,6 +608,9 @@
         <tr><td>Ambient and location</td><td><code>location</code>, <code>ambient_temperature_C</code>, <code>conditioned_ambient_temperature_C</code></td><td>Defines the surrounding temperature for storage heat gains.</td></tr>
         <tr><td>Heat-loss coefficients</td><td><code>H_C_sto_tot_ls_W_K</code>, <code>H_C_sto_out_ls_W_K</code>, <code>H_C_sto_in_ls_W_K</code></td><td>Standing and loop heat gains into chilled storage.</td></tr>
         <tr><td>Pump data</td><td><code>input_pump_power_kW</code>, <code>output_pump_power_kW</code>, <code>input_pump_flow_m3_h</code>, <code>output_pump_flow_m3_h</code></td><td>Storage pump auxiliary electricity.</td></tr>
+        <tr><td>Medium and state</td><td><code>storage_type</code> (CW / ICE / PCM), <code>storage_volume_l</code>, <code>stratification_nodes</code>, <code>theta_sto_tr_C</code>, Table B.2 data, <code>tube_outer_diameter_m</code>, <code>tube_length_m</code></td><td>Stored-energy bands and rate limits.</td></tr>
+        <tr><td>Control</td><td><code>control_mode</code>, <code>discharge_schedule</code>, <code>theta_e_lim_C</code>, column <code>f_C_sto_ctrl</code>, <code>charge_power_kW</code>, <code>discharge_on_generator_shortfall</code></td><td>Discharge authorisation (6a)-(6c) and charging.</td></tr>
+        <tr><td>Generator coupling</td><td>columns <code>theta_C_gen_out_C</code> (actual generator outlet), <code>Q_C_sto_gen_avl_kWh</code> (generator availability)</td><td>Charging temperature and supply limit (set by <code>CoolingChainCalculator</code>).</td></tr>
       </table>
 
       <h3>Cooling Generation: <code>CoolingGenerationSystemCalculator</code></h3>
@@ -457,7 +622,11 @@
         <tr><td>Product performance map</td><td><code>cooling_performance_map</code> with <code>source_temperature_C</code>, <code>sink_temperature_C</code>, <code>capacity_kW</code>, <code>eer</code></td><td>Cooling capacity and EER interpolation. The examples build this map from EN 14511/EN 14825 rating data by default; see <code>docs/performance_14511_14825_audit.html</code>.</td></tr>
         <tr><td>Part-load correction</td><td><code>part_load_performance_method</code>, <code>part_load_degradation_coefficient</code></td><td>Optional EN 14825 correction from full-load EER to EERbin for air-to-water operation.</td></tr>
         <tr><td>Fallback product data</td><td><code>nominal_capacity_kW</code>, <code>nominal_eer</code></td><td>Used only when a performance map is not provided.</td></tr>
-        <tr><td>Auxiliary inputs</td><td><code>control_power_kW</code>, <code>additional_auxiliary_power_kW</code>, <code>p_hr_el_dry</code>, <code>p_hr_el_wet</code></td><td>Cooling generator auxiliary electricity.</td></tr>
+        <tr><td>Auxiliary inputs</td><td><code>control_power_kW</code>, <code>additional_auxiliary_power_kW</code>, <code>p_hr_el_dry</code>, <code>p_hr_el_wet</code>, <code>p_hr_el_other</code></td><td>Cooling generator auxiliary electricity.</td></tr>
+        <tr><td>Generator type</td><td><code>generation_type</code> COMP / ABS / OTHER; ABS: <code>zeta_n</code>, <code>C5</code>-<code>C7</code>, <code>theta_H_C_gen_abs_in_C</code>; OTHER: <code>other_capacity_factor</code>, <code>other_electric_ratio</code>, <code>theta_sk_C</code></td><td>Capacity and energy input per generator type.</td></tr>
+        <tr><td>Several generators</td><td><code>generators</code>: list of configurations with <code>name</code>, <code>priority</code></td><td>Cascade (7)-(11).</td></tr>
+        <tr><td>Heat rejection</td><td><code>heat_rejection_type</code>, <code>hybrid_heat_rejection_control</code>, <code>theta_lim_wet_hr_C</code>, <code>theta_cond_in_lim_C</code>, <code>heat_rejection_deltaT_K</code>, <code>wet_bulb_offset_K</code></td><td>6.4.2.4 operation.</td></tr>
+        <tr><td>Free cooling</td><td><code>free_cooling_enabled</code>, <code>free_cooling_deltaT_K</code>, <code>free_cooling_model</code>, <code>free_cooling_ua_kW_K</code></td><td>(6a)-(6d) and partial extension.</td></tr>
       </table>
     </section>
 
@@ -484,7 +653,12 @@
       <p>Code: <code>CoolingStorageSystemCalculator._pump_runtime()</code></p>
       <div class="formula">t_pump = min(Q_C / (1.16 * q_V_pump * DeltaT_pump), t_step)</div>
       <div class="formula">W_C_sto_aux = t_pump_in * P_pump_in + t_pump_out * P_pump_out</div>
-      <div class="formula">Q_C_sto_in = Q_C_sto_out + Q_C_sto_ls_tot + W_C_sto_aux_to_medium</div>
+      <p>Code: <code>CoolingStorageSystemCalculator._state_of_charge()</code> (each step)</p>
+      <div class="formula">Q_C_sto_dis = min(Q_C_sto_stored, f_C_sto_ctrl * Q_C_sto_out)   (5); generator short: max(., Q_C_sto_out - Q_avl)</div>
+      <div class="formula">Q_C_sto_direct = min(Q_C_sto_out - Q_C_sto_dis, Q_avl);  Q_C_sto_unmet = Q_C_sto_out - Q_C_sto_dis - Q_C_sto_direct</div>
+      <div class="formula">Q_C_sto_chg = min(wanted charge, Q_avl - Q_C_sto_direct);  Q_C_sto_chg_unmet = wanted - Q_C_sto_chg</div>
+      <div class="formula">Q_avl = (Q_C_sto_gen_avl - fixed pump heat) / (1 + pump heat per kWh) - Q_C_sto_out_ls - Q_C_sto_in_ls</div>
+      <div class="formula">Q_C_sto_in = Q_C_sto_direct + Q_C_sto_chg + Q_C_sto_out_ls + Q_C_sto_in_ls + W_C_sto_aux_to_medium</div>
 
       <h3>EN 16798-13 Cooling Generation</h3>
       <p>Code: <code>CoolingGenerationSystemCalculator._simulate()</code> and <code>_capacity_and_eer()</code></p>
@@ -497,6 +671,11 @@
       <div class="formula">Q_C_gen_out = Q_C_gen_in + E_C_gen_el_in</div>
       <div class="formula">E_C_total = E_C_gen_el_in + E_C_backup_in + W_C_aux_gen</div>
       <div class="formula">SEER_C_gen = Q_C_gen_in / E_C_total</div>
+      <div class="formula">ABS: zeta_c = (T0 + theta_evap)(theta_H - theta_cond) / ((T0 + theta_H)(theta_cond - theta_evap))   (23)</div>
+      <div class="formula">ABS: Q_max = Phi_n * t * p(zeta_c) / p(zeta_c,n)   (9d);  Q_H_C_gen_abs_in = Q_C / zeta   (21)</div>
+      <div class="formula">OTHER: Q_max = Phi_n * t * f(theta_C_gen_out_req, theta_sk)   (9g);  E_el = Q_C * f(theta_C_gen_out, theta_sk, f_C_PL)   (24)</div>
+      <div class="formula">HYBRID: f_op_hr_wet = 1 if theta_e &gt; theta_lim_wet_hr (TEMP) or Q_req &gt; sum Q_max_dry (MAX_POWER)   (13d)-(13g)</div>
+      <div class="formula">W_hr = Q_hr * ((1 - f_op_hr_wet) p_hr_el_dry + f_op_hr_wet p_hr_el_wet)   (26b)</div>
     </section>
 
     <section id="outputs">
@@ -547,8 +726,13 @@ examples/outputs/heat_pump_15316_4_2_bolzano/inspection_index.html</code></pre>
       <h2>Known Limits And Audit Notes</h2>
       <ul>
         <li>EN 16798-9 is implemented as the connector for water-based cooling operating temperatures and flow; detailed room emission remains in EN 15316-2 and pipe/pump distribution remains in EN 15316-3.</li>
-        <li>EN 16798-15 is implemented for chilled-water buffer storage with steady hourly heat gains. Ice and PCM latent state tracking are not modelled in this first implementation.</li>
-        <li>EN 16798-13 currently implements compression cooling generation. Absorption, adsorption, desiccant and evaporative cooling generators are outside the implemented scope.</li>
+        <li>EN 16798-15: chilled-water (mixed or stratified), ice and PCM storage with a state of charge. Not modelled: PCM hysteresis and supercooling, the heat-transfer fluid inside latent stores, heat release to an ambient colder than the medium.</li>
+        <li>EN 16798-13: compression, absorption and OTHER generators, several generators with priorities and the heat-rejection operation of 6.4.2.4. Adsorption, desiccant and evaporative cooling are only reachable as OTHER generators with user functions. The EN 14825 part-load correction is defined for compression chillers; for absorption chillers it is a library extension.</li>
+        <li>Indices: <code>SEER_C_gen</code> is cooling over electricity only. For absorption chillers the driving heat is a separate carrier: use <code>zeta_C_gen_seasonal</code> and <code>EER_C_gen_all_inputs</code> (cooling over electricity plus driving heat), or weight the carriers in the EN ISO 52000-1 accounting.</li>
+        <li>The distribution shortfall assumes the network losses and auxiliary heat are supplied; with a strongly undersized supply this overstates what reaches the users. Use either the simplified EN 16798-9 losses or the detailed EN 15316-3 losses, not both.</li>
+        <li>The terminal model is a single characteristic per circuit (mean water temperature, exponent n); it does not model latent cooling, valve authority or flow limits.</li>
+        <li>The coupled chain assumes that the generator availability does not depend on the load (it is evaluated for an unlimited request at the temperature required by the storage) and that the generator reaches max(theta_C_sto_C, theta_C_gen_out_limit_C) when charging.</li>
+        <li>Reference values, ranges and tables of the standards are not reproduced in the repository; the tests check formulae and independent energy balances.</li>
         <li>Example defaults are realistic demonstration assumptions for 120 m2 residential cases. Project-grade studies should replace them with project geometry, pump data, storage product data, national annex values and manufacturer performance maps.</li>
         <li>The older reversible heat-pump cooling branch remains available through <code>--calculation-path heat-pump-cooling</code> or <code>--cooling-generation-method heat-pump-simple</code> for comparison with previous outputs.</li>
       </ul>

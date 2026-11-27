@@ -156,8 +156,10 @@ verifies the coil and fan model only.
 
 The coil loads are also compared with the spread of the example programs
 supplied with the standard (QAS, DEEAP, DeST, DOE-2.2, EnergyPlus): all values
-fall inside it widened by 2%; AE204 sensible and AE226 latent are just below
-the unwidened spread. Known source of deviation: EN 16798-5-1 uses volumetric
+fall inside it widened by 2%. Of the 14 compared values, 9 are inside the
+unwidened spread and 5 are just below its minimum: AE226 latent (−1.5%),
+AE204 sensible (−0.5%), AE104 sensible (−0.4%), AE226 sensible (−0.1%) and
+AE206 sensible (−0.002%). Known source of deviation: EN 16798-5-1 uses volumetric
 flows with a constant air density (Table 27), while the QAS works with mass
 flows from the local specific volume (about 4% on the AE101 supply humidity
 ratio, about 8% on the return fan heat).
@@ -353,9 +355,13 @@ For the audit trail between the standards, code and outputs, open
 
 The heat-pump examples now treat space cooling with the cooling-side EN 16798 standards:
 
-- `CoolingSystemCalculator` implements EN 16798-9 operating conditions and the handoff of cooling requests to storage or generation.
-- `CoolingStorageSystemCalculator` implements EN 16798-15 chilled-water storage heat gains and pump auxiliary energy.
-- `CoolingGenerationSystemCalculator` implements EN 16798-13 compression cooling generation using cooling capacity/EER product maps or nominal EER fallback data.
+- `CoolingSystemCalculator` implements EN 16798-9 operating conditions, several circuits with priorities and the handoff of cooling requests to storage or generation; `distribute_shortfall` gives the energy delivered to circuits and zones when the supply is short.
+- `CoolingStorageSystemCalculator` implements EN 16798-15 storage with a state of charge: chilled water (mixed or stratified), ice and PCM, discharge controls, heat gains and pump auxiliary energy.
+- `CoolingGenerationSystemCalculator` implements EN 16798-13 compression, absorption and OTHER generators, several generators with priorities, free cooling and the dry / wet / hybrid heat rejection, from product maps or nominal data.
+- `CoolingChainCalculator` couples the three modules: the storage state follows the charge the generator really supplies (iterated) and the shortfall is sent back to the circuits.
+
+The audit page labels each part as a formula of the standard, an assumption
+where the standard is silent, or a library extension.
 
 For the audit trail between the standards, code and outputs, open [Cooling EN 16798 Implementation Audit](https://github.com/EURAC-EEBgroup/pyBuildingEnergy/blob/master/docs/cooling_16798_audit.html).
 
@@ -641,9 +647,10 @@ The EN 15316 series covers the calculation method for system energy requirements
 ## EN 16798 Cooling Modular Structure **(New)**
 
 - [x] EN 16798-9: Cooling systems, operating conditions and M4-1/M4-4 handoff
-- [x] EN 16798-13: Cooling generation, compression systems
-- [x] EN 16798-15: Cooling storage
-- [ ] EN 16798-13 non-compression cooling generators, such as absorption, adsorption, desiccant or evaporative cooling
+- [x] EN 16798-13: Cooling generation, compression, absorption and OTHER generators, priorities, heat rejection 6.4.2.4
+- [x] EN 16798-15: Cooling storage, chilled water, ice and PCM with state of charge
+- [x] Coupled storage - generator balance and shortfall to the circuits (`CoolingChainCalculator`)
+- [ ] Dedicated adsorption, desiccant and evaporative cooling models (usable today as OTHER generators with user functions)
 
 ## Heat Pump Product Rating Structure **(New)**
 

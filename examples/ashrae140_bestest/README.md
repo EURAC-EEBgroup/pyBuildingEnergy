@@ -351,9 +351,13 @@ Tests: `tests/test_ashrae140_in_depth.py` (inputs as built and the sign of the d
   radiation only; Method 2 refers to ISO/TR 52016-2 and is not implemented.
 - **Sky temperature (Section 7.3.2.3).** The engine does not expose a `T_sky`
   series; this conditional output is not exported.
-- **Other Table A3-14 groups** (cooling equipment, heating equipment, air-side
-  equipment) and the Annex A2 documentation are not covered: this example
-  alone is not a full declaration of conformity with Standard 140.
+- **Other Table A3-14 groups** (cooling equipment, heating equipment) and the
+  Annex A2 documentation are not covered: this example alone is not a full
+  declaration of conformity with Standard 140. The Section 11 air-side cases
+  AE101–AE104 and AE201–AE245 are verified separately on the EN 16798-5-1 air
+  handling unit (`tests/test_ashrae140_airside_ae.py`, see the main README,
+  "ASHRAE 140-2023 Section 11 - Air-Side HVAC Equipment"); the terminal reheat
+  cases AE301–AE445 and the economizer control logic are not covered.
 
 ## Changes (October 2026)
 

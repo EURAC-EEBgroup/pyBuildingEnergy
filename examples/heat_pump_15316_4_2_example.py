@@ -4649,11 +4649,23 @@ def run_example(args: argparse.Namespace) -> None:
         raise ValueError("--storage-method must be 'en15316-5' or 'simple'.")
 
     cooling_storage_result = None
-    if cooling_storage_method == "en16798-15":
+    cooling_chain_result = None
+    if cooling_storage_method == "en16798-15" and cooling_generation_method == "en16798-13":
+        # Coupled EN 16798-15 / EN 16798-13: the storage state follows the charge the
+        # generator really supplies (iterated), the users are served before the charging,
+        # and the shortfall goes back to the EN 16798-9 circuits (lowest priority first).
+        cooling_chain_result = pybui.CoolingChainCalculator(
+            generation=cooling_generation_system_config(
+                scenario, cooling_map, performance_data_method=performance_data_method),
+            storage=cooling_storage_system_config(scenario),
+        ).run_timeseries(loads)
+        cooling_storage_result = cooling_chain_result.storage
+    elif cooling_storage_method == "en16798-15":
         cooling_storage_calc = pybui.CoolingStorageSystemCalculator(
             cooling_storage_system_config(scenario)
         )
         cooling_storage_result = cooling_storage_calc.run_timeseries(loads)
+    if cooling_storage_result is not None:
         loads["Q_C_storage_out_kWh"] = cooling_storage_result.timeseries[
             "Q_C_sto_out_kWh"
         ]
@@ -4707,8 +4719,18 @@ def run_example(args: argparse.Namespace) -> None:
                 performance_data_method=performance_data_method,
             )
         )
-        cooling_generation_result = cooling_generation_calc.run_timeseries(loads)
+        if cooling_chain_result is not None:
+            cooling_generation_result = cooling_chain_result.generation
+        else:
+            cooling_generation_result = cooling_generation_calc.run_timeseries(loads)
         cooling_enabled_for_heat_pump = False
+        unmet = cooling_generation_result.timeseries["Q_C_gen_unmet_kWh"]
+        if cooling_chain_result is not None:
+            unmet = cooling_chain_result.delivered["Q_C_dis_unmet_tot_kWh"]
+        loads["Q_C_unmet_kWh"] = unmet
+        if cooling_system_result is not None:
+            cooling_delivered = cooling_system_calc.distribute_shortfall(cooling_system_result, unmet)
+            loads["Q_C_delivered_16798_9_kWh"] = cooling_delivered["Q_C_dis_in_tot_kWh"]
     elif cooling_generation_method != "heat-pump-simple":
         raise ValueError(
             "--cooling-generation-method must be 'en16798-13' or 'heat-pump-simple'."

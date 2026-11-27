@@ -1,3 +1,165 @@
+2.3.0 (2026-11-27)
+------------------
+
+Cooling modules EN 16798-9 / -13 / -15: options, formulae and scope
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- EN 16798-9: ``MAX_TMP`` was accepted but returned the fixed set point. It now
+  takes the minimum of the circuit / AHU coil requirements (17)/(20), read from the
+  input columns ``theta_C_dis_in_flw_req_C_<i>`` or ``theta_C_ahu_in_req_C[_<k>]``
+  and limited to [set_min, set_max]; without them a ValueError is raised.
+- EN 16798-9: formula (23). The flow temperature is the highest of the required
+  temperature and the actual generator / storage outlet temperatures when given
+  (``theta_C_gen_out_C``, ``theta_C_sto_out_C``); the return temperature (24) uses
+  it. Without those columns the results are unchanged.
+- EN 16798-13: free cooling with ``HEAT_REJ_TYPE = HYBRID`` compared the required
+  temperature with the dry bulb; (6c) uses the wet bulb, as for WET.
+- EN 16798-13: ``minimum_part_load_ratio`` (f_C;PL;min) was read but unused. It is
+  now f_C;PL;min of (20b) for the ``en14825`` part-load method (same quantity as
+  ``part_load_minimum_capacity_ratio``; two different values raise ValueError);
+  with the ``simple`` method it has no effect and a RuntimeWarning says so.
+- EN 16798-13: the rejected heat Q_C;gen;out now includes the backup electricity
+  (its cooling was already counted).
+- EN 16798-15: state of charge of the chilled-water storage. The mean storage
+  temperature is now a state variable; the stored energy is (2) referred to the
+  design return temperature, from 0 to rho c V (theta_ret - theta_set); the tank
+  starts full (6.5.3.2). Discharge to the distribution follows (5), min(stored,
+  f_C;sto;ctrl x request), the rest is supplied directly by the generator; storage
+  losses (9) are taken from the stored energy.
+  - Control (6a)-(6c) applied: CONT recharges at every step (a buffer kept full:
+    results identical to the previous version, checked over 8760 h); TIME uses
+    ``discharge_schedule`` (24 values 0/1); TEMP uses ``theta_e_lim_C``; LOAD_PRED
+    (M10-12) and any other strategy use an input column ``f_C_sto_ctrl``. With
+    TIME/TEMP/LOAD_PRED the tank is charged only while discharge is not authorised
+    (load shifting), at most ``charge_power_kW`` (default unlimited).
+  - The generator request ``Q_C_sto_in_kWh`` is direct supply + charging + loop
+    losses (7), (8) + pump heat, i.e. (26) of EN 16798-9 with the net storage
+    contribution, now an output (``Q_C_sto_net_kWh``, > 0 discharging). New outputs:
+    ``Q_C_sto_dis_kWh``, ``Q_C_sto_chg_kWh``, ``Q_C_sto_direct_kWh``,
+    ``Q_C_sto_stored_kWh``, ``Q_C_sto_max_kWh``, ``theta_C_sto_end_C``, ``f_C_sto_ctrl``.
+  - Formula (1): while the tank is recharged beyond its losses the generator flow
+    temperature is theta_C;sto - delta_theta_C;sto;gen;flw.
+  - The input column ``theta_C_sto_C`` / ``storage_temperature_C`` is ignored
+    (warning): the set point is the config value.
+  - With ``enabled=False`` the result now has ``T_C_sink_C`` and the loss coefficient
+    columns (examples reading them failed).
+- EN 16798-15: stratified chilled-water tank. ``stratification_nodes`` = N > 1 splits
+  the tank into N equal nodes with plug flow (discharge from the bottom with the
+  return water entering at the top, charging from the bottom, losses shared). The
+  water sent to the distribution is at the bottom-node temperature
+  (``theta_C_sto_out_act_C``; ``theta_C_sto_top_C`` / ``theta_C_sto_bottom_C``) and
+  ``theta_C_sto_out_max_C`` stops the discharge when it is warmer. N = 1 (default) is
+  the mixed tank, unchanged.
+- EN 16798-15: ice and PCM storage (6.5.3.5), previously calculated as chilled water.
+  Enthalpy model of the medium with three bands of stored cold, (2)-(4): sensible
+  liquid down to theta_sto;tr, latent, sensible solid down to the charging temperature
+  (ice: linear profile in the ice, (12); PCM: uniform solid temperature, (18)). Ice on
+  coil: solid mass limited by d_C;sto;max on the tube (``tube_outer_diameter_m``,
+  ``tube_length_m``), ice thickness ``d_C_sto_m`` from (13). Phase change rates
+  limited by K_v;cr (charging) and K_v;fu (melting), Table 5. Defaults from Table B.2,
+  whose Q_lat and Cp are in Wh/kg and Wh/(kg K) (93 Wh/kg = 334 kJ/kg for ice). The
+  PCM transition temperature ``theta_sto_tr_C`` is required; without
+  ``theta_C_sto_C`` the charging temperature is theta_tr - delta_theta_C;sto;gen;flw.
+  Outputs ``m_C_sto_sld_kg``, ``f_C_sto_sld``. Not modelled: PCM hysteresis and
+  supercooling, the heat transfer fluid inside the store.
+- EN 16798-9: several distribution circuits (``circuits``: name, priority,
+  demand_columns, temperature and flow control, design data). Per circuit: demand
+  (28), required flow temperature (18)-(20), flow (21)/(22), flow temperature (23)
+  from the network water, return (24); total request (27), MAX_TMP from the circuit
+  requirements (17), flow-weighted mixed return. Without ``circuits`` the results are
+  unchanged.
+- EN 16798-9: ``distribute_shortfall(result, unmet_kWh)`` returns the energy actually
+  delivered when the generation side falls short (e.g. ``Q_C_gen_unmet_kWh`` of
+  EN 16798-13): the circuits with the lowest priority lose first, equal priorities
+  share pro rata, the zones of a circuit pro rata; distribution losses and auxiliary
+  heat are assumed supplied. With a storage in between the shortfall net of the
+  charging has to be passed (no iteration between the modules).
+- EN 16798-13: absorption chillers (``generation_type="ABS"``): capacity (9d),
+  heat ratio (22) zeta = C5 zeta_c^2 + C6 zeta_c + C7 with the Carnot heat ratio (23)
+  from the evaporator outlet, condenser inlet and driving hot water
+  (``theta_H_C_gen_abs_in_C``) temperatures, driving heat (21) ``Q_H_C_gen_abs_in_kWh``
+  included in the rejected heat (16). The printed (9d)/(22) mix up the indices of
+  C5-C8 and are read as above. Without C5-C7, zeta = zeta_n x zeta_c / zeta_c;n
+  (``zeta_n`` 0.7 and nominal 7/30/90 C by default: the standard gives no values).
+  ``absorption_electric_ratio`` for the solution pump.
+- EN 16798-13: several generators with priorities, (7)-(11) (``generators``: list of
+  generator configurations with ``name`` and ``priority``, COMP and ABS mixed). The
+  request after free cooling goes to priority 1 up to its maximum (9), the rest to the
+  next priority; equal priorities share pro rata to their maxima (extension); the
+  remainder goes to the backup or is unmet. Per-generator outputs ``<column>_<name>``.
+- EN 16798-13: partial free cooling (``free_cooling_model="partial"``, library
+  extension; default ``"binary"`` as in (6a)-(6d)): a heat exchanger of conductance
+  ``free_cooling_ua_kW_K`` between the chilled-water return and the sink supplies
+  min(request, UA (theta_ret - theta_sink) t), the chiller the rest.
+- EN 16798-13: generators of type OTHER (ground, groundwater, surface water...):
+  capacity (9g) Phi_n x ``other_capacity_factor``(theta_C;gen;out;req, theta_sk) and
+  electricity (24) Q x ``other_electric_ratio``(theta_C;gen;out, theta_sk, f_C;PL),
+  each a number or a Python function (the standard only names the functions); also
+  in the ``generators`` list. theta_sk can vary in time (column ``theta_sk_C``), also
+  for ``HEAT_REJ_TYPE = OTHER`` and free cooling (6d).
+- EN 16798-13: part-load correction for absorption chillers (library extension, the
+  standard has none): ``part_load_performance_method`` ``"en14825"`` or the new
+  ``"curve"`` (factor a + b x + c x^2, ``part_load_curve_coefficients``, 1 at full
+  load; also for COMP) multiplies the heat ratio zeta, so the driving heat (21) rises
+  at part load; below f_C;PL;min the factor stays constant as in (20b).
+- EN 16798-13: heat-rejection operation 6.4.2.4. f_op;hr;wet (13a)-(13h) and the
+  condenser inlet (14a)-(14h) with the optional limit ``theta_cond_in_lim_C``. HYBRID
+  now switches between dry (3a) and wet (3b) with ``hybrid_heat_rejection_control``
+  (Table 10): ``TEMP`` (wet above ``theta_lim_wet_hr_C``) or ``MAX_POWER`` (default;
+  wet when the dry maxima of all generators do not cover the request). Before, HYBRID
+  always ran dry. The heat-rejection electricity blends p_hr;el;dry and p_hr;el;wet by
+  f_op;hr;wet (26b); outputs ``f_op_hr_wet`` and summary ``t_C_hr_wet_h``.
+- EN 16798-13: optional capacity correction (9a)-(9c) for the nominal-EER method
+  (``capacity_temperature_correction``, ``delta_theta_corr_K``); off by default.
+- New ``CoolingChainCalculator`` (``cooling_chain_16798.py``): EN 16798-9 -> -15 -> -13
+  with the storage-generator balance closed in time. The generator availability at
+  the temperature required by the storage limits the storage, which is run again
+  until its request fits (usually two iterations); each stage gets one explicit
+  demand column; the shortfall towards the users is distributed to the circuits and
+  zones (``distribute_shortfall``). With an adequate generator the results equal the
+  sequential chain (checked on the Athens heat-pump example).
+- EN 16798-15: generator availability column ``Q_C_sto_gen_avl_kWh``: loop losses and
+  pump heat first, then users, then charging; emergency discharge when the generator
+  is short (``discharge_on_generator_shortfall``, default True); new outputs
+  ``Q_C_sto_unmet_kWh`` (users) and ``Q_C_sto_chg_unmet_kWh`` (charge).
+- EN 16798-15: ice and PCM are charged only down to the warmer of theta_C_sto_C and the
+  actual generator outlet ``theta_C_gen_out_C``: no latent charge when the generator
+  cannot go below the transition temperature, slower freezing when it barely does.
+- Coupled chain: the actual generator / storage outlet temperatures go back to EN 16798-9
+  (flow (23), return (24) recomputed); summary ``h_C_dis_flw_not_reached`` and
+  ``theta_C_dis_flw_dev_max_K``. Optional terminal capacity per circuit at the actual
+  temperature (``terminal_design_capacity_kW``, ``CoolingSystemCalculator.terminal_limits``,
+  library extension): the demand is limited to it (outer iteration) and the shortfall
+  is split into ``Q_C_dis_unmet_temp_kWh_<circuit>`` and ``Q_C_dis_unmet_gen_kWh_<circuit>``.
+  A RuntimeWarning is raised when an iteration does not converge.
+- EN 16798-13: ``part_load_performance_method="en16798_13"``: C1-C4 and delta_theta_corr
+  from the EN 14825 points A-D and the 5th point (system (1) of 6.3.2.2.2.1, 5th point by
+  (2) when missing), EER by (19), (20a)/(20b), capacity by (9a)-(9c).
+- EN 16798-13: several generators keep their own outlet limit; the system outlet
+  temperature is the energy-weighted mix (``theta_C_gen_out_C_<name>``); the chain charges
+  the storage at the coldest temperature any generator reaches.
+- EN 16798-13: indices per energy carrier: ``SEER_C_gen_el``, ``QC_gen_abs_kWh``,
+  ``zeta_C_gen_seasonal``, ``EER_C_gen_all_inputs`` (``SEER_C_gen`` counts electricity only).
+- Examples ``new_building.py`` and ``heat_pump_15316_4_2_example.py`` use the coupled
+  chain and send the shortfall back to the EN 16798-9 circuits.
+- ``docs/cooling_16798_audit.html`` and the Readme updated: each part labelled as a
+  formula of the standard, an assumption or a library extension.
+- New tests ``tests/test_cooling_chain_coupled.py`` against independent energy
+  balances: multi-day cycles, undersized generator and charge carry-over, several
+  generators, zero availability, no emergency discharge, circuits and zones, ice with
+  a generator unable to freeze, temperature-dependent capacity, pumps and losses.
+
+- All three modules: when several demand columns are present with different values
+  (e.g. a stale ``Q_C_gen_in_req_kWh`` next to an updated ``Q_C_kWh``), a
+  RuntimeWarning names the column used.
+- Module docstrings list the assumptions and what is not modelled: all-or-nothing
+  free cooling by default (as in (6a)-(6d)), the library extensions.
+- New tests ``tests/test_cooling_chain_16798.py`` (options, formulae (1), (5), (6a)-(6c),
+  (11)-(13), (6c) of EN 16798-13, (17)-(24), (27), (28), (20b); storage energy
+  conservation, load shifting, stratification, ice and PCM capacities and rate
+  limits; circuit priorities and feedback from the generator shortfall; energy
+  boundaries along the 9 -> 15 -> 13 chain).
+
 2.2.1 (2026-11-26)
 ------------------
 

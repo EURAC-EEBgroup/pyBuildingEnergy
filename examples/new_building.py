@@ -1375,38 +1375,45 @@ else:
     cooling_generation_result = None
 
     if INPUT_SYSTEM_COOLING.get("enabled", True) and cooling_loads["Q_C_kWh"].sum() > 0:
-        # EN 16798-9: cooling-side operating conditions (chilled-water temperatures,
-        # distribution volume flow and generation-side cooling request).
-        cooling_system_calc = pybui.CoolingSystemCalculator(
-            INPUT_SYSTEM_COOLING["cooling_system_16798_9_config"]
+        # Coupled chain (pybui.CoolingChainCalculator):
+        # - EN 16798-9 gives the distribution request and flow temperatures;
+        # - EN 16798-15 (optional) turns it into the request to the generator;
+        # - EN 16798-13 gives the cooling the generator can really supply at the
+        #   temperature required by the storage. Storage and generator are iterated so
+        #   that the state of charge follows the charge actually received.
+        # Each stage gets one explicit demand column, so no stale column is picked.
+        # The shortfall towards the users is distributed to the EN 16798-9 circuits:
+        # the circuits with the lowest priority (largest "priority" number) lose first,
+        # circuits with the same priority share pro rata, zones of a circuit pro rata.
+        storage_cfg = (INPUT_SYSTEM_COOLING["cooling_storage_16798_15_config"]
+                       if INPUT_SYSTEM_COOLING.get("cooling_storage_enabled", True) else None)
+        cooling_chain = pybui.CoolingChainCalculator(
+            generation=INPUT_SYSTEM_COOLING["cooling_generation_16798_13_config"],
+            distribution=INPUT_SYSTEM_COOLING["cooling_system_16798_9_config"],
+            storage=storage_cfg,
         )
-        cooling_system_result = cooling_system_calc.run_timeseries(cooling_loads)
-        cooling_loads["Q_C_16798_9_out_kWh"] = cooling_system_result.timeseries["Q_C_dis_out_tot_req_kWh"]
-        cooling_loads["Q_C_gen_in_req_16798_9_kWh"] = cooling_system_result.timeseries["Q_C_gen_in_req_kWh"]
-        cooling_loads["theta_C_dis_supply_C"] = cooling_system_result.timeseries["theta_C_dis_supply_C"]
-        cooling_loads["theta_C_dis_return_C"] = cooling_system_result.timeseries["theta_C_dis_return_C"]
-        cooling_loads["theta_C_gen_out_req_C"] = cooling_system_result.timeseries["theta_C_gen_out_req_C"]
-        cooling_loads["T_C_sink_C"] = cooling_system_result.timeseries["T_C_sink_C"]
-        cooling_loads["Q_C_kWh"] = cooling_system_result.timeseries["Q_C_gen_in_req_kWh"]
+        cooling_chain_result = cooling_chain.run_timeseries(cooling_loads)
+        cooling_system_result = cooling_chain_result.distribution
+        cooling_storage_result = cooling_chain_result.storage
+        cooling_generation_result = cooling_chain_result.generation
 
-        # EN 16798-15: optional chilled-water buffer storage heat gains and pump auxiliaries.
-        if INPUT_SYSTEM_COOLING.get("cooling_storage_enabled", True):
-            cooling_storage_calc = pybui.CoolingStorageSystemCalculator(
-                INPUT_SYSTEM_COOLING["cooling_storage_16798_15_config"]
-            )
-            cooling_storage_result = cooling_storage_calc.run_timeseries(cooling_loads)
-            cooling_loads["Q_C_storage_out_kWh"] = cooling_storage_result.timeseries["Q_C_sto_out_kWh"]
-            cooling_loads["Q_C_sto_loss_kWh"] = cooling_storage_result.timeseries["Q_C_sto_ls_tot_kWh"]
-            cooling_loads["W_C_sto_aux_kWh"] = cooling_storage_result.timeseries["W_C_sto_aux_kWh"]
-            cooling_loads["Q_C_kWh"] = cooling_storage_result.timeseries["Q_C_sto_in_kWh"]
-            cooling_loads["T_C_sink_C"] = cooling_storage_result.timeseries["T_C_sink_C"]
-            cooling_loads["theta_C_gen_out_req_C"] = cooling_storage_result.timeseries["theta_C_sto_in_req_C"]
-
-        # EN 16798-13: compression cooling generation (electricity input, EER, rejected heat).
-        cooling_generation_calc = pybui.CoolingGenerationSystemCalculator(
-            INPUT_SYSTEM_COOLING["cooling_generation_16798_13_config"]
-        )
-        cooling_generation_result = cooling_generation_calc.run_timeseries(cooling_loads)
+        dis_ts = cooling_system_result.timeseries
+        cooling_loads["Q_C_16798_9_out_kWh"] = dis_ts["Q_C_dis_out_tot_req_kWh"]
+        cooling_loads["Q_C_gen_in_req_16798_9_kWh"] = dis_ts["Q_C_gen_in_req_kWh"]
+        cooling_loads["theta_C_dis_supply_C"] = dis_ts["theta_C_dis_supply_C"]
+        cooling_loads["theta_C_dis_return_C"] = dis_ts["theta_C_dis_return_C"]
+        if cooling_storage_result is not None:
+            sto_ts = cooling_storage_result.timeseries
+            cooling_loads["Q_C_sto_loss_kWh"] = sto_ts["Q_C_sto_ls_tot_kWh"]
+            cooling_loads["W_C_sto_aux_kWh"] = sto_ts["W_C_sto_aux_kWh"]
+            cooling_loads["Q_C_sto_in_kWh"] = sto_ts["Q_C_sto_in_kWh"]
+        cooling_loads["Q_C_gen_in_kWh"] = cooling_generation_result.timeseries["Q_C_gen_in_kWh"]
+        cooling_loads["Q_C_delivered_kWh"] = cooling_chain_result.delivered["Q_C_dis_in_tot_kWh"]
+        cooling_loads["Q_C_unmet_kWh"] = cooling_chain_result.delivered["Q_C_dis_unmet_tot_kWh"]
+        cooling_chain_result.delivered.to_csv(Path(file_dir) / "cooling_chain_delivered_16798.csv")
+        print(f"Cooling chain: {cooling_chain_result.iterations} storage-generator iteration(s), "
+              f"converged={cooling_chain_result.converged}, unmet "
+              f"{cooling_chain_result.summary['QC_users_unmet_kWh']:,.1f} kWh")
 
         cooling_loads.to_csv(Path(file_dir) / "cooling_loads_16798.csv")
         cooling_system_result.timeseries.to_csv(Path(file_dir) / "cooling_16798_9_hourly_results.csv")

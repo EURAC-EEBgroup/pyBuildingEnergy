@@ -85,3 +85,16 @@ their exact source commits have not been verified.
 * ASHRAE 140-2023 Section 11 air-side tests (fan-coil and single-zone systems) for the
   EN 16798-5-1 AHU; checked on Python 3.12 and 3.13.
 * Details in CHANGELOG.rst.
+
+2.3.0 (2026-11-27)
+------------------
+* Cooling modules EN 16798-9 / -13 / -15 extended: distribution circuits with priorities
+  and shortfall allocation, stratified, ice and PCM storage with state of charge,
+  absorption and OTHER generators, several generators with priorities, heat-rejection
+  operation 6.4.2.4, part-load method of 6.3.2.2.2.1 (C1-C4, delta_theta_corr).
+* New ``CoolingChainCalculator``: distribution, storage and generation solved together,
+  with the actual generator / storage temperatures fed back to the distribution and an
+  optional terminal capacity model (library extension).
+* Fixes: EN 16798-9 ``MAX_TMP``, HYBRID free cooling on the wet bulb, unused
+  ``minimum_part_load_ratio``, backup electricity in the rejected heat.
+* Details in CHANGELOG.rst.

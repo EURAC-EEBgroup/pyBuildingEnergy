@@ -10,7 +10,7 @@ from importlib import import_module
 
 __author__ = "Daniele Antonucci, Ulrich Filippi Oberegger, Olga Somova"
 __email__ = "daniele.antonucci@eurac.edu"
-__version__ = "2.2.1"
+__version__ = "2.3.0"
 
 
 _PUBLIC_IMPORTS = {
@@ -56,6 +56,8 @@ _PUBLIC_IMPORTS = {
     "CoolingStorageSystemCalculator": (".source.cooling_storage_16798_15", "CoolingStorageSystemCalculator"),
     "CoolingGenerationSimulationResult": (".source.cooling_generation_16798_13", "CoolingGenerationSimulationResult"),
     "CoolingGenerationSystemCalculator": (".source.cooling_generation_16798_13", "CoolingGenerationSystemCalculator"),
+    "CoolingChainCalculator": (".source.cooling_chain_16798", "CoolingChainCalculator"),
+    "CoolingChainResult": (".source.cooling_chain_16798", "CoolingChainResult"),
     "HeatPumpPerformanceDataCalculator": (".source.performance_14511_14825", "HeatPumpPerformanceDataCalculator"),
     "HeatPumpPerformanceDataResult": (".source.performance_14511_14825", "HeatPumpPerformanceDataResult"),
     "en14825_part_load_factor": (".source.performance_14511_14825", "en14825_part_load_factor"),
